@@ -2378,7 +2378,8 @@ const Kraken = {
   },
 };
 async function pollKraken() {
-  if (Kraken.busy || !Kraken.ok || !S.ready || document.hidden) return;
+  if (Kraken.busy || !Kraken.ok || !S.ready) return;
+  if (document.hidden) { if (Date.now() - (Kraken.bgAt || 0) < 10000) return; Kraken.bgAt = Date.now(); }   // slower in a background tab, so alerts still fire
   const ids = tickerSet().filter(id => srcOf(id) === 'kraken');
   if (!ids.length) return;
   Kraken.busy = true;
@@ -2450,7 +2451,8 @@ const OANDA = {
   },
 };
 async function pollOanda() {
-  if (OANDA.busy || !OANDA.active() || !S.ready || document.hidden) return;
+  if (OANDA.busy || !OANDA.active() || !S.ready) return;
+  if (document.hidden) { if (Date.now() - (OANDA.bgAt || 0) < 10000) return; OANDA.bgAt = Date.now(); }   // slower in a background tab, so alerts still fire
   const ids = tickerSet().filter(id => srcOf(id) === 'oanda');
   if (!ids.length) return;
   OANDA.busy = true;
