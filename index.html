@@ -2416,6 +2416,23 @@ function handleOandaErr(e) {
   }
 }
 setInterval(pollOanda, 1500);
+// A saved token is kept even when OANDA doesn't answer at start-up; keep trying quietly until it does.
+let oandaRetry = null;
+function retryOanda(delay) {
+  clearTimeout(oandaRetry);
+  oandaRetry = setTimeout(async () => {
+    if (!OANDA.configured() || OANDA.active() || OANDA.state === 'bad') return;
+    try {
+      await OANDA.connect();
+      toast('Reconnected to OANDA.'); switchSources();
+      if ($('#srcDlg').open) renderSources();
+    } catch (e) {
+      if (e.code === 401) { OANDA.state = 'bad'; if ($('#srcDlg').open) renderSources(); return; }
+      retryOanda(20000);
+    }
+  }, delay == null ? 0 : delay);
+}
+window.addEventListener('online', () => { if (OANDA.state === 'offline') retryOanda(1000); });
 
 /* ---------- gold & silver without a key ----------
    Gold: PAX Gold (PAXG/USDT) on Binance, a token backed by physical gold that tracks spot gold.
@@ -2875,8 +2892,17 @@ function renderSources() {
   if (OANDA.proxy) ob.append(el('p', 'fine', 'This site shows OANDA’s forex and gold prices to every visitor.'));
   else if (!S.sandbox) {
     ob.append(el('p', 'fine', 'Connect your OANDA account to chart OANDA’s own forex and gold prices, with live bid, ask and spread. A free practice (demo) account works.'));
-    if (OANDA.active()) {
-      ob.append(el('p', 'fine', `Connected to your ${OANDA.env()} account ${OANDA.cfg.account}. Only you see this.`));
+    const saved = !!(OANDA.cfg && OANDA.cfg.token);
+    if (!OANDA.active() && saved && OANDA.state === 'offline') {
+      ob.append(el('p', 'fine', 'Your OANDA token is saved, so you don’t need to paste it again. OANDA isn’t answering right now, and the page keeps trying by itself.'));
+      const row = el('div', 'key-row');
+      const again = el('button', 'primary', 'Try again'); again.type = 'button'; again.id = 'oaRetry';
+      again.onclick = () => { again.disabled = true; again.textContent = 'Connecting…'; retryOanda(0); setTimeout(renderSources, 4000); };
+      const forget = el('button', 'ghost', 'Forget token'); forget.type = 'button';
+      forget.onclick = () => { store.set('oanda', null); OANDA.cfg = null; OANDA.state = 'off'; renderSources(); toast('OANDA token removed from this browser.'); };
+      row.append(again, forget); ob.append(row);
+    } else if (OANDA.active()) {
+      ob.append(el('p', 'fine', `Connected to your ${OANDA.env()} account ${OANDA.cfg.account}. Only you see this. The token is remembered in this browser, so you won’t need to paste it again here.`));
       const dis = el('button', 'ghost', 'Disconnect OANDA'); dis.type = 'button'; dis.id = 'oaDisconnect';
       dis.onclick = () => { store.set('oanda', null); OANDA.cfg = null; OANDA.state = 'off'; OANDA.refs = {}; switchSources(); renderSources(); toast('OANDA disconnected.'); };
       const wrapBtn = el('div', 'key-row'); wrapBtn.append(dis); ob.append(wrapBtn);
@@ -2890,6 +2916,7 @@ function renderSources() {
       const envSel = el('select', 'field'); envSel.id = 'oaEnv'; envSel.style.flex = '0 0 auto'; envSel.setAttribute('aria-label', 'OANDA account type');
       [['practice', 'Practice'], ['live', 'Live']].forEach(([v, n]) => { const o = el('option', null, n); o.value = v; envSel.append(o); });
       if (OANDA.cfg && OANDA.cfg.env) envSel.value = OANDA.cfg.env;
+      if (OANDA.state === 'bad') ob.append(el('p', 'fine', 'OANDA no longer accepts the saved token. It may have been revoked or replaced. Paste a new one.'));
       const go = el('button', 'primary', 'Connect'); go.type = 'submit';
       row.append(tok, envSel, go); form.append(row);
       form.addEventListener('submit', async e => {
@@ -3115,6 +3142,7 @@ async function boot() {
   const oandaUp = OANDA.configured() ? OANDA.connect().then(() => true, e => { OANDA.state = e.code === 401 ? 'bad' : 'offline'; return false; }) : Promise.resolve(false);
   const [bin, tdOk, goldOk, oaOk] = await Promise.all([Live.probe(), probeTD(), GoldApi.price('XAU').then(q => { S.spot.XAU = q; return true; }, () => false), oandaUp]);
   S.binance = bin; S.tdReach = tdOk; S.goldApi = goldOk; S.sandbox = !bin && !tdOk && !goldOk && !oaOk;
+  if (OANDA.state === 'offline') retryOanda(8000);
   if (goldOk) setInterval(pollMetals, 10000);
   TD.state = !tdOk ? 'offline' : TD.key ? 'ok' : 'nokey';
   S.ready = true;
