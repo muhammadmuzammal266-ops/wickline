@@ -1,6 +1,6 @@
 # Wickline Charts
 
-Free live charts for crypto, US stocks and forex, in your browser. It has candles, indicators, drawing tools, a watchlist and price alerts.
+Free live charts for crypto, US stocks, forex and gold, in your browser. It has candles, indicators, drawing tools, a watchlist and price alerts.
 
 ## What's in this folder
 
@@ -20,9 +20,9 @@ Free live charts for crypto, US stocks and forex, in your browser. It has candle
 3. Click **Commit changes**.
 4. Your live site updates in about a minute. Refresh the page to see it.
 
-## Turn on live stock and forex prices
+## Turn on live stock prices
 
-Crypto prices are always live, from Binance, with no key needed. Stocks and forex need a free key from Twelve Data:
+Crypto, the major forex pairs and gold are always live, with no key needed. US stocks need a free key from Twelve Data:
 
 1. Sign up at <https://twelvedata.com/pricing> and pick the free **Basic** plan.
 2. Copy your API key from the Twelve Data dashboard.
@@ -30,9 +30,10 @@ Crypto prices are always live, from Binance, with no key needed. Stocks and fore
 
 Things to know about the free plan:
 
-- It allows **8 requests a minute and 800 a day**, shared by everyone who visits your site.
+- It allows **8 requests a minute and 800 a day**, shared by everyone who visits your site. To make that last, the page uses the key only for what the free sources don't cover: stocks, less common forex pairs and silver.
+- With the shared key, the open stock chart refreshes every minute and watchlist stock prices every 10 minutes. A visitor who pastes their own key under **Data sources** (the price badge, top right) gets a live stream instead.
 - Anyone can see the key in the page code. The worst that can happen is someone uses up your daily allowance.
-- When the allowance runs out, stocks and forex show the last saved price until midnight UTC. Visitors can also paste their own key under **Data sources** (the price badge, top right).
+- When the allowance runs out, stocks show the last saved price until midnight UTC.
 
 ## OANDA prices for forex and gold
 
@@ -75,8 +76,8 @@ The address bar always matches the chart you're looking at. For example, `?s=AAP
 ## Where the data comes from
 
 - Crypto: Binance public market data (live). Where Binance doesn't answer (for example in the UK and US), the page switches to OKX, then Bybit, automatically.
-- Forex and gold: OANDA when connected; otherwise Twelve Data with a key; otherwise gold follows PAX Gold (PAXG) and silver uses gold-api.com.
-- US stocks and ETFs: Twelve Data (live with a key).
+- Forex and gold: OANDA when connected. Otherwise the 12 major forex pairs come from Kraken and gold follows PAX Gold (PAXG), both live with no key. Other pairs use Twelve Data, and silver uses gold-api.com.
+- US stocks and ETFs: Twelve Data (needs the key in `config.js`).
 - Without a live connection, the page shows real prices saved on 9–12 October 2026, clearly marked "Not live". The older candles on those charts are illustrative.
 
 Market data is for information only and is not financial advice.

@@ -2177,7 +2177,9 @@ function tdQuote(ids, prio) {
 const TDWS = {
   ws: null, want: [], subs: new Set(), fails: new Set(), ids: new Map(), hb: null, retry: 0, closed: true,
   connect() {
-    if (!tdLive()) return;
+    // The free plan allows one streaming connection per key, so a key shared by every visitor (config.js) uses
+    // regular refreshes instead; a visitor's own key streams.
+    if (!tdLive() || !store.get('tdkey', '')) return;
     this.closed = false;
     try { this.ws = new WebSocket(`wss://ws.twelvedata.com/v1/quotes/price?apikey=${encodeURIComponent(TD.key)}`); } catch (e) { this.ws = null; return; }
     this.ws.onopen = () => { this.retry = 0; this.subs = new Set(); this.sync(); clearInterval(this.hb); this.hb = setInterval(() => this.send({ action: 'heartbeat' }), 10000); };
@@ -2556,8 +2558,8 @@ const MetalFeed = {
 function srcOf(id) {
   if (classOf(id) === 'crypto') return S.binance ? 'binance' : 'demo';
   if (classOf(id) === 'forex' && OANDA.active()) return 'oanda';
+  if (Kraken.has(id)) return 'kraken';   // live with no limits, so the free Twelve Data allowance is kept for stocks
   if (tdLive()) return 'td';
-  if (Kraken.has(id)) return 'kraken';
   if (id === GOLD) return S.binance && Live.paxg ? 'paxg' : S.goldApi ? 'metal' : 'demo';
   if (id === SILVER && S.goldApi) return 'metal';
   return 'demo';
