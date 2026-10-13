@@ -1265,7 +1265,7 @@ function placePaneLegends() {
     rt.paneLg.style.top = (node.getBoundingClientRect().top - wr.top + 4) + 'px';
   }
 }
-const SRC_NAME = { binance: 'Binance', td: 'Twelve Data', demo: 'Saved price', paxg: 'via PAXG', metal: 'gold-api.com', oanda: 'OANDA' };
+const SRC_NAME = { binance: 'Binance', td: 'Twelve Data', demo: 'Saved price', paxg: 'via PAXG', metal: 'gold-api.com', oanda: 'OANDA', kraken: 'Kraken' };
 function setTitle() {
   const src = S.ready ? srcOf(S.symbol) : null;
   L.title.innerHTML = '';
@@ -1814,13 +1814,13 @@ function renderDetails() {
   $('#dSym').textContent = label(id);
   const t = S.tickers[id];
   $('#dName').textContent = nameOf(id) + (t && t.exchange ? ' · ' + t.exchange : '');
-  $('#dFeed').textContent = !src ? '' : src === 'demo' ? 'Saved price · not live' : src === 'binance' ? `${Live.name} · Spot` : src === 'paxg' ? `${Live.name} · PAXG/USDT` : src === 'metal' ? 'gold-api.com · live'
+  $('#dFeed').textContent = !src ? '' : src === 'demo' ? 'Saved price · not live' : src === 'binance' ? `${Live.name} · Spot` : src === 'paxg' ? `${Live.name} · PAXG/USDT` : src === 'metal' ? 'gold-api.com · live' : src === 'kraken' ? `Kraken · ${id === GOLD ? 'PAXG/USD' : rawOf(id)}`
     : src === 'oanda' ? `OANDA · ${OANDA.env() === 'site' ? 'live' : OANDA.env() + ' account'}` : `Twelve Data · ${kindOf(id)}`;
   $('#alLabel').textContent = `Alert me when ${label(id)} crosses`;
-  const open = openNow(id), allDay = cls === 'crypto' || src === 'paxg';
+  const open = openNow(id), allDay = cls === 'crypto' || src === 'paxg' || (src === 'kraken' && id === GOLD), roll24 = cls === 'crypto' || src === 'paxg';
   const mk = $('#dMkt'); mk.className = 'mkt' + (open ? ' open' : '');
   mk.lastElementChild.textContent = allDay ? 'Open 24/7' : open ? 'Market open' : cls === 'stock' ? 'Closed · opens 09:30 New York' : 'Closed · opens Sun 17:00 New York';
-  $('#dRange').textContent = allDay ? '24h range' : 'Day range';
+  $('#dRange').textContent = roll24 ? '24h range' : 'Day range';
   const st = $('#dStats'); st.replaceChildren();
   const stat = (k, v) => { const d = el('div'); d.append(el('dt', null, k), el('dd', null, v)); st.append(d); };
   const has = v => v != null && isFinite(v);
@@ -1829,7 +1829,7 @@ function renderDetails() {
   const dc = $('#dChg');
   if (has(t.ref) && t.ref) {
     const ch = t.last - t.ref, pct = (ch / t.ref) * 100;
-    dc.textContent = `${fmtSigned(ch, t.prec)}  ${fmtPct(pct)}  ${allDay ? '24h' : t.src === 'demo' ? 'on the day' : 'today'}`;
+    dc.textContent = `${fmtSigned(ch, t.prec)}  ${fmtPct(pct)}  ${roll24 ? '24h' : t.src === 'demo' ? 'on the day' : 'today'}`;
     dc.className = 'd-chg ' + (ch >= 0 ? 'up' : 'down');
   } else { dc.textContent = 'Daily change not available'; dc.className = 'd-chg'; }
   const range = has(t.high) && has(t.low);
@@ -1839,9 +1839,13 @@ function renderDetails() {
     $('#dMark').style.left = (t.high > t.low ? clamp(((t.last - t.low) / (t.high - t.low)) * 100, 0, 100) : 50) + '%';
   }
   if (t.src === 'demo') stat('Price as of', asOfText(id).replace(/^the /, ''));
-  if (t.src === 'paxg') {
+  if (t.src === 'paxg' || (t.src === 'kraken' && id === GOLD)) {
     stat('Spot gold (XAU)', S.spot.XAU ? fmtP(S.spot.XAU.price, 2) : '—');
+    if (t.src === 'kraken' && has(t.bid)) stat('Bid / ask', `${fmtP(t.bid, 2)} / ${fmtP(t.ask, 2)}`);
     if (has(t.vol)) stat('24h volume', `${fmtVol(t.vol)} PAXG`);
+  } else if (t.src === 'kraken') {
+    if (has(t.bid)) { stat('Bid', fmtP(t.bid, t.prec)); stat('Ask', fmtP(t.ask, t.prec)); }
+    stat('Source', 'Kraken market');
   } else if (t.src === 'oanda') {
     if (has(t.bid)) { stat('Bid', fmtP(t.bid, t.prec)); stat('Ask', fmtP(t.ask, t.prec)); stat('Spread', fmtP(t.ask - t.bid, t.prec)); }
     if (has(t.prevClose)) stat('Prev close', fmtP(t.prevClose, t.prec));
@@ -2333,6 +2337,66 @@ const Demo = {
   },
 };
 
+/* ---------- forex majors and gold without a key: Kraken ----------
+   Kraken's public market data (no key, browser-friendly) has live EUR/USD and 11 other major pairs, plus PAX Gold
+   (PAXG/USD), which trades within cents of spot gold. Used when OANDA and Twelve Data aren't set up. */
+const KRAKEN_PAIR = { 'EUR/USD': 'EURUSD', 'GBP/USD': 'GBPUSD', 'USD/JPY': 'USDJPY', 'USD/CHF': 'USDCHF', 'USD/CAD': 'USDCAD', 'AUD/USD': 'AUDUSD',
+  'EUR/GBP': 'EURGBP', 'EUR/JPY': 'EURJPY', 'EUR/CHF': 'EURCHF', 'EUR/AUD': 'EURAUD', 'EUR/CAD': 'EURCAD', 'AUD/JPY': 'AUDJPY', 'XAU/USD': 'PAXGUSD' };
+const KR_INT = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240, '1d': 1440, '1w': 10080 };
+const krNorm = k => (k.length === 8 && /^[XZ]/.test(k) && /^[XZ]/.test(k.slice(4)) ? k.slice(1, 4) + k.slice(5) : k);
+const Kraken = {
+  ok: false, rest: 'https://api.kraken.com/0/public', syncAt: 0, busy: false,
+  pair: id => KRAKEN_PAIR[rawOf(id)],
+  has(id) { return this.ok && classOf(id) === 'forex' && !!this.pair(id); },
+  async get(path) {
+    const r = await fetchT(this.rest + path, 12000); const j = await r.json();
+    if (j.error && j.error.length) throw new Error('Kraken: ' + j.error.join(', '));
+    return j.result || {};
+  },
+  async probe() { try { this.ok = Object.keys(await this.get('/Ticker?pair=EURUSD')).length > 0; } catch (e) { this.ok = false; } return this.ok; },
+  rows(res) { const e = Object.entries(res).find(([k]) => k !== 'last'); return e ? e[1] : []; },
+  bar: k => ({ time: +k[0], open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[6] }),
+  async klines(id, tf, before) {
+    if (before) return [];   // Kraken serves the most recent 720 bars
+    const bars = this.rows(await this.get(`/OHLC?pair=${this.pair(id)}&interval=${KR_INT[tf]}`)).map(this.bar);
+    if (!bars.length) throw new Error(`Kraken has no prices for ${label(id)} right now.`);
+    return bars;
+  },
+  async tail(id, tf, since) { return this.rows(await this.get(`/OHLC?pair=${this.pair(id)}&interval=${KR_INT[tf]}&since=${since}`)).map(this.bar); },
+  async tickers(ids) {
+    const res = await this.get(`/Ticker?pair=${ids.map(id => this.pair(id)).join(',')}`);
+    const byAlt = {}; ids.forEach(id => { byAlt[this.pair(id)] = id; });
+    const out = [];
+    for (const [k, v] of Object.entries(res)) {
+      const id = byAlt[k] || byAlt[krNorm(k)]; if (!id) continue;
+      const bid = +v.b[0], ask = +v.a[0], last = +v.c[0], mid = (bid + ask) / 2;
+      const price = ask > bid && (ask - bid) / mid < 0.0005 ? mid : last;   // a thin book uses the last trade instead
+      out.push({ sym: id, src: 'kraken', last: price, bid, ask, ref: +v.o || null, prevClose: null,
+        high: Math.max(+v.h[0], price), low: Math.min(+v.l[0], price), vol: null, qvol: null });
+    }
+    return out;
+  },
+};
+async function pollKraken() {
+  if (Kraken.busy || !Kraken.ok || !S.ready || document.hidden) return;
+  const ids = tickerSet().filter(id => srcOf(id) === 'kraken');
+  if (!ids.length) return;
+  Kraken.busy = true;
+  try {
+    for (const t of await Kraken.tickers(ids)) {
+      onTicker(t);
+      if (t.sym === S.symbol && S.bars.length && openNow(t.sym)) tickBar(t.last, Date.now() / 1000, 0);
+    }
+    if (srcOf(S.symbol) === 'kraken' && S.bars.length && Date.now() - Kraken.syncAt > 15000) {   // keep the live candle exact
+      Kraken.syncAt = Date.now(); const token = S.token, since = S.bars[S.bars.length - 1].time - 1;
+      const tail = await Kraken.tail(S.symbol, S.tf, since);
+      if (token === S.token) tail.forEach(b => { if (S.bars.length && b.time >= S.bars[S.bars.length - 1].time) onBar(b); });
+    }
+  } catch (e) { /* try again on the next round */ }
+  finally { Kraken.busy = false; }
+}
+setInterval(pollKraken, 2000);
+
 /* ---------- forex & gold: OANDA ----------
    Personal: your own OANDA token (practice or live), saved only in this browser and sent only to OANDA.
    Everyone: set oandaProxy in config.js to a small proxy (oanda-worker.js) that keeps the token on the server. */
@@ -2440,7 +2504,7 @@ window.addEventListener('online', () => { if (OANDA.state === 'offline') retryOa
    Silver: live spot price from gold-api.com (free, no key, browser-friendly); its older candles are illustrative. */
 const GOLD = 'FX:XAU/USD', SILVER = 'FX:XAG/USD', METAL_SYM = { 'FX:XAU/USD': 'XAU', 'FX:XAG/USD': 'XAG' };
 const binId = id => (id === GOLD && srcOf(id) === 'paxg' ? 'BINANCE:PAXGUSDT' : id);
-const openNow = id => srcOf(id) === 'paxg' || marketOpen(id);
+const openNow = id => srcOf(id) === 'paxg' || (id === GOLD && srcOf(id) === 'kraken') || marketOpen(id);
 const PaxgFeed = { klines: (id, tf, before) => Live.klines('BINANCE:PAXGUSDT', tf, before) };
 const GoldApi = {
   async price(sym) {
@@ -2461,7 +2525,7 @@ async function pollMetals() {
   metalBusy = true;
   try {
     const want = tickerSet().filter(id => srcOf(id) === 'metal');
-    if (S.symbol === GOLD && srcOf(GOLD) === 'paxg') want.push('spot');
+    if (S.symbol === GOLD && ['paxg', 'kraken'].includes(srcOf(GOLD))) want.push('spot');
     for (const id of want) {
       try {
         const q = await GoldApi.price(id === 'spot' ? 'XAU' : METAL_SYM[id]);
@@ -2489,11 +2553,12 @@ function srcOf(id) {
   if (classOf(id) === 'crypto') return S.binance ? 'binance' : 'demo';
   if (classOf(id) === 'forex' && OANDA.active()) return 'oanda';
   if (tdLive()) return 'td';
+  if (Kraken.has(id)) return 'kraken';
   if (id === GOLD) return S.binance && Live.paxg ? 'paxg' : S.goldApi ? 'metal' : 'demo';
   if (id === SILVER && S.goldApi) return 'metal';
   return 'demo';
 }
-const feedFor = id => ({ binance: Live, td: TDFeed, demo: Demo, paxg: PaxgFeed, metal: MetalFeed, oanda: OANDA })[srcOf(id)];
+const feedFor = id => ({ binance: Live, td: TDFeed, demo: Demo, paxg: PaxgFeed, metal: MetalFeed, oanda: OANDA, kraken: Kraken })[srcOf(id)];
 function onBinTicker(t) {
   onTicker(t);
   if (t.sym === 'BINANCE:PAXGUSDT' && srcOf(GOLD) === 'paxg') onTicker(Object.assign({}, t, { sym: GOLD, src: 'paxg' }));
@@ -2517,6 +2582,7 @@ function ensureTickerSubs() {
   }
   if (list.some(id => srcOf(id) === 'metal' && !(S.tickers[id] && S.tickers[id].src === 'metal'))) pollMetals();
   if (list.some(id => srcOf(id) === 'oanda' && !(S.tickers[id] && S.tickers[id].src === 'oanda'))) pollOanda();
+  if (list.some(id => srcOf(id) === 'kraken' && !(S.tickers[id] && S.tickers[id].src === 'kraken'))) pollKraken();
   list.filter(id => srcOf(id) === 'demo' && !(S.tickers[id] && S.tickers[id].src === 'demo')).forEach(id => { const t = Demo.ticker(id); if (t) onTicker(t); });
   const td = list.filter(id => srcOf(id) === 'td');
   TDWS.setWanted(td.includes(S.symbol) ? [S.symbol].concat(td.filter(x => x !== S.symbol)) : td);
@@ -2572,6 +2638,7 @@ async function loadChart() {
     }
     if (src === 'td') tdSeriesAt = Date.now();
     if (src === 'oanda') OANDA.syncAt = Date.now();
+    if (src === 'kraken') Kraken.syncAt = Date.now();
   } catch (e) {
     if (token !== S.token) return;
     if (e instanceof TDErr) { if (e.code === -1 || handleTdErr(e)) return; veil(tdMessage(e, S.symbol), true); return; }
@@ -2675,7 +2742,7 @@ function clockTick() {
   if (S.bars.length) {
     const cls = classOf(S.symbol);
     if (S.ready && srcOf(S.symbol) === 'demo') cd.append(el('b', null, 'Saved price'));
-    else if (!(S.ready && srcOf(S.symbol) === 'paxg') && !isOpenAt(cls, now)) cd.append(el('b', null, 'Market closed'));
+    else if (!(S.ready && openNow(S.symbol)) && !isOpenAt(cls, now)) cd.append(el('b', null, 'Market closed'));
     else {
       let end = S.bars[S.bars.length - 1].time + tfOf(S.tf).sec;
       if (cls === 'stock' && tfOf(S.tf).sec < DAY) { const p = ny(now); end = Math.min(end, sessOpen(p.y, p.m, p.d) + 23400); }
@@ -2843,9 +2910,11 @@ function renderFeed() {
     else if (src === 'binance' || src === 'paxg') { state = conn.binance === 'reconnecting' ? 'reconnecting' : 'live'; lbl = state !== 'live' ? 'Reconnecting' : src === 'paxg' ? 'Live · PAXG' : 'Live · ' + Live.name; }
     else if (src === 'oanda') { state = 'live'; lbl = 'Live · OANDA'; }
     else if (src === 'metal') { state = 'live'; lbl = 'Live price'; }
+    else if (src === 'kraken') { state = 'live'; lbl = S.symbol === GOLD ? 'Live · PAXG' : 'Live · Kraken'; }
     else { state = 'live'; lbl = 'Live · Twelve Data'; }
-    note.hidden = !['demo', 'paxg', 'metal'].includes(src);
+    note.hidden = !['demo', 'paxg', 'metal', 'kraken'].includes(src);
     if (src === 'paxg') note.textContent = 'Gold shown as PAX Gold (PAXG), a gold-backed token that tracks spot gold. Add a Twelve Data key for exact spot XAU/USD.';
+    if (src === 'kraken') note.textContent = S.symbol === GOLD ? 'Gold shown as PAX Gold on Kraken, which trades within cents of spot gold. The spot price is on the right.' : `Live ${label(S.symbol)} from Kraken’s market, which tracks the interbank rate closely.`;
     if (src === 'metal') note.textContent = 'Live spot price from gold-api.com. Earlier candles are illustrative.';
     note.title = note.textContent;
     if (src === 'demo') {
@@ -2982,6 +3051,10 @@ function renderSources() {
     tb.append(us, el('p', 'fine', 'To stay inside the free plan (8 requests a minute), the page streams up to 8 symbols live and refreshes the rest every 10 minutes. Opening a chart uses one request.'));
   }
   body.append(tb);
+  const kb = el('div', 'src'), kh = el('div', 'src-h');
+  kh.append(el('b', null, 'Forex majors & gold · Kraken (no key)'), Kraken.ok ? stateChip('Live', 'ok') : stateChip('Not reachable', 'warn'));
+  kb.append(kh, el('p', 'fine', 'For every visitor, with nothing to set up: EUR/USD, GBP/USD, USD/JPY, USD/CHF, USD/CAD, AUD/USD, EUR/GBP, EUR/JPY, EUR/CHF, EUR/AUD, EUR/CAD and AUD/JPY come live from Kraken’s public market data, and gold comes from PAX Gold on Kraken, which trades within cents of spot. OANDA or Twelve Data take over when connected. Other pairs (such as USD/PKR, USD/TRY or USD/INR) need one of those.'));
+  body.append(kb);
   const gs = srcOf(GOLD), mb = el('div', 'src'), mh = el('div', 'src-h');
   mh.append(el('b', null, 'Gold & silver without a key'), stateChip(gs === 'td' ? 'Using Twelve Data' : gs === 'demo' ? 'Saved prices' : 'Live', gs === 'demo' ? 'warn' : 'ok'));
   mb.append(mh, el('p', 'fine', 'Without OANDA or a Twelve Data key, gold follows PAX Gold (PAXG/USDT on Binance or OKX), a token backed by physical gold. It tracks spot gold closely, usually within a few dollars, and also trades at weekends. The spot price from gold-api.com is shown next to it. Silver uses the live spot price from gold-api.com, with illustrative older candles. Add a Twelve Data key for exact spot XAU/USD and XAG/USD candles.'));
@@ -3140,8 +3213,8 @@ async function boot() {
   saveInd(); applyTheme(); sizeOverlay(); requestAnimationFrame(frame);
   renderWatch(); renderDetails(); renderFeed(); veil('Connecting to market data…');
   const oandaUp = OANDA.configured() ? OANDA.connect().then(() => true, e => { OANDA.state = e.code === 401 ? 'bad' : 'offline'; return false; }) : Promise.resolve(false);
-  const [bin, tdOk, goldOk, oaOk] = await Promise.all([Live.probe(), probeTD(), GoldApi.price('XAU').then(q => { S.spot.XAU = q; return true; }, () => false), oandaUp]);
-  S.binance = bin; S.tdReach = tdOk; S.goldApi = goldOk; S.sandbox = !bin && !tdOk && !goldOk && !oaOk;
+  const [bin, tdOk, goldOk, oaOk, krOk] = await Promise.all([Live.probe(), probeTD(), GoldApi.price('XAU').then(q => { S.spot.XAU = q; return true; }, () => false), oandaUp, Kraken.probe()]);
+  S.binance = bin; S.tdReach = tdOk; S.goldApi = goldOk; S.sandbox = !bin && !tdOk && !goldOk && !oaOk && !krOk;
   if (OANDA.state === 'offline') retryOanda(8000);
   if (goldOk) setInterval(pollMetals, 10000);
   TD.state = !tdOk ? 'offline' : TD.key ? 'ok' : 'nokey';
