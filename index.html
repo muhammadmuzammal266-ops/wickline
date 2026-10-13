@@ -177,6 +177,7 @@ select option{background:var(--panel);color:var(--fg)}
 .chg{justify-self:end;padding:1px 5px;border-radius:4px;font-size:11.5px;min-width:58px;text-align:right}
 .chg.up{color:var(--up);background:color-mix(in srgb,var(--up) 13%,transparent)}
 .chg.down{color:var(--down);background:color-mix(in srgb,var(--down) 13%,transparent)}
+.chg.saved{color:var(--faint);background:transparent;box-shadow:inset 0 0 0 1px var(--line);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;text-align:center}
 .wl-x{width:22px;height:22px;display:grid;place-items:center;color:var(--faint);opacity:0}
 .wl-item:hover .wl-x,.wl-x:focus-visible{opacity:1}
 @media (hover:none){.wl-x{opacity:1}}
@@ -1780,7 +1781,7 @@ function renderWatch() {
   for (const [cls, title] of GROUPS) {
     const ids = S.watch.filter(id => classOf(id) === cls); if (!ids.length) continue;
     const g = el('li', 'wl-group', title);
-    if (S.ready) g.append(el('span', null, cls === 'crypto' ? 'Open 24/7' : marketOpen(ids[0]) ? 'Market open' : 'Market closed'));
+    if (S.ready) g.append(el('span', null, ids.every(id => srcOf(id) === 'demo') ? 'Saved prices · not live' : cls === 'crypto' ? 'Open 24/7' : marketOpen(ids[0]) ? 'Market open' : 'Market closed'));
     wl.append(g);
     for (const id of ids) {
       const [b, q] = symParts(id);
@@ -1801,7 +1802,8 @@ function updateWatchRow(id, prev) {
   const px = li.querySelector('.px'), ch = li.querySelector('.chg');
   px.textContent = fmtP(t.last, t.prec);
   const pct = t.ref ? ((t.last - t.ref) / t.ref) * 100 : NaN;
-  ch.textContent = fmtPct(pct); ch.className = 'chg' + (isFinite(pct) ? (pct >= 0 ? ' up' : ' down') : '');
+  if (t.src === 'demo') { ch.textContent = 'saved'; ch.className = 'chg saved'; ch.title = `Not live. Real price from ${asOfText(id)}.`; }
+  else { ch.textContent = fmtPct(pct); ch.className = 'chg' + (isFinite(pct) ? (pct >= 0 ? ' up' : ' down') : ''); ch.title = ''; }
   if (prev && prev.last !== t.last) { px.classList.remove('fu', 'fd'); void px.offsetWidth; px.classList.add(t.last > prev.last ? 'fu' : 'fd'); }
 }
 function addWatch(id) { if (!S.watch.includes(id)) { S.watch.push(id); store.set('watch', S.watch); renderWatch(); ensureTickerSubs(); } }
