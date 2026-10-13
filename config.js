@@ -14,7 +14,7 @@ window.WICKLINE_CONFIG = {
   // Get one at https://twelvedata.com/pricing (Basic plan, free) and paste it between the quotes.
   // Leave it empty and stocks and forex show saved prices instead. Crypto is always live.
   // Note: anyone can see this key in the page code. The free plan allows 800 requests a day.
-  twelveDataKey: '',
+  twelveDataKey: 'dcd2425cc30a4cf889622353cedb4fa0',
 
   // OANDA prices for forex and gold, for EVERY visitor (optional).
   // Leave empty to let each person connect their own OANDA account under "Data sources".
