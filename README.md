@@ -82,4 +82,4 @@ Market data is for information only and is not financial advice.
 
 ## Credits
 
-Charts are drawn with [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) (Apache 2.0 licence). The small TradingView logo on the chart is the attribution its licence asks for.
+Charts are drawn with [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) (Apache 2.0 licence). The "Charts by TradingView Lightweight Charts" line under the side panel is the attribution its licence asks for, so keep it if you change the page. The logo on the chart is your own site logo.
