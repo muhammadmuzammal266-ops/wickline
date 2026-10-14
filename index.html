@@ -135,6 +135,22 @@ select option{background:var(--panel);color:var(--fg)}
 .sw[aria-pressed="true"]{box-shadow:0 0 0 2px var(--fg)}
 .danger{height:26px;padding:0 10px;color:var(--down);font-weight:500}
 .danger:hover{background:color-mix(in srgb,var(--down) 12%,transparent)}
+/* bar replay */
+.replay{gap:2px;padding:4px 5px 4px 10px}
+.replay .rp-date{font-family:var(--font-data);font-size:11.5px;color:var(--muted);padding-right:6px;margin-right:2px;border-right:1px solid var(--line);min-width:0;overflow:hidden;text-overflow:ellipsis}
+.replay .rp-date b{color:var(--fg);font-weight:600;margin-right:6px;font-family:var(--font-body);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase}
+.replay .icon-btn{width:30px;height:30px}
+.replay .icon-btn:disabled{opacity:.35;pointer-events:none}
+.replay #rpPlay{color:var(--accent)}
+.replay #rpPlay svg path{fill:currentColor}
+.replay .selwrap select{height:30px;font-family:var(--font-data);font-size:12px;padding:0 22px 0 8px}
+.replay .selwrap::after{right:9px}
+.replay .rp-live{height:30px;padding:0 9px;font-size:12px;font-weight:600;color:var(--accent);display:inline-flex;align-items:center;gap:4px}
+.replay .rp-live:hover{background:var(--accent-soft)}
+.replay .rp-live svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.chart-wrap.replaying .hint,.chart-wrap.replaying #selbar{bottom:86px}
+#replayBtn[aria-pressed="true"]{color:var(--accent);background:var(--accent-soft)}
+@media (max-width: 520px){.replay .rp-date,.rp-btn-lbl,.replay .rp-live span{display:none}}
 .latest{position:absolute;z-index:5;right:82px;bottom:38px;width:30px;height:30px;display:grid;place-items:center;background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--muted);box-shadow:0 4px 14px rgba(8,12,20,.12)}
 .latest:hover{color:var(--fg)}
 .latest svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
@@ -340,6 +356,7 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
       <option value="area">Area</option>
     </select></span>
     <button class="btn" id="indBtn"><svg viewBox="0 0 24 24"><path d="M3 17c3 0 4-10 7-10s3 10 6 10 3-6 5-6"/></svg>Indicators</button>
+    <button class="btn" id="replayBtn" aria-pressed="false" title="Bar replay: replay the market from a past bar"><svg viewBox="0 0 24 24"><path d="M11.5 7l-6 5 6 5z"/><path d="M19.5 7l-6 5 6 5z"/></svg><span class="rp-btn-lbl">Replay</span></button>
     <span class="spacer"></span>
     <button class="feed" id="feedBtn" data-state="connecting" title="Data sources"><span class="dot"></span><span class="lbl" id="feedLbl">Connecting</span></button>
     <button class="icon-btn" id="snapBtn" hidden aria-label="Save the chart as an image" title="Save chart image"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
@@ -368,6 +385,18 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
         <span class="nm" id="selName">Trend line</span>
         <span class="swatches" id="selSw"></span>
         <button class="danger" id="selDel">Delete</button>
+      </div>
+      <div class="float replay" id="rpBar" hidden role="toolbar" aria-label="Bar replay">
+        <span class="rp-date" id="rpDate"></span>
+        <button class="icon-btn" id="rpPick" title="Choose a different start bar" aria-label="Choose a different start bar"></button>
+        <button class="icon-btn" id="rpBack" title="Back one bar (Shift ←)" aria-label="Back one bar"></button>
+        <button class="icon-btn" id="rpPlay" title="Play (Space)" aria-label="Play"></button>
+        <button class="icon-btn" id="rpFwd" title="Forward one bar (Shift →)" aria-label="Forward one bar"></button>
+        <span class="selwrap"><select id="rpSpeed" title="Replay speed" aria-label="Replay speed">
+          <option value="0.5">0.5×</option><option value="1">1×</option><option value="2">2×</option><option value="3">3×</option><option value="5">5×</option><option value="10">10×</option><option value="20">20×</option>
+        </select></span>
+        <button class="rp-live" id="rpLive" title="Leave replay and go back to live prices"><span>Live</span></button>
+        <button class="icon-btn" id="rpExit" title="Close replay" aria-label="Close replay"></button>
       </div>
       <button class="latest" id="latest" hidden aria-label="Scroll to the latest bar" title="Scroll to the latest bar"><svg viewBox="0 0 24 24"><path d="M6 7l5 5-5 5M13 7l5 5-5 5"/></svg></button>
       <div class="veil" id="veil"><div class="veil-box"><span class="spin" id="veilSpin"></span><span id="veilText">Connecting to market data…</span><button id="veilRetry" hidden>Try again</button></div></div>
@@ -467,6 +496,8 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
       <dt><kbd>Delete</kbd></dt><dd>Remove the selected drawing</dd>
       <dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Undo a drawing change (⌘ Z on a Mac)</dd>
       <dt><kbd>Esc</kbd></dt><dd>Cancel the current tool</dd>
+      <dt><kbd>Space</kbd></dt><dd>Play or pause a bar replay</dd>
+      <dt><kbd>Shift</kbd> <kbd>→</kbd> or <kbd>←</kbd></dt><dd>Replay one bar forward or back</dd>
       <dt><kbd>?</kbd></dt><dd>Show this list</dd>
     </dl>
     <p class="keys-h">Mouse and touch</p>
@@ -476,6 +507,7 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
       <dt>Drag a scale</dt><dd>Stretch the price or time axis</dd>
       <dt>Drag a drawing</dt><dd>Move it. Drag its round handles to reshape it.</dd>
       <dt>Hover an indicator</dt><dd>Hide it, change its settings or remove it</dd>
+      <dt>Replay</dt><dd>Click it, then click a past bar. The chart hides everything after it, and you play the market forward bar by bar to practise.</dd>
     </dl>
   </div>
 </dialog>
@@ -511,6 +543,13 @@ const ICON = {
   bell: '<path d="M6 16v-5a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
   long: '<path d="M4 20h16"/><path d="M5 16l4.5-4.5 3 3L19 8"/><path d="M14.5 8H19v4.5"/>',
   short: '<path d="M4 20h16"/><path d="M5 6l4.5 4.5 3-3L19 14"/><path d="M14.5 14H19V9.5"/>',
+  replay: '<path d="M11.5 7l-6 5 6 5z"/><path d="M19.5 7l-6 5 6 5z"/>',
+  play: '<path d="M8 5.5v13l10.5-6.5z"/>',
+  pause: '<path d="M7 5.5h3.5v13H7zM13.5 5.5H17v13h-3.5z"/>',
+  stepFwd: '<path d="M6 6.5v11l8-5.5z"/><path d="M17.5 6.5v11"/>',
+  stepBack: '<path d="M18 6.5v11l-8-5.5z"/><path d="M6.5 6.5v11"/>',
+  pick: '<path d="M12 3v18"/><path d="M7.5 8.5L4 12l3.5 3.5M16.5 8.5L20 12l-3.5 3.5"/>',
+  live: '<path d="M5 7l5 5-5 5M11 7l5 5-5 5"/><path d="M19.5 6v12"/>',
 };
 const svg = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[name]}</svg>`;
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -1491,6 +1530,11 @@ function drawOverlay(m) {
   if (S.draft && S.draft.type !== 'measure') drawShape(S.draft, m, W, H, false, true);
   const meas = S.draft && S.draft.type === 'measure' ? S.draft : S.measure;
   if (meas) drawMeasure(meas, m);
+  if (R.picking && R.hoverX != null && R.hoverX >= 0 && R.hoverX <= W) {
+    const i = rpPickIndex(R.hoverX), x = i == null ? R.hoverX : m.x(S.bars[i].time) + m.sp / 2;
+    octx.fillStyle = alpha(C.panel, 0.62); octx.fillRect(x, 0, W - x, H);
+    octx.strokeStyle = C.accent; octx.lineWidth = 1.5; octx.setLineDash([5, 4]); seg(x, 0, x, H); octx.setLineDash([]);
+  }
   octx.restore();
 }
 function frame() {
@@ -1587,11 +1631,13 @@ const HINTS = {
 };
 function setHint() {
   const h = HINTS[S.tool]; const box = $('#hint');
+  if (R.picking) { $('#hintText').textContent = 'Click the bar to start the replay from'; box.hidden = false; $('#selbar').hidden = true; return; }
   if (!h) { box.hidden = true; return; }
   $('#hintText').textContent = h[S.draft ? 1 : 0] || h[0];
   box.hidden = false; $('#selbar').hidden = true;
 }
 function setTool(t) {
+  if (R.picking) { R.picking = false; R.hoverX = null; renderReplay(); }
   if (t === S.tool && t !== 'cursor') t = 'cursor';
   S.tool = t; S.draft = null;
   if (t !== 'cursor') select(null);
@@ -1608,6 +1654,7 @@ function placeAt(x, y) {
   const now = performance.now();
   if (now - lastPlace.t < 350 && Math.hypot(x - lastPlace.x, y - lastPlace.y) < 8) return;
   lastPlace = { t: now, x, y };
+  if (R.picking) { rpPickAt(x); return; }
   if (S.tool === 'cursor') { if (S.measure) { S.measure = null; markDirty(); } return; }
   const pt = pointAt(x, y, true); if (!pt) return;
   const t = S.tool;
@@ -1638,6 +1685,7 @@ chart.subscribeCrosshairMove(param => {
   const onMain = param.point && (param.paneIndex || 0) === 0 && S.main;
   S.crossPrice = onMain ? S.main.coordinateToPrice(param.point.y) : null;
   if (S.draft && onMain) { const p = pointAt(param.point.x, param.point.y, true); if (p) { S.draft.p2 = p; markDirty(); } }
+  if (R.picking) { R.hoverX = param.point ? param.point.x : null; markDirty(); }
   updateLegend();
 });
 function findIdx(t) {
@@ -1653,7 +1701,7 @@ wrap.addEventListener('pointerdown', e => {
   if (e.target.closest('.lg-row, .float, .latest, .veil')) return;
   const r = wrap.getBoundingClientRect(); const x = e.clientX - r.left, y = e.clientY - r.top;
   press = { x, y, id: e.pointerId };
-  if (S.tool !== 'cursor' || S.draft) return;
+  if (S.tool !== 'cursor' || S.draft || R.picking) return;
   const h = hitTest(x, y);
   if (!h) { if (S.selected) select(null); return; }
   press = null;
@@ -1720,7 +1768,7 @@ function notify(title, body) {
   try { if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification(title, { body, icon: 'icon-192.png' }); }
   catch (e) { /* some phones only allow notifications from installed apps */ }
 }
-function lastPrice(id) { const t = S.tickers[id]; if (t) return t.last; if (id === S.symbol && S.bars.length) return S.bars[S.bars.length - 1].close; return null; }
+function lastPrice(id) { const t = S.tickers[id]; if (t) return t.last; const a = R.on ? R.full : S.bars; if (id === S.symbol && a.length) return a[a.length - 1].close; return null; }
 function createAlert(id, price) {
   const last = lastPrice(id);
   if (last == null || !isFinite(price) || price <= 0) { toast('Prices are still loading. Try again in a moment.'); return; }
@@ -2231,7 +2279,8 @@ function onTdTick(m) {
   if (id === S.symbol && S.bars.length && srcOf(id) === 'td') tickBar(price, +m.timestamp || Date.now() / 1000, dv);
 }
 function tickBar(price, ts, dv) {
-  const sec = tfOf(S.tf).sec, last = S.bars[S.bars.length - 1];
+  const arr = R.on ? R.full : S.bars;
+  const sec = tfOf(S.tf).sec, last = arr[arr.length - 1];
   if (ts < last.time) return;
   const k = Math.floor((ts - last.time) / sec);
   if (k >= 1) onBar({ time: last.time + k * sec, open: price, high: price, low: price, close: price, volume: dv || 0 });
@@ -2243,7 +2292,7 @@ async function pollSeries() {
     const j = await TD.request('/time_series', { symbol: rawOf(id), interval: TD_INT[S.tf], outputsize: 3, timezone: 'UTC', order: 'asc' }, 1, 2, () => token !== S.token);
     if (token !== S.token) return;
     tdBars(j).forEach(b => { if (S.bars.length && b.time >= S.bars[S.bars.length - 1].time) onBar(b); });
-    const t = S.tickers[id], lb = S.bars[S.bars.length - 1];
+    const t = S.tickers[id], a = R.on ? R.full : S.bars, lb = a[a.length - 1];   // the live bar, even during a replay
     if (t && lb) onTicker(Object.assign({}, t, { last: lb.close, high: Math.max(t.high, lb.close), low: Math.min(t.low, lb.close) }));
   } catch (e) { handleTdErr(e); }
 }
@@ -2404,7 +2453,7 @@ async function pollKraken() {
       if (t.sym === S.symbol && S.bars.length && openNow(t.sym)) tickBar(t.last, Date.now() / 1000, 0);
     }
     if (srcOf(S.symbol) === 'kraken' && S.bars.length && Date.now() - Kraken.syncAt > 15000) {   // keep the live candle exact
-      Kraken.syncAt = Date.now(); const token = S.token, since = S.bars[S.bars.length - 1].time - 1;
+      Kraken.syncAt = Date.now(); const token = S.token, a = R.on ? R.full : S.bars, since = a[a.length - 1].time - 1;
       const tail = await Kraken.tail(S.symbol, S.tf, since);
       if (token === S.token) tail.forEach(b => { if (S.bars.length && b.time >= S.bars[S.bars.length - 1].time) onBar(b); });
     }
@@ -2674,6 +2723,7 @@ function switchSources() {
   renderWatch(); ensureTickerSubs(); renderDetails(); renderFeed();
 }
 function onBar(b) {
+  if (R.on) { rpMerge(b); return; }
   const n = S.bars.length; if (!n || !S.main) return;
   const last = S.bars[n - 1];
   if (b.time < last.time) return;
@@ -2701,6 +2751,7 @@ async function loadChart() {
     if (token !== S.token) return;
     if (!bars.length) throw new Error(`No price history for ${label(S.symbol)} yet.`);
     S.bars = bars; S.prec = precFor(S.symbol, bars[bars.length - 1].close);
+    if (R.on) rpRebase(bars);   // keep replaying from the same moment on the new symbol or timeframe
     S.main.applyOptions({ priceFormat: pricePF(S.prec) });
     for (const rt of S.rts) {
       if (['sma', 'ema', 'bb', 'vwap', 'atr'].includes(rt.inst.type)) rt.series.forEach(s => s.applyOptions({ priceFormat: pricePF(S.prec) }));
@@ -2728,7 +2779,9 @@ async function refreshTail(token) {
   try {
     const fresh = await Live.klines(binId(S.symbol), S.tf);
     if (token !== S.token || !fresh.length) return;
-    const first = fresh[0].time; const keep = S.bars.filter(b => b.time < first);
+    const first = fresh[0].time;
+    if (R.on) { R.full = R.full.filter(b => b.time < first).concat(fresh); R.idx = rpIndexFor(R.full, R.time); return; }
+    const keep = S.bars.filter(b => b.time < first);
     S.bars = keep.concat(fresh); setMainData(); S.rts.forEach(setRtData); updateLegend(); markDirty();
   } catch (e) { /* the stream keeps retrying */ }
 }
@@ -2739,6 +2792,7 @@ async function loadOlder() {
     if (token !== S.token) return;
     const first = S.bars[0].time; const add = older.filter(b => b.time < first);
     if (!add.length || S.bars.length > 12000) { S.noMore = true; return; }
+    if (R.on) { R.full = add.concat(R.full); R.idx += add.length; }
     S.bars = add.concat(S.bars); setMainData(); S.rts.forEach(setRtData); markDirty();
   } catch (e) {
     if (e instanceof TDErr) { handleTdErr(e); if (e.code !== 429) { S.noMore = true; return; } }
@@ -2753,6 +2807,123 @@ chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
   if (r.from < 30 && !S.older && !S.noMore) loadOlder();
 });
 $('#latest').onclick = () => chart.timeScale().scrollToRealTime();
+
+/* ---------- bar replay ----------
+   Pick a past bar: the chart shows history up to it, then plays forward bar by bar.
+   R.full keeps the whole history (and keeps taking live updates); S.bars is what the chart shows. */
+const R = { on: false, picking: false, full: null, idx: 0, time: 0, playing: false, timer: null, hoverX: null, speed: +store.get('rpSpeed', 1) || 1 };
+function rpIndexFor(arr, t) {   // last bar at or before t
+  let lo = 0, hi = arr.length - 1, ans = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (arr[mid].time <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
+  return ans;
+}
+function rpPickIndex(x) {
+  const m = mapper(); if (!m) return null;
+  const n = S.bars.length, max = R.on ? n - 1 : n - 2;   // leave at least one bar to play
+  return max < 1 ? null : clamp(Math.round(m.L(x)), 1, max);
+}
+function rpStartPick() {
+  if (S.bars.length < 3 || !$('#veil').hidden) { toast('Wait for the chart to load, then try again.'); return; }
+  if (S.tool !== 'cursor' || S.draft) finishTool();
+  select(null); rpPause();
+  R.picking = true; R.hoverX = null;
+  renderReplay(); markDirty();
+}
+function rpCancelPick() { R.picking = false; R.hoverX = null; renderReplay(); markDirty(); }
+function rpPickAt(x) {
+  const i = rpPickIndex(x); if (i == null) return;
+  if (!R.on) { R.full = S.bars; R.on = true; }
+  R.picking = false; R.hoverX = null;
+  R.idx = i; R.time = R.full[i].time;
+  S.bars = R.full.slice(0, i + 1);
+  rpRedraw(); renderReplay();
+}
+function rpRebase(bars) {   // a new symbol or timeframe loaded during a replay
+  R.full = bars;
+  let i = rpIndexFor(bars, R.time);
+  if (i < 1) { i = Math.min(bars.length - 1, 1); toast(`${label(S.symbol)}'s history here starts later, so the replay starts at its first bars.`); }
+  R.idx = i; R.time = bars[i].time;
+  S.bars = bars.slice(0, i + 1);
+  renderReplay();
+}
+function rpRedraw() {
+  setMainData(); S.rts.forEach(setRtData);
+  chart.timeScale().scrollToRealTime();
+  S.main.priceScale().applyOptions({ autoScale: true });
+  S.cross = null; updateLegend(); syncAlertLines(); markDirty(); clockTick();
+}
+function rpStep() {
+  if (!R.on) return false;
+  if (R.idx >= R.full.length - 1) { rpPause(); toast('The replay has caught up with the latest bar. Press Live to leave replay.'); return false; }
+  R.idx++; const b = R.full[R.idx]; R.time = b.time;
+  S.bars.push(b); const i = S.bars.length - 1;
+  if (S.type === 'heikin') haAt(i);
+  S.main.update(mainPoint(i));
+  for (const rt of S.rts) updateRtLast(rt);
+  if (!S.cross) updateLegend();
+  renderReplayInfo(); markDirty();
+  return true;
+}
+function rpBack() {
+  if (!R.on || R.idx <= 1) return;
+  R.idx--; S.bars.pop(); R.time = S.bars[S.bars.length - 1].time;
+  setMainData(); S.rts.forEach(setRtData);
+  if (!S.cross) updateLegend();
+  renderReplayInfo(); markDirty();
+}
+function rpPlay() {
+  if (!R.on || R.playing) return;
+  if (R.idx >= R.full.length - 1) { toast('The replay is already at the latest bar. Pick an earlier bar to replay.'); return; }
+  R.playing = true; rpTick(); renderReplayInfo();
+}
+function rpTick() {
+  clearTimeout(R.timer);
+  if (R.playing) R.timer = setTimeout(() => { if (rpStep()) rpTick(); }, 1000 / R.speed);
+}
+function rpPause() { R.playing = false; clearTimeout(R.timer); renderReplayInfo(); }
+function rpExit() {
+  rpPause(); R.picking = false; R.hoverX = null;
+  if (R.on) { S.bars = R.full; R.full = null; R.on = false; rpRedraw(); }
+  renderReplay();
+}
+function rpMerge(b) {   // a live update while replaying: store it; show it only if the replay sits on that very bar
+  const F = R.full, n = F.length; if (!n) return;
+  const atEnd = R.idx === n - 1, last = F[n - 1];
+  if (b.time > last.time) { F.push(b); if (atEnd) renderReplayInfo(); }
+  else if (b.time === last.time) F[n - 1] = b;
+  else { const i = rpIndexFor(F, b.time); if (i >= 0 && F[i].time === b.time) F[i] = b; else return; }
+  if (atEnd && b.time === R.time && S.bars.length) {
+    const i = S.bars.length - 1; S.bars[i] = b;
+    if (S.type === 'heikin') haAt(i);
+    S.main.update(mainPoint(i)); for (const rt of S.rts) updateRtLast(rt);
+    if (!S.cross) updateLegend();
+  }
+}
+function renderReplayInfo() {
+  if (!R.on) return;
+  $('#rpDate').replaceChildren(el('b', null, 'Replay'), document.createTextNode(fmtTime(R.time)));
+  $('#rpPlay').innerHTML = svg(R.playing ? 'pause' : 'play');
+  $('#rpPlay').title = R.playing ? 'Pause (Space)' : 'Play (Space)'; $('#rpPlay').setAttribute('aria-label', R.playing ? 'Pause' : 'Play');
+  $('#rpBack').disabled = R.idx <= 1; $('#rpFwd').disabled = R.idx >= R.full.length - 1;
+}
+function renderReplay() {
+  $('#rpBar').hidden = !R.on || R.picking;
+  wrap.classList.toggle('replaying', R.on && !R.picking);
+  $('#replayBtn').setAttribute('aria-pressed', String(R.on || R.picking));
+  setHint(); renderReplayInfo(); clockTick();
+}
+$('#rpPick').innerHTML = svg('pick'); $('#rpBack').innerHTML = svg('stepBack'); $('#rpFwd').innerHTML = svg('stepFwd'); $('#rpExit').innerHTML = svg('x');
+$('#rpLive').insertAdjacentHTML('beforeend', svg('live'));
+$('#rpSpeed').value = String(R.speed);
+if (!$('#rpSpeed').value) { R.speed = 1; $('#rpSpeed').value = '1'; }
+$('#replayBtn').onclick = () => { if (R.on) rpExit(); else if (R.picking) rpCancelPick(); else rpStartPick(); };
+$('#rpPick').onclick = rpStartPick;
+$('#rpPlay').onclick = () => { if (R.playing) rpPause(); else rpPlay(); };
+$('#rpFwd').onclick = () => { rpPause(); rpStep(); };
+$('#rpBack').onclick = () => { rpPause(); rpBack(); };
+$('#rpSpeed').onchange = e => { R.speed = +e.target.value || 1; store.set('rpSpeed', R.speed); e.target.blur(); if (R.playing) rpTick(); };
+$('#rpLive').onclick = rpExit;
+$('#rpExit').onclick = rpExit;
 
 /* ---------- symbol / timeframe / type ---------- */
 function setSymbol(id) {
@@ -2819,7 +2990,8 @@ function clockTick() {
   const cd = $('#countdown'); cd.replaceChildren();
   if (S.bars.length) {
     const cls = classOf(S.symbol);
-    if (S.ready && srcOf(S.symbol) === 'demo') cd.append(el('b', null, 'Saved price'));
+    if (R.on) cd.append(el('b', null, 'Replay'), document.createTextNode(' · watchlist stays live'));
+    else if (S.ready && srcOf(S.symbol) === 'demo') cd.append(el('b', null, 'Saved price'));
     else if (!(S.ready && openNow(S.symbol)) && !isOpenAt(cls, now)) cd.append(el('b', null, 'Market closed'));
     else {
       let end = S.bars[S.bars.length - 1].time + tfOf(S.tf).sec;
@@ -3187,7 +3359,7 @@ $('#snapBtn').onclick = () => {
     g.strokeStyle = C.line; g.lineWidth = Math.max(1, k); g.beginPath(); g.moveTo(0, head - 0.5); g.lineTo(W, head - 0.5); g.stroke();
     const last = S.bars[S.bars.length - 1];
     g.textBaseline = 'middle'; g.fillStyle = C.fg; g.font = `600 ${Math.round(15 * k)}px ${FONT_BODY}`;
-    g.fillText(`${label(S.symbol)} · ${tfOf(S.tf).label} · ${fmtP(last.close)}`, 12 * k, head / 2);
+    g.fillText(`${label(S.symbol)} · ${tfOf(S.tf).label} · ${fmtP(last.close)}${R.on ? ` · Replay ${fmtTime(R.time)}` : ''}`, 12 * k, head / 2);
     const d = new Date();
     g.textAlign = 'right'; g.fillStyle = C.muted; g.font = `400 ${Math.round(12 * k)}px ${FONT_BODY}`;
     g.fillText(`${CFG.siteName} · ${d.getDate()} ${MON[d.getMonth()]} ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`, W - 12 * k, head / 2);
@@ -3245,7 +3417,14 @@ document.addEventListener('keydown', e => {
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea' || e.target.isContentEditable) return;
   if (document.querySelector('dialog[open]')) return;
+  if (e.key === 'Escape' && R.picking) { rpCancelPick(); return; }
   if (e.key === 'Escape') { if (S.tool !== 'cursor' || S.draft) finishTool(); select(null); S.measure = null; markDirty(); return; }
+  if (R.on && !R.picking && e.key === ' ') {
+    e.preventDefault();
+    if (document.activeElement && document.activeElement.tagName === 'BUTTON') document.activeElement.blur();   // so Space doesn't also press the focused button
+    if (R.playing) rpPause(); else rpPlay(); return;
+  }
+  if (R.on && !R.picking && e.shiftKey && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) { e.preventDefault(); rpPause(); if (e.key === 'ArrowRight') rpStep(); else rpBack(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && S.selected) { e.preventDefault(); deleteSelected(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
