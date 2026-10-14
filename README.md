@@ -65,7 +65,7 @@ Before showing OANDA prices to the public, check OANDA's terms. Brokers often li
 
 - **Rename the site:** change `siteName` in `config.js`. To also change the name shown in search results and link previews, edit the `<title>` and `og:title` lines near the top of `index.html`.
 - **Default watchlist:** edit `defaultWatchlist` in `config.js`. It only applies to first-time visitors, because returning visitors keep their own list.
-- **Ticker formats:** crypto as a Binance pair (`BTCUSDT`, `ETHBTC`), US stocks as tickers (`AAPL`, `BRK.B`), forex with a slash (`EUR/USD`, `XAU/USD`).
+- **Ticker formats:** crypto as a Binance pair (`BTCUSDT`, `ETHBTC`), US stocks and ETFs as tickers (`AAPL`, `SPY`), forex with a slash (`EUR/USD`, `XAU/USD`), indices, commodities and bonds as OANDA names with a slash (`SPX500/USD`, `WTICO/USD`, `USB10Y/USD`).
 
 ## Share a chart
 
@@ -76,6 +76,7 @@ The address bar always matches the chart you're looking at. For example, `?s=AAP
 - Crypto: Binance public market data (live). Where Binance doesn't answer (for example in the UK and US), the page switches to OKX, then Bybit, automatically.
 - Forex and gold: OANDA when the site's Worker is set up, or when a visitor connects their own account. Otherwise the 12 major forex pairs come from Kraken and gold follows PAX Gold (PAXG), both live with no key. Other pairs use Twelve Data, and silver uses gold-api.com.
 - US stocks and ETFs: Twelve Data (needs the key in `config.js`).
+- Stock indices (S&P 500, Nasdaq, Dow, FTSE, DAX, Nikkei…), commodities (oil, gas, copper, platinum, grains, sugar) and government bonds: OANDA, through the same Worker as forex. Without OANDA they show their saved close from Tue 13 Oct 2026.
 - Without a live connection, the page shows real prices saved on 9–12 October 2026, clearly marked "Not live". The older candles on those charts are illustrative.
 
 Market data is for information only and is not financial advice.

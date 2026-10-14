@@ -263,10 +263,13 @@ dialog::backdrop{background:rgba(5,8,14,.45)}
 .dlg-search svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;flex:none}
 .dlg-search input{flex:1;min-width:0;border:0;background:transparent;font-family:var(--font-data);font-size:15px;color:var(--fg);outline:none;text-transform:uppercase}
 .dlg-search input::placeholder{text-transform:none;color:var(--faint);font-family:var(--font-body)}
-.s-tabs{display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--line);overflow-x:auto}
-.s-tab{height:32px;padding:0 10px;border-radius:6px 6px 0 0;color:var(--muted);font-size:12.5px;font-weight:500;border-bottom:2px solid transparent;white-space:nowrap}
+#searchDlg{width:min(680px,calc(100vw - 32px))}
+.s-tabs{display:flex;gap:6px;padding:2px 14px 10px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.s-tabs::-webkit-scrollbar{display:none}
+.s-tab{height:30px;padding:0 13px;border-radius:999px;background:var(--panel-2);color:var(--fg);font-size:13px;font-weight:500;white-space:nowrap;flex:none}
+.s-tab:hover{background:color-mix(in srgb,var(--fg) 12%,var(--panel-2))}
 .s-tab:hover{color:var(--fg)}
-.s-tab[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--accent)}
+.s-tab[aria-selected="true"]{background:var(--fg);color:var(--panel)}
 .s-list{list-style:none;margin:0;padding:4px 0;overflow:auto;flex:1;min-height:140px}
 .s-item{display:grid;grid-template-columns:minmax(0,1fr) auto 30px;align-items:center;gap:8px;padding-right:8px}
 .s-item.cur,.s-item:hover{background:var(--panel-2)}
@@ -462,12 +465,16 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
 
 <dialog id="searchDlg" aria-label="Symbol search">
   <div class="dlg-h"><h2 id="searchTitle">Symbol search</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
-  <div class="dlg-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><input id="searchInput" placeholder="Search, e.g. AAPL, EUR/USD, gold or BTC" autocomplete="off" spellcheck="false" aria-label="Search symbols"></div>
+  <div class="dlg-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><input id="searchInput" placeholder="Search, e.g. AAPL, EUR/USD, gold, oil or S&amp;P 500" autocomplete="off" spellcheck="false" aria-label="Search symbols"></div>
   <div class="s-tabs" role="tablist" id="sTabs">
     <button class="s-tab" role="tab" data-tab="all" aria-selected="true">All</button>
-    <button class="s-tab" role="tab" data-tab="crypto" aria-selected="false">Crypto</button>
     <button class="s-tab" role="tab" data-tab="stock" aria-selected="false">Stocks</button>
+    <button class="s-tab" role="tab" data-tab="fund" aria-selected="false">Funds</button>
+    <button class="s-tab" role="tab" data-tab="futures" aria-selected="false">Futures</button>
     <button class="s-tab" role="tab" data-tab="forex" aria-selected="false">Forex</button>
+    <button class="s-tab" role="tab" data-tab="crypto" aria-selected="false">Crypto</button>
+    <button class="s-tab" role="tab" data-tab="index" aria-selected="false">Indices</button>
+    <button class="s-tab" role="tab" data-tab="bond" aria-selected="false">Bonds</button>
   </div>
   <ul class="s-list" id="searchList" role="listbox"></ul>
   <p class="dlg-foot" id="searchFoot">↑ ↓ to move, Enter to open</p>
@@ -640,10 +647,68 @@ const FX = [
   ['USD/INR', 'US dollar / Indian rupee', 88.74, 0.05], ['USD/PKR', 'US dollar / Pakistani rupee', 281.45, 0.04], ['USD/CNY', 'US dollar / Chinese yuan', 6.6921, 0.04],
   ['XAU/USD', 'Gold / US dollar', 3998.6, 0.2], ['XAG/USD', 'Silver / US dollar', 48.27, 0.3],
 ];
+// Indices, commodities and bonds: OANDA instruments, live through the site's OANDA connection.
+// instrument, category, name, search words, close Tue 13 Oct 2026, close Mon 12 Oct 2026, decimals (OANDA daily candles, 5 pm New York)
+const CFDS = [
+  ['SPX500_USD', 'index', 'US S&P 500', 'SPX US500 SP500 S&P SNP', 7816.2, 7816.6, 1],
+  ['NAS100_USD', 'index', 'US Nasdaq 100', 'NDX US100 NASDAQ NAS100 TECH100', 30592.0, 30689.4, 1],
+  ['US30_USD', 'index', 'US Wall St 30 (Dow Jones)', 'DOW DJI DJIA US30 WALLSTREET', 51715.2, 51911.1, 1],
+  ['US2000_USD', 'index', 'US Russell 2000', 'RUT RUSSELL US2000 SMALLCAP', 2787.77, 2798.73, 3],
+  ['UK100_GBP', 'index', 'UK 100 (FTSE 100)', 'FTSE UKX UK100 FOOTSIE', 10664.0, 10656.0, 1],
+  ['DE30_EUR', 'index', 'Germany 40 (DAX)', 'DAX GER40 DE40 DE30 GERMANY', 25315.6, 25260.8, 1],
+  ['FR40_EUR', 'index', 'France 40 (CAC 40)', 'CAC FRA40 FR40 FRANCE', 7836.0, 7796.2, 1],
+  ['EU50_EUR', 'index', 'Europe 50 (Euro Stoxx 50)', 'STOXX SX5E EU50 EUROSTOXX EUROPE', 6191.9, 6194.4, 1],
+  ['JP225_USD', 'index', 'Japan 225 (Nikkei 225)', 'NIKKEI NI225 N225 JP225 JAPAN', 67998.9, 68248.9, 1],
+  ['HK33_HKD', 'index', 'Hong Kong 33 (Hang Seng)', 'HSI HANGSENG HK50 HK33 HONGKONG', 24309.2, 24197.7, 1],
+  ['AU200_AUD', 'index', 'Australia 200 (ASX 200)', 'ASX XJO AUS200 AU200 AUSTRALIA', 8747.8, 8773.9, 1],
+  ['CN50_USD', 'index', 'China A50', 'CHINA A50 CN50 FTSEA50', 13729.4, 13756.4, 1],
+  ['CH20_CHF', 'index', 'Switzerland 20 (SMI)', 'SMI SWISS SWI20 CH20 SWITZERLAND', 13929.2, 13870.2, 1],
+  ['NL25_EUR', 'index', 'Netherlands 25 (AEX)', 'AEX NETH25 NL25 DUTCH NETHERLANDS', 1133.95, 1134.68, 3],
+  ['ESPIX_EUR', 'index', 'Spain 35 (IBEX 35)', 'IBEX ESP35 SPAIN ESPIX', 19199.0, 19276.9, 1],
+  ['SG30_SGD', 'index', 'Singapore 30', 'SGX STI SING30 SG30 SINGAPORE', 504.8, 504.2, 2],
+  ['WTICO_USD', 'futures', 'WTI crude oil', 'OIL CRUDE WTI USOIL CL', 95.728, 94.19, 3],
+  ['BCO_USD', 'futures', 'Brent crude oil', 'OIL CRUDE BRENT UKOIL BRN', 108.668, 108.376, 3],
+  ['NATGAS_USD', 'futures', 'Natural gas', 'GAS NATGAS NG', 3.249, 3.105, 3],
+  ['XCU_USD', 'futures', 'Copper', 'COPPER HG XCU', 6.64198, 6.67542, 5],
+  ['XPT_USD', 'futures', 'Platinum', 'PLATINUM XPT PL', 1647.929, 1675.112, 3],
+  ['XPD_USD', 'futures', 'Palladium', 'PALLADIUM XPD PA', 1116.377, 1131.579, 3],
+  ['CORN_USD', 'futures', 'Corn', 'CORN ZC GRAIN', 4.695, 4.701, 3],
+  ['WHEAT_USD', 'futures', 'Wheat', 'WHEAT ZW GRAIN', 6.593, 6.625, 3],
+  ['SOYBN_USD', 'futures', 'Soybeans', 'SOYBEANS SOY ZS GRAIN', 12.768, 12.815, 3],
+  ['SUGAR_USD', 'futures', 'Sugar', 'SUGAR SB', 0.20174, 0.19938, 5],
+  ['USB02Y_USD', 'bond', 'US 2-year Treasury note (price)', 'US02Y TREASURY ZT 2Y TNOTE', 101.904, 101.87, 3],
+  ['USB05Y_USD', 'bond', 'US 5-year Treasury note (price)', 'US05Y TREASURY ZF 5Y TNOTE', 103.758, 103.661, 3],
+  ['USB10Y_USD', 'bond', 'US 10-year Treasury note (price)', 'US10Y TREASURY ZN 10Y TNOTE', 104.936, 104.75, 3],
+  ['USB30Y_USD', 'bond', 'US 30-year Treasury bond (price)', 'US30Y TREASURY ZB 30Y TBOND', 104.15, 103.622, 3],
+  ['UK10YB_GBP', 'bond', 'UK 10-year gilt (price)', 'GILT UK10Y GILTS', 83.848, 83.909, 3],
+  ['DE10YB_EUR', 'bond', 'German 10-year Bund (price)', 'BUND DE10Y GERMANY', 121.556, 121.504, 3],
+];
+const CFD = {};
+CFDS.forEach(([inst, cat, name, words, last, prev, prec]) => { CFD['FX:' + inst.replace('_', '/')] = { cat, name, words: words.split(' '), last, prev, prec }; });
+// More US funds (ETFs), live through Twelve Data.
+const FUNDS = [
+  ['VTI', 'Vanguard Total Stock Market ETF'], ['IBIT', 'iShares Bitcoin Trust ETF'], ['TLT', 'iShares 20+ Year Treasury Bond ETF'], ['SLV', 'iShares Silver Trust'],
+  ['XLK', 'Technology Select Sector SPDR'], ['XLF', 'Financial Select Sector SPDR'], ['XLE', 'Energy Select Sector SPDR'], ['XLV', 'Health Care Select Sector SPDR'],
+  ['SMH', 'VanEck Semiconductor ETF'], ['ARKK', 'ARK Innovation ETF'], ['SCHD', 'Schwab US Dividend Equity ETF'], ['JEPI', 'JPMorgan Equity Premium Income ETF'],
+  ['EEM', 'iShares MSCI Emerging Markets ETF'], ['VWO', 'Vanguard FTSE Emerging Markets ETF'], ['EFA', 'iShares MSCI EAFE ETF'], ['VEA', 'Vanguard FTSE Developed Markets ETF'],
+  ['HYG', 'iShares High Yield Corporate Bond ETF'], ['LQD', 'iShares Investment Grade Corporate Bond ETF'], ['AGG', 'iShares Core US Aggregate Bond ETF'], ['BND', 'Vanguard Total Bond Market ETF'],
+  ['IEF', 'iShares 7-10 Year Treasury Bond ETF'], ['USO', 'United States Oil Fund'], ['VNQ', 'Vanguard Real Estate ETF'], ['SOXX', 'iShares Semiconductor ETF'],
+  ['XLI', 'Industrial Select Sector SPDR'], ['XLY', 'Consumer Discretionary Select Sector SPDR'], ['XLP', 'Consumer Staples Select Sector SPDR'], ['XLU', 'Utilities Select Sector SPDR'],
+];
+FUNDS.forEach(([t]) => ETFS.add(t));
 const DEMO = {}, NAMES = {}, POP = {};
 Object.keys(CRYPTO_DEMO).forEach((s, i) => { DEMO['BINANCE:' + s] = CRYPTO_DEMO[s]; POP['BINANCE:' + s] = i; });
 STOCKS.forEach(([s, n, p, v, t], i) => { DEMO['US:' + s] = [p, v, t]; NAMES['US:' + s] = n; POP['US:' + s] = i; });
 FX.forEach(([s, n, p, v], i) => { DEMO['FX:' + s] = [p, v, 0]; NAMES['FX:' + s] = n; POP['FX:' + s] = i; });
+FUNDS.forEach(([s, n], i) => { NAMES['US:' + s] = n; POP['US:' + s] = 60 + i; });
+Object.entries(CFD).forEach(([id, c], i) => { NAMES[id] = c.name; POP[id] = i; DEMO[id] = [c.last, c.cat === 'bond' ? 0.06 : c.cat === 'index' ? 0.18 : 0.3, 0]; });
+// What a symbol is, for the watchlist sections and the search chips (the data source follows classOf).
+function catOf(id) {
+  const c = classOf(id);
+  if (c === 'stock') return ETFS.has(rawOf(id)) ? 'fund' : 'stock';
+  if (c === 'forex') return CFD[id] ? CFD[id].cat : 'forex';
+  return 'crypto';
+}
 
 /* ---------- real prices saved when the page was built ----------
    Used whenever live data can't be reached (for example inside the Claude preview).
@@ -701,6 +766,7 @@ function snapOf(id) {
     const a = SNAP.stocks[r]; if (!a) return null;
     return { last: a[0], ref: a[0] - a[1], prevClose: a[0] - a[1], high: null, low: null, vol: null, qvol: null };
   }
+  if (CFD[id]) { const k = CFD[id]; return { last: k.last, ref: k.prev, prevClose: k.prev, high: null, low: null, vol: null, qvol: null }; }
   const [b, q] = r.split('/');
   const none = { ref: null, prevClose: null, high: null, low: null, vol: null, qvol: null };
   if (SNAP.metals[b]) return q === 'USD' ? Object.assign({ last: SNAP.metals[b] }, none) : null;
@@ -713,10 +779,12 @@ function snapOf(id) {
 const snapDay = () => SNAP.date.split('-').map(Number);
 // The moment each saved price belongs to, and the moment its reference (24h ago / previous close) belongs to.
 function snapTime(id) {
+  if (CFD[id]) return nyTime(2026, 10, 13, 17, 0) - 1;
   const c = classOf(id); if (c === 'crypto') return SNAP.at;
   const [y, m, d] = snapDay(); return nyTime(y, m, d, c === 'stock' ? 16 : 17, 0) - 1;
 }
 function anchorTime(id) {
+  if (CFD[id]) return nyTime(2026, 10, 12, 17, 0);
   const c = classOf(id); const [y, m, d] = snapDay();
   if (c === 'crypto') return SNAP.at - DAY;
   if (c === 'stock') return sessOpen(y, m, d);
@@ -725,6 +793,7 @@ function anchorTime(id) {
 function asOfText(id) {
   const c = classOf(id), r = rawOf(id);
   if (c === 'crypto') { const d = new Date(SNAP.at * 1000); return `${d.getDate()} ${MON[d.getMonth()]}, ${pad(d.getHours())}:${pad(d.getMinutes())} your time`; }
+  if (CFD[id]) return 'the Tue 13 Oct close';
   if (c === 'stock' || /^X(AU|AG)\//.test(r)) return 'the Fri 9 Oct close';
   if (r === 'USD/PKR') return 'the 11 Oct daily rate';
   return 'the ECB rate for Fri 9 Oct';
@@ -749,12 +818,14 @@ function nameOf(id) {
 function kindOf(id) {
   const c = classOf(id), r = rawOf(id);
   if (c === 'crypto') return 'Crypto';
+  if (CFD[id]) return { index: 'Index', futures: 'Commodity', bond: 'Bond' }[CFD[id].cat];
   if (c === 'forex') return /^X(AU|AG|PT|PD)\//.test(r) ? 'Metal' : 'Forex';
   return ETFS.has(r) ? 'ETF' : 'US stock';
 }
 
 /* ---------- formatting ---------- */
 function precFor(id, p) {
+  if (CFD[id]) return CFD[id].prec;
   const a = Math.abs(p), c = classOf(id);
   if (c === 'forex') return a >= 1000 ? 2 : a >= 20 ? 3 : 5;
   if (c === 'stock') return a >= 1 ? 2 : 4;
@@ -892,6 +963,8 @@ function parseSymbol(v) {
   if (/^(BINANCE|US|FX):./.test(v)) return v;
   const fx = v.match(/^([A-Z]{3})[-/_]([A-Z]{3})$/);
   if (fx) return `FX:${fx[1]}/${fx[2]}`;
+  const cfd = Object.keys(CFD).find(id => { const r = rawOf(id); return v === r.replace('/', '-') || v === r.replace('/', '_') || v === r.replace('/', ''); });
+  if (cfd) return cfd;
   if (STOCKS.some(s => s[0] === v)) return 'US:' + v;
   const fx6 = FX.find(s => s[0].replace('/', '') === v);
   if (fx6) return 'FX:' + fx6[0];
@@ -1870,13 +1943,13 @@ $('#alForm').addEventListener('submit', e => {
 
 /* ---------- watchlist & details ---------- */
 const wl = $('#wl');
-const GROUPS = [['stock', 'Stocks'], ['forex', 'Forex'], ['crypto', 'Crypto']];
+const GROUPS = [['stock', 'Stocks'], ['fund', 'Funds'], ['futures', 'Futures'], ['forex', 'Forex'], ['crypto', 'Crypto'], ['index', 'Indices'], ['bond', 'Bonds']];
 let wlFold = new Set(store.get('wlFold', []));   // sections someone has folded away
 function renderWatch() {
   wl.replaceChildren();
   $('#wlCount').textContent = String(S.watch.length);
   for (const [cls, title] of GROUPS) {
-    const ids = S.watch.filter(id => classOf(id) === cls); if (!ids.length) continue;
+    const ids = S.watch.filter(id => catOf(id) === cls); if (!ids.length) continue;
     const g = el('li', 'wl-group'); g.dataset.cls = cls;
     const open = !wlFold.has(cls);
     const h = el('button', 'wl-gh'); h.setAttribute('aria-expanded', String(open));
@@ -2732,6 +2805,7 @@ const MetalFeed = {
 /* ---------- which source serves a symbol ---------- */
 function srcOf(id) {
   if (classOf(id) === 'crypto') return S.binance ? 'binance' : 'demo';
+  if (CFD[id]) return OANDA.active() ? 'oanda' : 'demo';
   if (classOf(id) === 'forex' && OANDA.active()) return 'oanda';
   if (Kraken.has(id)) return 'kraken';   // live with no limits, so the free Twelve Data allowance is kept for stocks
   if (tdLive()) return 'td';
@@ -3091,17 +3165,24 @@ async function runSearch() {
   const q = sInput.value.trim().toUpperCase().replace(/[^A-Z0-9/. ]/g, '');
   const qa = q.replace(/[^A-Z0-9]/g, '');
   let uni = [];
-  if (sTab === 'all' || sTab === 'crypto') {
+  const want = c => sTab === 'all' || sTab === c;
+  const few = (list, n) => (sTab === 'all' && !qa ? list.slice(0, n) : list);   // "All" with nothing typed: a few of each
+  if (want('stock')) uni = uni.concat(few(STOCKS.filter(s => !ETFS.has(s[0])).map(s => 'US:' + s[0]), 8));
+  if (want('fund')) uni = uni.concat(few(STOCKS.filter(s => ETFS.has(s[0])).map(s => s[0]).concat(FUNDS.map(s => s[0])).map(s => 'US:' + s), 4));
+  if (want('futures')) uni = uni.concat(few(Object.keys(CFD).filter(id => CFD[id].cat === 'futures'), 4));
+  if (want('forex')) uni = uni.concat(few(FX.map(s => 'FX:' + s[0]), 6));
+  if (want('crypto')) {
     if (S.binance && !Live.universe && qa) sList.replaceChildren(el('li', 'empty', 'Loading pairs…'));
-    uni = uni.concat(qa || sTab === 'crypto' ? await cryptoUniverse() : Object.keys(CRYPTO_DEMO).slice(0, 8).map(s => 'BINANCE:' + s));
+    uni = uni.concat(qa || sTab === 'crypto' ? await cryptoUniverse() : Object.keys(CRYPTO_DEMO).slice(0, 6).map(s => 'BINANCE:' + s));
   }
-  if (sTab === 'all' || sTab === 'stock') uni = uni.concat(STOCKS.map(s => 'US:' + s[0]));
-  if (sTab === 'all' || sTab === 'forex') uni = uni.concat(FX.map(s => 'FX:' + s[0]));
+  if (want('index')) uni = uni.concat(few(Object.keys(CFD).filter(id => CFD[id].cat === 'index'), 5));
+  if (want('bond')) uni = uni.concat(few(Object.keys(CFD).filter(id => CFD[id].cat === 'bond'), 3));
   if (req !== sReq) return;
   const score = id => {
     if (!qa) return 2;
     const r = rawOf(id).replace(/[^A-Z0-9]/g, ''); const nm = nameOf(id).toUpperCase();
     if (r === qa) return 0; if (r.startsWith(qa)) return 1; if (nm.startsWith(q)) return 2;
+    if (CFD[id] && CFD[id].words.some(w => w.replace(/[^A-Z0-9]/g, '').startsWith(qa))) return 2;
     if (classOf(id) === 'crypto' && splitSym(r)[0] === qa) return 1;
     if (r.includes(qa)) return 3; if (q.length > 2 && nm.includes(q)) return 4; return -1;
   };
@@ -3116,13 +3197,15 @@ async function runSearch() {
   const extra = [];
   const stockLike = /^[A-Z]{1,5}(\.[A-Z])?$/.test(q.replace(/ /g, ''));
   const fxm = q.replace(/ /g, '').match(/^([A-Z]{3})\/?([A-Z]{3})$/);
-  if (tdLive() && stockLike && (sTab === 'all' || sTab === 'stock') && !res.includes('US:' + q)) extra.push({ id: 'US:' + q, note: `Open ${q} as a US stock` });
+  if (tdLive() && stockLike && (want('stock') || want('fund')) && !res.includes('US:' + q)) extra.push({ id: 'US:' + q, note: `Open ${q} as a US stock` });
   if ((tdLive() || OANDA.active()) && fxm && (sTab === 'all' || sTab === 'forex') && !res.includes(`FX:${fxm[1]}/${fxm[2]}`) && !res.some(id => rawOf(id) === fxm[1] + fxm[2])) extra.push({ id: `FX:${fxm[1]}/${fxm[2]}`, note: `Open ${fxm[1]}/${fxm[2]} as a forex pair` });
   const exact = res.length > 0 && score(res[0]) === 0;
   sItems = res.slice(0, 80).map(id => ({ id }));
   if (!exact) sItems = sItems.length ? sItems.concat(extra) : extra;
   sIdx = 0; renderSearch(q);
-  $('#searchFoot').textContent = (srcOf('US:AAPL') === 'demo' ? 'Stocks and forex show saved prices until live data is available · ' : '') + '↑ ↓ to move, Enter to open';
+  const cfdTab = ['futures', 'index', 'bond'].includes(sTab);
+  $('#searchFoot').textContent = (cfdTab ? (OANDA.active() ? 'Live from OANDA' + (sTab === 'futures' ? ', tracking the futures markets' : sTab === 'bond' ? ' (bond prices, not yields)' : '') + ' · ' : 'Saved prices until OANDA is connected · ')
+    : srcOf('US:AAPL') === 'demo' ? 'Stocks and forex show saved prices until live data is available · ' : '') + '↑ ↓ to move, Enter to open';
 }
 function renderSearch(q) {
   sList.replaceChildren();
