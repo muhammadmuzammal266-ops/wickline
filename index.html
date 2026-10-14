@@ -1867,7 +1867,7 @@ function onTicker(t) {
   S.tickers[t.sym] = t;
   updateWatchRow(t.sym, prev);
   if (t.sym === S.symbol) renderDetails();
-  checkAlerts(t.sym, t.last);
+  if (!t.stand) checkAlerts(t.sym, t.last);   // a saved stand-in price never sets off an alert
 }
 function tickerSet() { const set = new Set(S.watch); set.add(S.symbol); S.alerts.forEach(a => { if (!a.hit) set.add(a.sym); }); return Array.from(set); }
 
@@ -2053,10 +2053,18 @@ const TD = {
   base: 'https://api.twelvedata.com',
   key: store.get('tdkey', '') || CFG.twelveDataKey,   // a visitor's own key wins over the site key in config.js
   state: 'nokey',          // nokey | ok | bad | offline
-  q: [], stamps: [], timer: null, pausedUntil: 0, nextAt: 0, limitWarned: false,
+  q: [], stamps: [], timer: null, pausedUntil: 0, nextAt: 0, limitDay: '',
   usage: store.get('tdusage', { d: '', n: 0 }),
   today() { return new Date().toISOString().slice(0, 10); },
-  used() { if (this.usage.d !== this.today()) { this.usage = { d: this.today(), n: 0 }; this.limitWarned = false; } return this.usage.n; },
+  used() { if (this.usage.d !== this.today()) this.usage = { d: this.today(), n: 0 }; return this.usage.n; },
+  // Today's free allowance is used up: stop asking and show saved prices until midnight UTC.
+  outOfDay() {
+    this.q.splice(0).forEach(j => j.reject(new TDErr(429, 'daily')));
+    if (this.state !== 'ok') return;
+    this.state = 'limit'; this.limitDay = this.today();
+    toast(tdMessage(new TDErr(429, 'daily')));
+    setTimeout(switchSources, 0);
+  },
   request(path, params, credits, prio, stale) {
     return new Promise((resolve, reject) => {
       this.q.push({ path, params, credits, prio: prio || 0, stale, resolve, reject });
@@ -2073,11 +2081,7 @@ const TD = {
     const now = Date.now();
     this.stamps = this.stamps.filter(s => now - s.t < 61000);
     const inWin = this.stamps.reduce((a, s) => a + s.c, 0);
-    if (this.used() + job.credits > 795) {
-      this.q.shift(); job.reject(new TDErr(429, 'daily'));
-      if (!this.limitWarned) { this.limitWarned = true; toast(tdMessage(new TDErr(429, 'daily'))); }
-      setTimeout(() => this.pump(), 0); return;
-    }
+    if (this.used() + job.credits > 795) { this.outOfDay(); return; }
     // Watchlist refreshes may use only 4 of the 8 requests allowed each minute, so opening a chart rarely waits.
     const cap = job.prio >= 2 ? 8 : 4;
     let wait = 0;
@@ -2102,6 +2106,7 @@ const TD = {
     try { const r = await fetchT(u.toString(), 15000); j = await r.json(); }
     catch (e) { job.reject(new TDErr(0, 'network')); return; }
     if (j && j.status === 'error') {
+      if (j.code === 429 && /for the day|next day/i.test(j.message || '')) { job.reject(new TDErr(429, 'daily')); this.outOfDay(); return; }
       if (j.code === 429) this.pausedUntil = Date.now() + 61000;
       job.reject(new TDErr(j.code || 400, String(j.message || '').replace(/\*\*/g, '')));
       return;
@@ -2113,7 +2118,7 @@ const tdLive = () => !!TD.key && TD.state === 'ok';
 function tdMessage(e, id) {
   switch (e.code) {
     case 401: return 'Twelve Data rejected the API key. Check it in Data sources.';
-    case 429: return e.message === 'daily' ? "You've used today's 800 free Twelve Data requests. They reset at midnight UTC." : 'Twelve Data allows 8 requests a minute on the free plan. Try again in a minute.';
+    case 429: return e.message === 'daily' ? "Today's 800 free Twelve Data requests are used up, so stocks show saved prices until midnight UTC." : 'Twelve Data allows 8 requests a minute on the free plan. Try again in a minute.';
     case 0: return "Couldn't reach Twelve Data. Check your connection.";
     case 400: case 404: return id ? `Twelve Data doesn't have ${label(id)}, or it needs a paid plan.` : (e.message || 'Twelve Data could not find that symbol.');
     case 403: return id ? `${label(id)} needs a paid Twelve Data plan.` : (e.message || 'That symbol needs a paid Twelve Data plan.');
@@ -2164,13 +2169,18 @@ function tdQuote(ids, prio) {
   for (let i = 0; i < ids.length; i += 4) {
     const batch = ids.slice(i, i + 4); batch.forEach(id => tdPending.add(id));
     const syms = batch.map(rawOf);
+    let again = false;
     TD.request('/quote', { symbol: syms.join(',') }, batch.length, prio || 1)
       .then(j => {
         const map = batch.length === 1 ? { [syms[0]]: j } : j;
         batch.forEach(id => { const q = map && map[rawOf(id)]; if (q && q.close != null && q.status !== 'error' && tdLive()) onTicker(Object.assign(tdTicker(id, q), { _dv: (S.tickers[id] || {})._dv })); });
       })
-      .catch(e => { if (!handleTdErr(e) && e.code === 429 && e.message !== 'daily') { /* the queue pauses and the next refresh retries */ } })
-      .finally(() => batch.forEach(id => tdPending.delete(id)));
+      // The site key is shared by every visitor, so a minute can be used up by someone else: the queue pauses, then this tries again.
+      .catch(e => { if (!handleTdErr(e) && e.code === 429 && e.message !== 'daily') again = true; })
+      .finally(() => {
+        batch.forEach(id => tdPending.delete(id));
+        if (again && tdLive()) { const set = tickerSet(); tdQuote(batch.filter(id => set.includes(id) && !(S.tickers[id] && S.tickers[id].src === 'td')), prio); }
+      });
   }
 }
 // One streaming connection, up to 8 symbols on the free plan. Symbols it can't stream are polled.
@@ -2239,6 +2249,7 @@ async function pollSeries() {
 }
 let tdSeriesAt = 0, tdQuoteAt = Date.now();
 setInterval(() => {
+  if (TD.state === 'limit' && TD.today() !== TD.limitDay) { TD.state = 'ok'; switchSources(); }
   if (!tdLive() || !S.ready) return;
   const now = Date.now();
   if (srcOf(S.symbol) === 'td' && !TDWS.covers(S.symbol) && marketOpen(S.symbol) && S.bars.length && now - tdSeriesAt > 60000) { tdSeriesAt = now; pollSeries(); }
@@ -2593,7 +2604,9 @@ function ensureTickerSubs() {
   const td = list.filter(id => srcOf(id) === 'td');
   TDWS.setWanted(td.includes(S.symbol) ? [S.symbol].concat(td.filter(x => x !== S.symbol)) : td);
   const missing = td.filter(id => !(S.tickers[id] && S.tickers[id].src === 'td'));
-  if (missing.length) tdQuote(missing, 1);
+  // Until the live quote arrives, show the saved real price, marked "saved".
+  missing.forEach(id => { if (!S.tickers[id]) { const t = Demo.ticker(id); if (t) onTicker(Object.assign(t, { stand: true })); } });
+  if (missing.length) tdQuote(missing, 2);   // may use the whole minute's allowance, so the list fills straight away
 }
 function switchSources() {
   TDWS.close(); if (tdLive()) TDWS.connect();
@@ -2928,6 +2941,7 @@ function renderFeed() {
       note.textContent = S.sandbox ? `Not live: this page can't reach the internet here. Showing the real price from ${asof}.`
         : classOf(S.symbol) === 'crypto' ? `No crypto exchange can be reached, so this is the real price from ${asof}.`
         : TD.state === 'bad' ? `Twelve Data key rejected, so this is the real price from ${asof}.`
+        : TD.state === 'limit' ? `Today's free Twelve Data allowance is used up, so this is the real price from ${asof}. Live prices return at midnight UTC.`
         : `Real price from ${asof}. Add a free Twelve Data key for live prices.`;
       note.title = note.textContent + ' Earlier candles are illustrative.';
     }
@@ -3017,7 +3031,7 @@ function renderSources() {
   body.append(ob);
 
   const tb = el('div', 'src'); const th = el('div', 'src-h');
-  const tState = { ok: ['Live', 'ok'], bad: ['Key rejected', 'bad'], offline: [TD.key ? 'Unreachable' : 'Saved prices', 'warn'], nokey: ['No key · saved prices', 'warn'] }[TD.state];
+  const tState = { ok: ['Live', 'ok'], bad: ['Key rejected', 'bad'], offline: [TD.key ? 'Unreachable' : 'Saved prices', 'warn'], nokey: ['No key · saved prices', 'warn'], limit: ['Used up today', 'warn'] }[TD.state] || ['Saved prices', 'warn'];
   th.append(el('b', null, 'US stocks, ETFs & forex · Twelve Data'), stateChip(tState[0], tState[1]));
   tb.append(th, el('p', 'fine', 'Real prices for US stocks, ETFs, forex and gold come from Twelve Data. Their free plan needs an API key, which takes about a minute to get. The key stays in this browser and is only sent to Twelve Data.'));
   if (CFG.twelveDataKey && !store.get('tdkey', '')) tb.append(el('p', 'fine', 'This site already includes a key, so stocks and forex are live for every visitor. You only need your own key if the shared daily limit runs out.'));
