@@ -21,7 +21,7 @@ window.WICKLINE_CONFIG = {
   // To use your account for everyone, set up the free proxy in oanda-worker.js (see the README)
   // and paste its address here, for example 'https://wickline-oanda.yourname.workers.dev'.
   // Never paste your OANDA token itself into this file.
-  oandaProxy: '',
+  oandaProxy: 'https://wickline-oanda.muhammadmuzammal266.workers.dev',
 
   // The chart a first-time visitor sees.
   // Crypto: a Binance pair such as 'BTCUSDT'. Stock: 'AAPL'. Forex: 'EUR/USD'.
