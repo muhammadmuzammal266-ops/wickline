@@ -50,16 +50,14 @@ Forex and gold then come straight from OANDA, with bid, ask and spread. The toke
 This shows OANDA prices to every visitor without putting your token in the page.
 
 1. Create a free account at <https://dash.cloudflare.com/sign-up>.
-2. Go to **Workers & Pages**, click **Create**, then **Create Worker**. Name it `wickline-oanda` and click **Deploy**.
+2. Go to **Workers & Pages**, click **Create**, then **Start with Hello World!** (or **Create Worker**). Name it `wickline-oanda` and click **Deploy**.
 3. Click **Edit code**, delete what's there, paste the whole of `oanda-worker.js` from this repository, and click **Deploy**.
-4. Open the Worker's **Settings → Variables and Secrets** and add:
-   - `OANDA_TOKEN` (type **Secret**): your OANDA token
-   - `OANDA_ACCOUNT`: your account ID, shown in OANDA, for example `101-004-1234567-001`
-   - `OANDA_ENV`: `practice` or `live`
-   - `ALLOWED_ORIGIN`: your site address, for example `https://yourname.github.io`
+4. Open the Worker's **Settings → Variables and Secrets**, click **Add**, choose type **Secret**, name it `OANDA_TOKEN`, paste your OANDA token as the value, and click **Deploy**. The Worker works out your account and whether it's Practice or Live by itself.
 5. Copy the Worker's address, for example `https://wickline-oanda.yourname.workers.dev`, and paste it into `oandaProxy` in `config.js`. Commit the change.
 
-The Worker only allows reading candles and prices. It can't place trades or see your balance.
+The Worker only allows reading candles and prices. It can't place trades or see your balance. Prices stream to each visitor over one connection, so the free Cloudflare plan (100,000 requests a day) covers a lot of visitors. If the Worker ever stops answering, the page switches forex and gold to Kraken by itself and reconnects later.
+
+Optional settings for the Worker: `ALLOWED_ORIGIN` (your site address, so only your site can use it), `OANDA_ENV` (`practice` or `live`) and `OANDA_ACCOUNT` (a specific account ID).
 
 Before showing OANDA prices to the public, check OANDA's terms. Brokers often license their price data for your own use only.
 
@@ -76,7 +74,7 @@ The address bar always matches the chart you're looking at. For example, `?s=AAP
 ## Where the data comes from
 
 - Crypto: Binance public market data (live). Where Binance doesn't answer (for example in the UK and US), the page switches to OKX, then Bybit, automatically.
-- Forex and gold: OANDA when connected. Otherwise the 12 major forex pairs come from Kraken and gold follows PAX Gold (PAXG), both live with no key. Other pairs use Twelve Data, and silver uses gold-api.com.
+- Forex and gold: OANDA when the site's Worker is set up, or when a visitor connects their own account. Otherwise the 12 major forex pairs come from Kraken and gold follows PAX Gold (PAXG), both live with no key. Other pairs use Twelve Data, and silver uses gold-api.com.
 - US stocks and ETFs: Twelve Data (needs the key in `config.js`).
 - Without a live connection, the page shows real prices saved on 9–12 October 2026, clearly marked "Not live". The older candles on those charts are illustrative.
 

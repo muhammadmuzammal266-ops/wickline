@@ -2082,8 +2082,8 @@ const TD = {
     this.stamps = this.stamps.filter(s => now - s.t < 61000);
     const inWin = this.stamps.reduce((a, s) => a + s.c, 0);
     if (this.used() + job.credits > 795) { this.outOfDay(); return; }
-    // Watchlist refreshes may use only 4 of the 8 requests allowed each minute, so opening a chart rarely waits.
-    const cap = job.prio >= 2 ? 8 : 4;
+    // Of the 8 requests allowed each minute, watchlist refreshes may use 4 and the first fill 6, so opening a chart rarely waits.
+    const cap = job.prio >= 3 ? 8 : job.prio === 2 ? 6 : 4;
     let wait = 0;
     if (now < this.pausedUntil) wait = this.pausedUntil - now;
     else if (inWin + job.credits > cap && this.stamps.length) {
@@ -2455,45 +2455,103 @@ const OANDA = {
   },
   async prices(ids) {
     const j = await this.get(`/v3/accounts/${this.proxy ? '_' : this.cfg.account}/pricing?instruments=${ids.map(id => this.inst(id)).join(',')}`);
-    return (j.prices || []).map(p => {
-      const bid = +(p.bids && p.bids[0] ? p.bids[0].price : p.closeoutBid), ask = +(p.asks && p.asks[0] ? p.asks[0].price : p.closeoutAsk);
-      return { inst: p.instrument, bid, ask, mid: (bid + ask) / 2 };
-    }).filter(p => isFinite(p.mid));
+    return (j.prices || []).map(oPrice).filter(p => isFinite(p.mid));
   },
   async dayRef(id) {   // previous close and today's range, days starting 00:00 UTC
     const d = await this.candles(id, 'D', 2);
     if (d.length) this.refs[id] = { prev: d.length > 1 ? d[d.length - 2].close : d[0].open, high: d[d.length - 1].high, low: d[d.length - 1].low };
   },
 };
+function oPrice(p) {
+  const bid = +(p.bids && p.bids[0] ? p.bids[0].price : p.closeoutBid), ask = +(p.asks && p.asks[0] ? p.asks[0].price : p.closeoutAsk);
+  return { inst: p.instrument, bid, ask, mid: (bid + ask) / 2 };
+}
+function onOandaPrice(p, ids) {
+  const id = (ids || tickerSet()).find(x => classOf(x) === 'forex' && OANDA.inst(x) === p.inst);
+  if (!id || srcOf(id) !== 'oanda' || !isFinite(p.mid)) return;
+  const r = OANDA.refs[id] || {};
+  onTicker({ sym: id, src: 'oanda', last: p.mid, bid: p.bid, ask: p.ask, ref: r.prev ?? null, prevClose: r.prev ?? null,
+    high: r.high != null ? Math.max(r.high, p.mid) : null, low: r.low != null ? Math.min(r.low, p.mid) : null, vol: null, qvol: null });
+  if (id === S.symbol && S.bars.length && marketOpen(id)) tickBar(p.mid, Date.now() / 1000, 0);
+}
+// With the site's proxy (OANDA for everyone), prices stream over one long request per visitor instead of a request
+// every second or two, which keeps the free Cloudflare plan's daily allowance for a lot of visitors.
+const OStream = {
+  ctl: null, key: '', live: false, fails: 0, lastAt: 0, again: null,
+  want() { return OANDA.proxy && OANDA.active() && S.ready ? tickerSet().filter(id => srcOf(id) === 'oanda').map(OANDA.inst).sort().join(',') : ''; },
+  sync() {
+    const key = this.want();
+    if (key === this.key && (this.ctl || this.again)) return;
+    this.stop(); this.key = key;
+    if (key && typeof ReadableStream !== 'undefined') this.run(key);
+  },
+  stop() { clearTimeout(this.again); this.again = null; const c = this.ctl; this.ctl = null; this.live = false; if (c) c.abort(); },
+  async run(key) {
+    const ctl = this.ctl = new AbortController();
+    try {
+      const r = await fetch(`${OANDA.proxy}/v3/accounts/_/pricing/stream?instruments=${key}`, { signal: ctl.signal, headers: { 'Accept-Datetime-Format': 'UNIX' } });
+      if (!r.ok || !r.body) throw new Error('stream ' + r.status);
+      const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+      for (;;) {
+        const { value, done } = await rd.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+          if (!line || this.ctl !== ctl) continue;
+          let m; try { m = JSON.parse(line); } catch (e) { continue; }
+          this.lastAt = Date.now(); this.live = true; this.fails = 0; OANDA.fails = 0;
+          if (m.type === 'PRICE') onOandaPrice(oPrice(m));
+        }
+      }
+    } catch (e) { /* stopped, or the connection dropped */ }
+    if (this.ctl !== ctl) return;
+    this.ctl = null; this.live = false; this.fails++;
+    // Reconnect after a pause. Meanwhile, regular price requests carry on.
+    this.again = setTimeout(() => { this.again = null; this.key = ''; this.sync(); }, Math.min(60000, 1000 * 2 ** Math.min(this.fails, 6)));
+  },
+  check() {   // OANDA sends a heartbeat every 5 s; a silent stream has dropped
+    if (this.ctl && this.live && Date.now() - this.lastAt > 20000) { this.stop(); this.key = ''; this.sync(); }
+    else this.sync();
+  },
+};
 async function pollOanda() {
   if (OANDA.busy || !OANDA.active() || !S.ready) return;
+  OStream.check();
   if (document.hidden) { if (Date.now() - (OANDA.bgAt || 0) < 10000) return; OANDA.bgAt = Date.now(); }   // slower in a background tab, so alerts still fire
   const ids = tickerSet().filter(id => srcOf(id) === 'oanda');
   if (!ids.length) return;
+  // Through the shared proxy: prices come from the stream, so ask only while it's down, and less often.
+  const streamed = OANDA.proxy && OStream.live;
+  if (OANDA.proxy && !streamed && Date.now() - (OANDA.pollAt || 0) < 3000) return;
   OANDA.busy = true;
   try {
     const stale = Date.now() - OANDA.refsAt > 600000, need = ids.filter(id => stale || !OANDA.refs[id]);
     if (need.length) { if (stale) OANDA.refsAt = Date.now(); await Promise.all(need.map(id => OANDA.dayRef(id).catch(() => {}))); }
-    for (const p of await OANDA.prices(ids)) {
-      const id = ids.find(x => OANDA.inst(x) === p.inst); if (!id) continue;
-      const r = OANDA.refs[id] || {};
-      onTicker({ sym: id, src: 'oanda', last: p.mid, bid: p.bid, ask: p.ask, ref: r.prev ?? null, prevClose: r.prev ?? null,
-        high: r.high != null ? Math.max(r.high, p.mid) : null, low: r.low != null ? Math.min(r.low, p.mid) : null, vol: null, qvol: null });
-      if (id === S.symbol && S.bars.length && srcOf(id) === 'oanda' && marketOpen(id)) tickBar(p.mid, Date.now() / 1000, 0);
-    }
-    if (srcOf(S.symbol) === 'oanda' && S.bars.length && Date.now() - OANDA.syncAt > 10000) {   // keep the live candle exact
+    if (!streamed) { OANDA.pollAt = Date.now(); for (const p of await OANDA.prices(ids)) onOandaPrice(p, ids); }
+    if (srcOf(S.symbol) === 'oanda' && S.bars.length && Date.now() - OANDA.syncAt > (OANDA.proxy ? 60000 : 10000)) {   // keep the live candle exact
       OANDA.syncAt = Date.now(); const token = S.token;
       const tail = await OANDA.candles(S.symbol, O_GRAN[S.tf], 3);
       if (token === S.token) tail.forEach(b => { if (S.bars.length && b.time >= S.bars[S.bars.length - 1].time) onBar(b); });
     }
+    OANDA.fails = 0;
   } catch (e) { handleOandaErr(e); }
   finally { OANDA.busy = false; }
 }
 function handleOandaErr(e) {
-  if (e && e.code === 401 && OANDA.active()) {
-    OANDA.state = 'bad';
-    toast('OANDA rejected the token, so forex and gold use the other sources again. Check it in Data sources.');
+  if (!e || !OANDA.active()) return;
+  if (e.code === 401) {
+    OANDA.state = 'bad'; OStream.stop();
+    toast(OANDA.proxy ? "The site's OANDA connection was refused, so forex and gold use Kraken for now." : 'OANDA rejected the token, so forex and gold use the other sources again. Check it in Data sources.');
     switchSources();
+    return;
+  }
+  // Not answering (offline, or the proxy's free daily allowance is used up): use the other live sources and keep trying quietly.
+  OANDA.fails = (OANDA.fails || 0) + 1;
+  if (OANDA.fails >= 3 && !OStream.live) {
+    OANDA.state = 'offline'; OANDA.fails = 0; OStream.stop();
+    toast("OANDA isn't answering, so forex and gold use Kraken for now. It reconnects by itself.");
+    switchSources(); retryOanda(30000);
   }
 }
 setInterval(pollOanda, 1500);
@@ -2502,7 +2560,7 @@ let oandaRetry = null;
 function retryOanda(delay) {
   clearTimeout(oandaRetry);
   oandaRetry = setTimeout(async () => {
-    if (!OANDA.configured() || OANDA.active() || OANDA.state === 'bad') return;
+    if (!OANDA.configured() || OANDA.active() || (OANDA.state === 'bad' && !OANDA.proxy)) return;
     try {
       await OANDA.connect();
       toast('Reconnected to OANDA.'); switchSources();
@@ -2599,6 +2657,7 @@ function ensureTickerSubs() {
   }
   if (list.some(id => srcOf(id) === 'metal' && !(S.tickers[id] && S.tickers[id].src === 'metal'))) pollMetals();
   if (list.some(id => srcOf(id) === 'oanda' && !(S.tickers[id] && S.tickers[id].src === 'oanda'))) pollOanda();
+  OStream.sync();
   if (list.some(id => srcOf(id) === 'kraken' && !(S.tickers[id] && S.tickers[id].src === 'kraken'))) pollKraken();
   list.filter(id => srcOf(id) === 'demo' && !(S.tickers[id] && S.tickers[id].src === 'demo')).forEach(id => { const t = Demo.ticker(id); if (t) onTicker(t); });
   const td = list.filter(id => srcOf(id) === 'td');
