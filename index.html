@@ -1536,7 +1536,39 @@ function drawOverlay(m) {
     octx.strokeStyle = C.accent; octx.lineWidth = 1.5; octx.setLineDash([5, 4]); seg(x, 0, x, H); octx.setLineDash([]);
   }
   octx.restore();
+  drawBarTimer(m, W, H);
 }
+// Time left in the live bar, shown right under the live price on the price scale (like TradingView).
+function barEnd() {
+  if (!S.ready || R.on || !S.bars.length || srcOf(S.symbol) === 'demo') return null;
+  const cls = classOf(S.symbol), now = Date.now() / 1000;
+  if (!openNow(S.symbol) && !isOpenAt(cls, now)) return null;
+  let end = S.bars[S.bars.length - 1].time + tfOf(S.tf).sec;
+  if (cls === 'stock' && tfOf(S.tf).sec < DAY) { const p = ny(now); end = Math.min(end, sessOpen(p.y, p.m, p.d) + 23400); }
+  return end;
+}
+function inkOn(hex) {   // dark or light text for a coloured label, the way the chart library picks it
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim()); if (!m) return '#fff';
+  const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  return 0.199 * r + 0.687 * g + 0.114 * b > 160 ? '#000' : '#fff';
+}
+function drawBarTimer(m, W, H) {
+  const end = barEnd(); if (end == null || !S.main) return;
+  const pt = mainPoint(S.bars.length - 1); if (!pt) return;
+  const price = pt.close != null ? pt.close : pt.value, y = m.y(price);
+  if (y == null || y < 0 || y > H) return;
+  const col = S.type === 'line' || S.type === 'area' ? C.draw : pt.close >= pt.open ? C.up : C.down;
+  octx.font = `11px ${FONT_DATA}`;
+  // same width as the chart's own price label just above, so the two read as one tag
+  const x = W, w = TIMER.left + 1 + octx.measureText(price.toFixed(S.prec)).width + TIMER.right;
+  const top = Math.round(y + TIMER.gap), h = TIMER.h;
+  octx.fillStyle = col; octx.beginPath();
+  if (octx.roundRect) octx.roundRect(x, top, w, h, [0, 0, 2, 2]); else octx.rect(x, top, w, h);
+  octx.fill();
+  octx.fillStyle = inkOn(col); octx.textBaseline = 'middle'; octx.textAlign = 'left';
+  octx.fillText(fmtCountdown(end - Date.now() / 1000), x + TIMER.left, top + h / 2 + 0.5);
+}
+const TIMER = { gap: 8, h: 15, left: 8.5, right: 6 };
 function frame() {
   requestAnimationFrame(frame);
   if (document.hidden) return;
@@ -2986,6 +3018,7 @@ $('#scAuto').onclick = () => { S.main.priceScale().applyOptions({ autoScale: tru
 let lastOpenState = '';
 function clockTick() {
   const d = new Date(), now = d.getTime() / 1000;
+  markDirty();   // the timer under the live price ticks every second
   $('#clock').textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${tzLabel()}`;
   const cd = $('#countdown'); cd.replaceChildren();
   if (S.bars.length) {
