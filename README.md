@@ -1,17 +1,17 @@
 # Wickline Charts
 
-Free live charts for crypto, US stocks, forex and gold, in your browser. It has candles, indicators, drawing tools, a watchlist and price alerts.
+Free live charts for crypto, US stocks, forex, gold, stock indices, commodities and bonds, in your browser. It has candles, indicators, drawing tools, bar replay, a watchlist, price alerts and optional Google sign-in.
 
 ## What's in this folder
 
 | File | What it is |
 |---|---|
-| `config.js` | **Your settings.** Site name, Twelve Data key, default chart and watchlist. This is the file you'll edit most. |
-| `index.html` | The whole app. You don't need to touch it to change settings. |
-| `oanda-worker.js` | Optional. A small free proxy (Cloudflare Worker) that shows OANDA prices to every visitor. See below. |
-| `favicon.svg`, `icon-*.png`, `apple-touch-icon.png` | The site icon (browser tab, phone home screen). |
-| `manifest.webmanifest` | Lets people add the site to their phone's home screen like an app. |
-| `og-image.png` | The preview picture shown when someone shares your link. |
+| `config.js` | **Your settings.** Site name, helper address, accounts, default chart and watchlist. This is the file you'll edit most. Never put a secret key here: everyone can read it. |
+| `index.html`, `app.js` | The app. You don't need to touch them to change settings. |
+| `vendor/` | The chart library and the sign-in library, served from your own site (with their licences). |
+| `privacy.html` | The privacy policy, linked from the sign-in window and the page footer. |
+| `oanda-worker.js` | Your Cloudflare helper. It keeps your OANDA token and Twelve Data key secret. See below. |
+| `favicon.svg`, `icon-*.png`, `apple-touch-icon.png`, `manifest.webmanifest`, `og-image.png` | Icons, phone home-screen support and the picture shown when someone shares your link. |
 
 ## Change a setting (no coding needed)
 
@@ -20,67 +20,62 @@ Free live charts for crypto, US stocks, forex and gold, in your browser. It has 
 3. Click **Commit changes**.
 4. Your live site updates in about a minute. Refresh the page to see it.
 
-## Turn on live stock prices
+## Where the prices come from
 
-Crypto, the major forex pairs and gold are always live, with no key needed. US stocks need a free key from Twelve Data:
+- **Crypto:** Binance public market data (live). Where Binance doesn't answer (for example in the UK and US), the page switches to OKX, then Bybit, automatically.
+- **Forex, gold, indices, commodities and bonds:** OANDA, through your Cloudflare helper. Without it, the 12 major forex pairs come from Kraken and gold follows PAX Gold, both live with no key.
+- **US stocks and ETFs:** Twelve Data, through your Cloudflare helper.
+- When a market can't be reached, the page shows real prices saved when it was built, clearly marked "saved". The older candles on those charts are illustrative.
 
-1. Sign up at <https://twelvedata.com/pricing> and pick the free **Basic** plan.
-2. Copy your API key from the Twelve Data dashboard.
-3. Paste it into `config.js` between the quotes on the `twelveDataKey:` line, then commit.
+Market data is for information only and is not financial advice.
 
-Things to know about the free plan:
+## Your Cloudflare helper (keeps your keys secret)
 
-- It allows **8 requests a minute and 800 a day**, shared by everyone who visits your site. To make that last, the page uses the key only for what the free sources don't cover: stocks, less common forex pairs and silver.
-- With the shared key, the open stock chart refreshes every minute and watchlist stock prices every 10 minutes. A visitor who pastes their own key under **Data sources** (the price badge, top right) gets a live stream instead.
-- Anyone can see the key in the page code. The worst that can happen is someone uses up your daily allowance.
-- When the allowance runs out, stocks show the last saved price until midnight UTC.
+`oanda-worker.js` runs free on Cloudflare. Your secret keys live in its settings, so they never reach visitors' browsers. It only allows reading market data: it can't place trades or see your balance. It also limits how fast any one visitor can call it, and shares answers between visitors so your free allowances last.
 
-## OANDA prices for forex and gold
+### Set it up or update it
 
-### Just for you (no setup)
+1. In Cloudflare, go to **Workers & Pages** and open your Worker (or **Create** one with **Start with Hello World!**, named `wickline-oanda`).
+2. Click **Edit code**, replace everything with the whole of `oanda-worker.js` from this repository, and click **Deploy**.
+3. In the Worker's **Settings → Variables and Secrets**, add:
+   - `OANDA_TOKEN` (type **Secret**): your OANDA token, from hub.oanda.com → Tools → API.
+   - `TD_KEY` (type **Secret**): your Twelve Data API key, from your Twelve Data dashboard.
+   - `ALLOWED_ORIGIN` (type **Text**): your site address, for example `https://yourname.github.io`.
+4. Put the Worker's address (for example `https://wickline-oanda.yourname.workers.dev`) in `proxy` in `config.js`.
 
-1. On the live site, click the price badge (top right) to open **Data sources**.
-2. Under **Forex & gold · OANDA**, paste your OANDA personal access token. To get one, sign in at <https://hub.oanda.com>, click **Tools → API → Generate**, and copy the token.
-3. Choose **Practice** or **Live** to match the account and press **Connect**.
-
-Forex and gold then come straight from OANDA, with bid, ask and spread. The token is saved only in that browser. It can place trades on your account, so only connect on your own device, and use a practice account if you can.
-
-### OANDA for everyone (free Cloudflare Worker, about 10 minutes)
-
-This shows OANDA prices to every visitor without putting your token in the page.
-
-1. Create a free account at <https://dash.cloudflare.com/sign-up>.
-2. Go to **Workers & Pages**, click **Create**, then **Start with Hello World!** (or **Create Worker**). Name it `wickline-oanda` and click **Deploy**.
-3. Click **Edit code**, delete what's there, paste the whole of `oanda-worker.js` from this repository, and click **Deploy**.
-4. Open the Worker's **Settings → Variables and Secrets**, click **Add**, choose type **Secret**, name it `OANDA_TOKEN`, paste your OANDA token as the value, and click **Deploy**. The Worker works out your account and whether it's Practice or Live by itself.
-5. Copy the Worker's address, for example `https://wickline-oanda.yourname.workers.dev`, and paste it into `oandaProxy` in `config.js`. Commit the change.
-
-The Worker only allows reading candles and prices. It can't place trades or see your balance. Prices stream to each visitor over one connection, so the free Cloudflare plan (100,000 requests a day) covers a lot of visitors. If the Worker ever stops answering, the page switches forex and gold to Kraken by itself and reconnects later.
-
-Optional settings for the Worker: `ALLOWED_ORIGIN` (your site address, so only your site can use it), `OANDA_ENV` (`practice` or `live`) and `OANDA_ACCOUNT` (a specific account ID).
+Twelve Data's free plan allows 8 requests a minute and 800 a day, shared by every visitor. When it runs out, stocks show their saved price until midnight UTC. A visitor can paste their own free key under **Data sources** (the price badge, top right); it stays in their browser and goes only to Twelve Data.
 
 Before showing OANDA prices to the public, check OANDA's terms. Brokers often license their price data for your own use only.
 
+## Accounts (Sign in with Google)
+
+People can use the site without signing in. Signing in saves their watchlist, drawings, indicators, alerts and chart settings to their account, so they follow them to any device. Accounts live in Supabase, where database rules let each person read and change only their own data. **Delete my account** in the profile menu removes an account and everything saved to it.
+
+The setup has three parts:
+
+1. **Google Cloud** (console.cloud.google.com): an OAuth client of type *Web application*, with your site as an authorized JavaScript origin and `https://<your-project>.supabase.co/auth/v1/callback` as the authorized redirect URI. Publish the app under **Audience** so anyone can sign in.
+2. **Supabase** (Authentication): turn on the Google provider with that client's ID and secret. Under URL Configuration, set the Site URL to your site and add `https://yourname.github.io/wickline/**` to the redirect URLs.
+3. **config.js:** `supabaseUrl` and `supabaseKey` (the *publishable* key from Supabase's API settings). These two are meant to be public.
+
+## Security
+
+- No secret keys are in this repository or the page. They live in Cloudflare's encrypted settings.
+- A strict Content Security Policy only lets the page run its own code and talk to the market-data, helper and account services it uses.
+- The chart and sign-in libraries are served from this site, not from a third-party CDN.
+- The page refuses to run inside another website's frame.
+- Saved data coming back from an account is checked before it's used.
+- Keep two-step sign-in turned on for the accounts that control the site: GitHub, Google, Cloudflare, Supabase, OANDA and Twelve Data.
+
 ## Change something bigger
 
-- **Rename the site:** change `siteName` in `config.js`. To also change the name shown in search results and link previews, edit the `<title>` and `og:title` lines near the top of `index.html`.
+- **Rename the site:** change `siteName` in `config.js`. To also change the name in search results and link previews, edit the `<title>` and `og:title` lines near the top of `index.html`.
 - **Default watchlist:** edit `defaultWatchlist` in `config.js`. It only applies to first-time visitors, because returning visitors keep their own list.
-- **Ticker formats:** crypto as a Binance pair (`BTCUSDT`, `ETHBTC`), US stocks and ETFs as tickers (`AAPL`, `SPY`), forex with a slash (`EUR/USD`, `XAU/USD`), indices, commodities and bonds as OANDA names with a slash (`SPX500/USD`, `WTICO/USD`, `USB10Y/USD`).
+- **Ticker formats:** crypto as a Binance pair (`BTCUSDT`), US stocks and ETFs as tickers (`AAPL`, `SPY`), forex with a slash (`EUR/USD`, `XAU/USD`), indices, commodities and bonds as OANDA names with a slash (`SPX500/USD`, `WTICO/USD`, `USB10Y/USD`).
 
 ## Share a chart
 
 The address bar always matches the chart you're looking at. For example, `?s=AAPL&tf=1d` opens Apple on daily candles. You can also click the link icon, top right, to copy the link.
 
-## Where the data comes from
-
-- Crypto: Binance public market data (live). Where Binance doesn't answer (for example in the UK and US), the page switches to OKX, then Bybit, automatically.
-- Forex and gold: OANDA when the site's Worker is set up, or when a visitor connects their own account. Otherwise the 12 major forex pairs come from Kraken and gold follows PAX Gold (PAXG), both live with no key. Other pairs use Twelve Data, and silver uses gold-api.com.
-- US stocks and ETFs: Twelve Data (needs the key in `config.js`).
-- Stock indices (S&P 500, Nasdaq, Dow, FTSE, DAX, Nikkei…), commodities (oil, gas, copper, platinum, grains, sugar) and government bonds: OANDA, through the same Worker as forex. Without OANDA they show their saved close from Tue 13 Oct 2026.
-- Without a live connection, the page shows real prices saved on 9–12 October 2026, clearly marked "Not live". The older candles on those charts are illustrative.
-
-Market data is for information only and is not financial advice.
-
 ## Credits
 
-Charts are drawn with [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) (Apache 2.0 licence). The "Charts by TradingView Lightweight Charts" line under the side panel is the attribution its licence asks for, so keep it if you change the page. The logo on the chart is your own site logo.
+Charts are drawn with [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) (Apache 2.0 licence). The "Charts by TradingView Lightweight Charts" line under the side panel is the attribution its licence asks for, so keep it if you change the page. Sign-in uses [supabase-js](https://github.com/supabase/supabase-js) (MIT licence).

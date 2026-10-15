@@ -4,27 +4,26 @@
   Change the values below, then save (on GitHub: "Commit changes").
   Your live site updates about a minute later.
   Keep the quote marks and commas exactly as they are.
+
+  Never put a secret here (an OANDA token, a Twelve Data key, a password). Everyone can read this file.
+  Secret keys belong in your Cloudflare helper's settings instead (see the README).
 */
 window.WICKLINE_CONFIG = {
 
   // The name shown in the top-left corner and in the browser tab.
   siteName: 'Wickline',
 
-  // Free Twelve Data API key: gives every visitor live US stock and forex prices.
-  // Get one at https://twelvedata.com/pricing (Basic plan, free) and paste it between the quotes.
-  // Leave it empty and stocks and forex show saved prices instead. Crypto is always live.
-  // Note: anyone can see this key in the page code. The free plan allows 800 requests a day.
-  twelveDataKey: 'dcd2425cc30a4cf889622353cedb4fa0',
+  // Your Cloudflare helper (oanda-worker.js). It keeps your OANDA token and Twelve Data key secret
+  // and gives every visitor live forex, gold, indices, commodities, bonds and US stocks.
+  proxy: 'https://wickline-oanda.muhammadmuzammal266.workers.dev',
 
-  // OANDA prices for forex and gold, for EVERY visitor (optional).
-  // Leave empty to let each person connect their own OANDA account under "Data sources".
-  // To use your account for everyone, set up the free proxy in oanda-worker.js (see the README)
-  // and paste its address here, for example 'https://wickline-oanda.yourname.workers.dev'.
-  // Never paste your OANDA token itself into this file.
-  oandaProxy: 'https://wickline-oanda.muhammadmuzammal266.workers.dev',
+  // Accounts (Sign in with Google), from your Supabase project's API settings.
+  // These two values are meant to be public: the database rules keep each person's data private.
+  supabaseUrl: 'https://glrpxhvjixgybqwqwryq.supabase.co',
+  supabaseKey: 'sb_publishable_UVYDkAhtRroQPYYEzA5pew_jKF1u72l',
 
   // The chart a first-time visitor sees.
-  // Crypto: a Binance pair such as 'BTCUSDT'. Stock: 'AAPL'. Forex: 'EUR/USD'.
+  // Crypto: a Binance pair such as 'BTCUSDT'. Stock: 'AAPL'. Forex: 'EUR/USD'. Index: 'SPX500/USD'.
   defaultSymbol: 'BTCUSDT',
 
   // One of: '1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'
