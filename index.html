@@ -29,7 +29,7 @@
   --bg:#e8ebf0; --panel:#fbfcfd; --panel-2:#eef1f6; --line:#d5dae3; --grid:#eef1f5;
   --fg:#141922; --muted:#586174; --faint:#8b94a5;
   --accent:#a65f06; --accent-soft:#f5e7d2;
-  --up:#0a9a7c; --down:#d8364a; --draw:#2f6fe4; --cross-label:#3a4252;
+  --up:#0a9a7c; --down:#d8364a; --draw:#2f6fe4; --cross-label:#3a4252; --up-ink:#077a62; --down-ink:#bf2a3e;
   --font-display:'Bricolage Grotesque','Segoe UI',system-ui,sans-serif;
   --font-body:'IBM Plex Sans','Segoe UI',system-ui,-apple-system,sans-serif;
   --font-data:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -39,7 +39,7 @@
     --bg:#07090e; --panel:#0e131b; --panel-2:#161d28; --line:#212a38; --grid:#141b25;
     --fg:#e3e7ee; --muted:#8a94a7; --faint:#5b6578;
     --accent:#f0a63a; --accent-soft:#33260f;
-    --up:#26b892; --down:#f05268; --draw:#5b8ff9; --cross-label:#38435a;
+    --up:#26b892; --down:#f05268; --draw:#5b8ff9; --cross-label:#38435a; --up-ink:#26b892; --down-ink:#f05268;
     color-scheme:dark;
   }
 }
@@ -47,7 +47,7 @@
   --bg:#07090e; --panel:#0e131b; --panel-2:#161d28; --line:#212a38; --grid:#141b25;
   --fg:#e3e7ee; --muted:#8a94a7; --faint:#5b6578;
   --accent:#f0a63a; --accent-soft:#33260f;
-  --up:#26b892; --down:#f05268; --draw:#5b8ff9; --cross-label:#38435a;
+  --up:#26b892; --down:#f05268; --draw:#5b8ff9; --cross-label:#38435a; --up-ink:#26b892; --down-ink:#f05268;
   color-scheme:dark;
 }
 
@@ -144,6 +144,134 @@ select option{background:var(--panel);color:var(--fg)}
 .sw[aria-pressed="true"]{box-shadow:0 0 0 2px var(--fg)}
 .danger{height:26px;padding:0 10px;color:var(--down);font-weight:500}
 .danger:hover{background:color-mix(in srgb,var(--down) 12%,transparent)}
+/* pages: Chart / Journal */
+.views{display:flex;gap:2px;padding:2px;background:var(--panel-2);border-radius:8px}
+.view-tab{height:26px;padding:0 12px;border-radius:6px;display:inline-flex;align-items:center;font-weight:600;font-size:12.5px;color:var(--muted);text-decoration:none}
+.view-tab:hover{color:var(--fg)}
+.view-tab[aria-current="page"]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(8,12,20,.1)}
+body[data-view="journal"] .app>.tools,body[data-view="journal"] .app>.stage,body[data-view="journal"] .app>.side{display:none}
+body[data-view="journal"] .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn){display:none!important}
+
+/* journal */
+.journal{grid-column:1/-1;grid-row:2/-1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.j-head{display:flex;align-items:flex-end;gap:10px 16px;flex-wrap:wrap;padding:6px 4px 2px}
+.j-head h1{margin:0;font-family:var(--font-display);font-size:24px;font-weight:800;letter-spacing:-.02em}
+.j-sub{margin:2px 0 0;font-size:12.5px;color:var(--muted)}
+.j-sub button{color:var(--accent);font-weight:600;text-decoration:underline;text-underline-offset:2px;padding:0}
+.j-actions{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.j-filters{display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.j-filters select.field,.j-filters input.field{flex:0 0 auto;width:auto;font-family:var(--font-body)}
+.j-filters input.field{width:130px}
+.j-filters .seg{background:var(--panel-2);border-radius:6px;padding:2px}
+.j-filters .seg .btn{height:26px;font-family:var(--font-body);font-size:12.5px}
+.j-chip-day{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 6px 0 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:600}
+.j-chip-day button{width:20px;height:20px;display:grid;place-items:center;border-radius:50%;color:inherit}
+.j-chip-day svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2}
+.j-kpis{display:grid;grid-template-columns:1.5fr repeat(4,minmax(0,1fr));gap:6px}
+.j-tile{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:11px 14px;min-width:0}
+.j-tile .k{font-size:11.5px;color:var(--muted);margin:0 0 4px}
+.j-tile .v{font-size:22px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.j-tile .s{font-size:11.5px;color:var(--faint);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.j-tile.hero .v{font-size:34px;line-height:1.1}
+.j-tile .v .unit{font-size:.55em;color:var(--muted);font-weight:500;margin-left:3px}
+.j-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:6px}
+.j-card{padding-bottom:10px;min-width:0}
+.j-card .card-h{justify-content:flex-start}
+.j-card .card-h .read{margin-left:auto;font-family:var(--font-data);font-size:11.5px;letter-spacing:0;text-transform:none;font-weight:500;color:var(--muted)}
+.j-eq{height:250px;margin:0 6px}
+.j-noeq{height:250px;display:grid;place-items:center;color:var(--faint);font-size:12.5px;text-align:center;padding:0 20px}
+.j-cal-nav{margin-left:auto;display:flex;align-items:center;gap:2px}
+.j-cal-nav .icon-btn{width:26px;height:26px}
+.j-cal-nav b{font-size:12px;letter-spacing:0;text-transform:none;color:var(--fg);min-width:110px;text-align:center;font-weight:600}
+.j-cal-total{font-family:var(--font-data);font-size:11.5px;letter-spacing:0;text-transform:none;font-weight:500;color:var(--muted)}
+.j-cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;padding:0 10px}
+.j-cal .dow{font-size:10.5px;color:var(--faint);text-align:center;padding:2px 0 3px}
+.j-day{min-height:50px;border-radius:6px;background:var(--panel-2);display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;padding:4px 5px;text-align:left;min-width:0}
+.j-day .d{font-size:10.5px;color:var(--muted)}
+.j-day .a{font-family:var(--font-data);font-size:11px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.j-day.empty{background:transparent}
+.j-day.today{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.j-day.sel{box-shadow:inset 0 0 0 2px var(--fg)}
+.j-day:not(.empty):hover{filter:brightness(.97)}
+.j-bars{display:flex;flex-direction:column;gap:2px;padding:2px 12px 0}
+.j-bar{display:grid;grid-template-columns:minmax(64px,30%) minmax(0,1fr) auto;align-items:center;gap:10px;min-height:28px;border-radius:6px;padding:0 4px}
+.j-bar:hover,.j-bar:focus-visible{background:var(--panel-2);outline:none}
+.j-bar .nm{font-family:var(--font-data);font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.j-bar .tr{position:relative;height:14px}
+.j-bar .tr::before{content:"";position:absolute;left:50%;top:-6px;bottom:-6px;width:1px;background:var(--line)}
+.j-bar .tr i{position:absolute;top:0;height:14px}
+.j-bar .tr i.up{left:calc(50% + 1px);background:var(--up);border-radius:0 4px 4px 0}
+.j-bar .tr i.dn{right:calc(50% + 1px);background:var(--down);border-radius:4px 0 0 4px}
+.j-bar .val{font-family:var(--font-data);font-size:12px;font-variant-numeric:tabular-nums;text-align:right;min-width:84px}
+.j-none{color:var(--faint);font-size:12.5px;padding:14px 4px}
+.j-table{display:flex;flex-direction:column;padding:0 6px}
+.j-row{display:grid;grid-template-columns:118px minmax(84px,1fr) 64px repeat(3,minmax(70px,1fr)) minmax(96px,1fr) 56px minmax(80px,1fr) 70px;gap:8px;align-items:center;padding:8px 6px;border-radius:6px;font-size:12.5px;text-align:left;width:100%;min-width:0}
+.j-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.j-row.h{color:var(--faint);font-size:11px;padding-top:2px;padding-bottom:4px;border-bottom:1px solid var(--line);border-radius:0}
+.j-row:not(.h){cursor:pointer;border-bottom:1px solid var(--grid)}
+.j-row:not(.h):hover,.j-row:not(.h):focus-visible{background:var(--panel-2);outline:none}
+.j-row .num{font-family:var(--font-data);font-variant-numeric:tabular-nums;text-align:right}
+.j-row .sym{font-family:var(--font-data);font-weight:600}
+.j-row .sym em{font-style:normal;font-weight:400;color:var(--faint)}
+.j-row .muted{color:var(--muted)}
+.side-pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:var(--panel-2);color:var(--fg)}
+.side-pill.long::before{content:"▲ ";color:var(--up)}
+.side-pill.short::before{content:"▼ ";color:var(--down)}
+.open-pill{font-size:10.5px;font-weight:600;color:var(--accent);background:var(--accent-soft);padding:2px 7px;border-radius:999px}
+.stars{color:var(--accent);letter-spacing:1px}
+.stars .off{color:var(--line)}
+.j-more{align-self:center;margin-top:8px}
+.j-empty{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:40px 20px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px}
+.j-empty h2{margin:0;font-family:var(--font-display);font-size:20px;font-weight:800;letter-spacing:-.015em}
+.j-empty p{margin:0;max-width:52ch;color:var(--muted);line-height:1.55}
+.j-tip{position:fixed;z-index:70;pointer-events:none;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:8px;box-shadow:0 10px 30px rgba(5,8,14,.2);padding:8px 10px;font-size:12px;line-height:1.5;max-width:240px}
+.j-tip b{font-family:var(--font-data);font-size:13px}
+.j-tip span{color:var(--muted)}
+.j-tip .key{display:inline-block;width:12px;height:2px;border-radius:1px;vertical-align:middle;margin-right:6px}
+.up-t{color:var(--up-ink)}.dn-t{color:var(--down-ink)}
+/* trade form */
+#tradeDlg{width:min(680px,calc(100vw - 24px));max-height:calc(100vh - 32px)}
+#tForm>*{flex-shrink:0}
+.t-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 12px}
+.t-f{display:flex;flex-direction:column;gap:4px;min-width:0}
+.t-f>span{font-size:11.5px;font-weight:600;color:var(--muted)}
+.t-f>span i{font-style:normal;font-weight:400;color:var(--faint)}
+.t-f .field{width:100%;flex:none;height:32px;font-family:var(--font-body)}
+.t-f .field.t-notes{height:auto}
+.t-wide{grid-column:span 2}
+.t-side{background:var(--panel-2);border-radius:6px;padding:2px;height:30px}
+.t-side .btn{flex:1;justify-content:center;height:26px;font-family:var(--font-body);font-size:12.5px}
+.t-side .btn[data-side="long"].on{color:var(--up);background:var(--panel)}
+.t-side .btn[data-side="short"].on{color:var(--down);background:var(--panel)}
+.t-calc{background:var(--panel-2);border-radius:8px;padding:9px 12px;font-size:12.5px;color:var(--muted);display:flex;gap:6px 16px;flex-wrap:wrap;align-items:baseline}
+.t-calc b{font-family:var(--font-data);font-size:15px;color:var(--fg)}
+.t-tags{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.t-tag{height:26px;padding:0 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--muted)}
+.t-tag[aria-pressed="true"]{background:var(--fg);border-color:var(--fg);color:var(--panel)}
+.t-tags input.field{width:130px;height:26px;border-radius:999px;font-size:12px;padding:0 10px}
+.t-rate{display:flex;gap:2px}
+.t-rate button{width:32px;height:32px;font-size:20px;line-height:1;color:var(--line);border-radius:6px}
+.t-rate button.on{color:var(--accent)}
+.t-rate button:hover{background:var(--panel-2)}
+.t-notes{height:auto;min-height:84px;padding:8px 9px;resize:vertical;line-height:1.5}
+.t-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding-top:4px}
+.selbar .ghost{height:26px;padding:0 10px;font-size:12px}
+@media (max-width: 880px){
+  .journal{grid-row:auto;overflow:visible}
+  .j-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .j-tile.hero{grid-column:1/-1}
+  .j-tile:not(.hero) .v{font-size:17px}
+  .j-tile .s{white-space:normal}
+  .j-grid{grid-template-columns:minmax(0,1fr)}
+  .j-row.h{display:none}
+  .j-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"sym pnl" "meta r";gap:2px 10px;padding:10px 6px}
+  .j-row>.c-date,.j-row>.c-side,.j-row>.c-entry,.j-row>.c-exit,.j-row>.c-qty,.j-row>.c-strat,.j-row>.c-rate{display:none}
+  .j-row>.c-sym{grid-area:sym}.j-row>.c-pnl{grid-area:pnl}.j-row>.c-r{grid-area:r}
+  .j-row>.c-meta{display:block!important;grid-area:meta;color:var(--muted);font-size:11.5px}
+  .t-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .t-wide{grid-column:1/-1}
+}
+.j-row>.c-meta{display:none}
 /* account */
 .acct-btn{height:30px;display:inline-flex;align-items:center;gap:7px;padding:0 12px 0 9px;border:1px solid var(--line);border-radius:999px;font-weight:500;font-size:12.5px;color:var(--fg);white-space:nowrap}
 .acct-btn:hover{background:var(--panel-2)}
@@ -389,6 +517,10 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2.5v4M8 17.5v4M16 5v3.5M16 15.5V20" style="stroke:var(--muted);stroke-width:1.8;stroke-linecap:round;fill:none"/><rect x="5" y="6.5" width="6" height="11" rx="1.6" style="fill:var(--up)"/><rect x="13" y="8.5" width="6" height="7" rx="1.6" style="fill:var(--accent)"/></svg>
       <span class="word">Wickline</span>
     </div>
+    <nav class="views" aria-label="Pages">
+      <a class="view-tab" href="./" data-view="chart" aria-current="page">Chart</a>
+      <a class="view-tab" href="?view=journal" data-view="journal" aria-current="false">Journal</a>
+    </nav>
     <button class="btn sym-btn" id="symBtn" title="Search crypto, stocks and forex (or just start typing)"><span id="symName">BTCUSDT</span><span class="ex" id="symEx">Binance</span></button>
     <span class="vsep"></span>
     <div class="seg" id="tfSeg" role="group" aria-label="Timeframe"></div>
@@ -431,6 +563,7 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
       <div class="float selbar" id="selbar" hidden>
         <span class="nm" id="selName">Trend line</span>
         <span class="swatches" id="selSw"></span>
+        <button class="ghost" id="selJournal" hidden>Add to journal</button>
         <button class="danger" id="selDel">Delete</button>
       </div>
       <div class="float replay" id="rpBar" hidden role="toolbar" aria-label="Bar replay">
@@ -491,6 +624,59 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
     </section>
     <p class="credit"><a href="privacy.html" target="_blank" rel="noopener">Privacy</a> · Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></p>
   </aside>
+
+  <section class="journal" id="journal" hidden aria-label="Trade journal">
+    <div class="j-head">
+      <div><h1>Trade journal</h1><p class="j-sub" id="jSub"></p></div>
+      <div class="j-actions">
+        <button class="ghost" id="jImport" type="button">Import CSV</button>
+        <button class="ghost" id="jExport" type="button">Export CSV</button>
+        <button class="primary" id="jNew" type="button">+ New trade</button>
+        <input type="file" id="jFile" accept=".csv,text/csv" hidden>
+      </div>
+    </div>
+    <div class="j-filters" role="group" aria-label="Filter trades">
+      <select class="field" id="jRange" aria-label="Date range">
+        <option value="all">All time</option><option value="week">This week</option><option value="month">This month</option>
+        <option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="year">This year</option>
+      </select>
+      <div class="seg" id="jSide" role="group" aria-label="Side">
+        <button class="btn on" type="button" data-v="all" aria-pressed="true">All</button><button class="btn" type="button" data-v="long" aria-pressed="false">Long</button><button class="btn" type="button" data-v="short" aria-pressed="false">Short</button>
+      </div>
+      <select class="field" id="jResult" aria-label="Result"><option value="all">All results</option><option value="win">Winners</option><option value="loss">Losers</option><option value="open">Open trades</option></select>
+      <select class="field" id="jStrategy" aria-label="Strategy"><option value="">All strategies</option></select>
+      <input class="field" id="jSearch" placeholder="Symbol" autocomplete="off" spellcheck="false" aria-label="Search by symbol">
+      <span id="jDayChip"></span>
+      <span class="spacer"></span>
+      <label class="fine" for="jCcy">Account currency</label>
+      <select class="field" id="jCcy" aria-label="Account currency"></select>
+    </div>
+    <div class="j-empty" id="jEmpty" hidden>
+      <h2>Your trading journal</h2>
+      <p>Log each trade with its entry, exit, stop and notes. The journal works out your results, win rate and R-multiples, and shows what's working on a calendar and an equity curve.</p>
+      <button class="primary" id="jFirst" type="button">+ Add your first trade</button>
+      <p class="fine">Tip: draw a long or short position on the chart, select it and press <b>Add to journal</b>.</p>
+    </div>
+    <div class="j-body" id="jBody">
+      <div class="j-kpis" id="jKpis"></div>
+      <div class="j-grid" style="margin-top:6px">
+        <div class="card j-card"><div class="card-h">Equity curve<span class="read" id="jEqRead"></span></div><div class="j-eq" id="jEq"></div></div>
+        <div class="card j-card">
+          <div class="card-h">Daily results <span class="j-cal-total" id="jCalTotal"></span>
+            <span class="j-cal-nav"><button class="icon-btn" id="jPrev" type="button" aria-label="Previous month"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><b id="jMonth"></b><button class="icon-btn" id="jNext" type="button" aria-label="Next month"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button></span>
+          </div>
+          <div class="j-cal" id="jCal" role="grid" aria-label="Results by day"></div>
+        </div>
+        <div class="card j-card"><div class="card-h">Results by symbol</div><div class="j-bars" id="jBySym"></div></div>
+        <div class="card j-card"><div class="card-h">Results by strategy</div><div class="j-bars" id="jByStrat"></div></div>
+      </div>
+      <div class="card j-card" style="margin-top:6px">
+        <div class="card-h">Trades <span class="count" id="jCount"></span></div>
+        <div class="j-table" id="jTable" role="table" aria-label="Trades"></div>
+        <button class="ghost j-more" id="jMore" type="button" hidden>Show more</button>
+      </div>
+    </div>
+  </section>
 </div>
 
 <dialog id="searchDlg" aria-label="Symbol search">
@@ -565,6 +751,33 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
 </dialog>
 
 <div class="acct-menu" id="acctMenu" hidden role="dialog" aria-label="Your account"></div>
+<div class="j-tip" id="jTip" hidden role="tooltip"></div>
+
+<dialog id="tradeDlg" aria-label="Trade">
+  <div class="dlg-h"><h2 id="tTitle">New trade</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <form class="dlg-body" id="tForm" novalidate>
+    <div class="t-grid">
+      <label class="t-f t-wide"><span>Symbol</span><input class="field" id="tSym" list="tSymList" autocomplete="off" spellcheck="false" placeholder="e.g. AAPL, EUR/USD, BTCUSDT, SPX500/USD"></label>
+      <div class="t-f"><span>Side</span><div class="seg t-side" id="tSide" role="radiogroup" aria-label="Side"><button type="button" class="btn" data-side="long" role="radio">Long</button><button type="button" class="btn" data-side="short" role="radio">Short</button></div></div>
+      <label class="t-f"><span>Entry time</span><input class="field" id="tOpen" type="datetime-local"></label>
+      <label class="t-f"><span>Entry price</span><input class="field" id="tEntry" inputmode="decimal" autocomplete="off"></label>
+      <label class="t-f"><span>Size <i>units, shares or lots</i></span><input class="field" id="tQty" inputmode="decimal" autocomplete="off"></label>
+      <label class="t-f"><span>Exit time</span><input class="field" id="tClose" type="datetime-local"></label>
+      <label class="t-f"><span>Exit price <i>empty if still open</i></span><input class="field" id="tExit" inputmode="decimal" autocomplete="off"></label>
+      <label class="t-f"><span>Fees</span><input class="field" id="tFees" inputmode="decimal" autocomplete="off" placeholder="0"></label>
+      <label class="t-f"><span>Stop loss</span><input class="field" id="tStop" inputmode="decimal" autocomplete="off"></label>
+      <label class="t-f"><span>Take profit</span><input class="field" id="tTarget" inputmode="decimal" autocomplete="off"></label>
+      <label class="t-f"><span>Net result <i id="tPnlHint">worked out for you</i></span><input class="field" id="tPnl" inputmode="decimal" autocomplete="off"></label>
+      <label class="t-f t-wide"><span>Strategy or setup</span><input class="field" id="tStrat" list="tStratList" maxlength="60" autocomplete="off" placeholder="e.g. Breakout, Pullback, News"></label>
+    </div>
+    <div class="t-calc" id="tCalc" aria-live="polite"></div>
+    <div class="t-f"><span>Tags</span><div class="t-tags" id="tTags"></div></div>
+    <div class="t-f"><span>How well did you follow your plan?</span><div class="t-rate" id="tRate" role="radiogroup" aria-label="Rating"></div></div>
+    <label class="t-f"><span>Notes</span><textarea class="field t-notes" id="tNotes" maxlength="5000" rows="4" placeholder="Why you took the trade, what happened and what you learned"></textarea></label>
+    <div class="t-actions"><button type="button" class="danger" id="tDel" hidden>Delete</button><button type="button" class="ghost" id="tChart" hidden>Open on chart</button><span class="spacer"></span><button type="button" class="ghost" data-close>Cancel</button><button type="submit" class="primary" id="tSave">Save trade</button></div>
+  </form>
+  <datalist id="tSymList"></datalist><datalist id="tStratList"></datalist>
+</dialog>
 
 <dialog id="signInDlg" aria-label="Sign in">
   <div class="dlg-h"><h2>Sign in</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>

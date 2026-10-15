@@ -47,9 +47,15 @@ Twelve Data's free plan allows 8 requests a minute and 800 a day, shared by ever
 
 Before showing OANDA prices to the public, check OANDA's terms. Brokers often license their price data for your own use only.
 
+## Trade journal
+
+The **Journal** tab (top left) is a trading journal. People log each trade (symbol, long or short, entry and exit, size, fees, stop, target, strategy, tags, a 1–5 rating and notes) and the page works out the result, the R-multiple and the holding time. It shows the net result, win rate, profit factor, average win and loss, largest drawdown, an equity curve, a calendar of daily results, and results by symbol and by strategy, with filters. Trades can be exported to and imported from CSV, opened on the chart, and a long or short position drawn on the chart can be added to the journal in one click. Journal trades also appear as markers on the chart.
+
+Signed-in people's journals are kept in their account (the `trades` table in Supabase, private to each person). Without signing in, the journal is kept in the browser and moves into the account at the next sign-in.
+
 ## Accounts (Sign in with Google)
 
-People can use the site without signing in. Signing in saves their watchlist, drawings, indicators, alerts and chart settings to their account, so they follow them to any device. Accounts live in Supabase, where database rules let each person read and change only their own data. **Delete my account** in the profile menu removes an account and everything saved to it.
+People can use the site without signing in. Signing in saves their watchlist, drawings, indicators, alerts, chart settings and trade journal to their account, so they follow them to any device. Accounts live in Supabase, where database rules let each person read and change only their own data. **Delete my account** in the profile menu removes an account and everything saved to it.
 
 The setup has three parts:
 

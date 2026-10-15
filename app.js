@@ -44,7 +44,7 @@ if (!LWC) {
   $('#veilText').textContent = "The chart library didn't load. Check your internet connection and reload the page.";
   return;
 }
-const { createChart, createTextWatermark, CandlestickSeries, BarSeries, LineSeries, AreaSeries, HistogramSeries, LineStyle, CrosshairMode } = LWC;
+const { createChart, createTextWatermark, CandlestickSeries, BarSeries, LineSeries, AreaSeries, HistogramSeries, BaselineSeries, LineStyle, CrosshairMode } = LWC;
 
 /* ---------- storage (per browser, optional) ---------- */
 const NS = 'wickline:';
@@ -542,7 +542,7 @@ function createMain() {
   if (p0 && p0.setPreserveEmptyPane) p0.setPreserveEmptyPane(true);
   orderPane0();
   if (S.bars.length) setMainData();
-  syncAlertLines();
+  syncAlertLines(); syncTradeMarks();
 }
 function orderPane0() {
   const v = S.rts.find(r => r.inst.type === 'vol');
@@ -1196,6 +1196,7 @@ function select(id) {
   if (!d) { S.selected = null; bar.hidden = true; markDirty(); return; }
   bar.hidden = false; $('#hint').hidden = true;
   $('#selName').textContent = TOOL_NAMES[d.type] || 'Drawing';
+  $('#selJournal').hidden = !isPos(d);
   const sw = $('#selSw'); sw.replaceChildren(); sw.hidden = isPos(d);
   for (const c of SEL_COLORS) {
     const b = el('button', 'sw'); b.style.background = c || C.draw;
@@ -2356,6 +2357,7 @@ async function loadChart() {
     setMainData(); S.rts.forEach(setRtData);
     chart.timeScale().scrollToRealTime();
     S.main.priceScale().applyOptions({ autoScale: true });
+    syncTradeMarks(); if (S.focusTime) focusChart();
     veil(null); S.cross = null; updateLegend(); renderDetails(); syncAlertLines(); markDirty(); clockTick();
     if (src === 'binance' || src === 'paxg') {
       klineSock = Live.kline(binId(S.symbol), S.tf, onBar);
@@ -2444,7 +2446,7 @@ function rpRebase(bars) {   // a new symbol or timeframe loaded during a replay
 }
 function rpRedraw() {
   try { chart.clearCrosshairPosition(); } catch (e) { /* older library */ }
-  setMainData(); S.rts.forEach(setRtData);
+  setMainData(); S.rts.forEach(setRtData); syncTradeMarks();
   chart.timeScale().scrollToRealTime();
   S.main.priceScale().applyOptions({ autoScale: true });
   S.cross = null; updateLegend(); syncAlertLines(); markDirty(); clockTick();
@@ -2892,10 +2894,11 @@ function shareQuery() {
 }
 function shareUrl() { return location.href.split(/[?#]/)[0] + shareQuery(); }
 function updateUrl() {
-  if (!S.ready || S.sandbox) return;
+  if (!S.ready || S.sandbox || curView() === 'journal') return;
   try { history.replaceState(null, '', shareQuery()); } catch (e) { /* address can't be changed here */ }
 }
 function updateDocTitle() {
+  if (curView() === 'journal') { document.title = `Trade journal · ${CFG.siteName}`; return; }
   const t = S.tickers[S.symbol];
   const px = t ? ' ' + fmtP(t.last, t.prec) : '';
   const pct = t && t.ref ? ' ' + fmtPct(((t.last - t.ref) / t.ref) * 100) : '';
@@ -2977,6 +2980,7 @@ document.addEventListener('keydown', e => {
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea' || e.target.isContentEditable) return;
   if (document.querySelector('dialog[open]')) return;
+  if (curView() === 'journal') return;
   if (e.key === 'Escape' && R.picking) { rpCancelPick(); return; }
   if (e.key === 'Escape') { if (S.tool !== 'cursor' || S.draft) finishTool(); select(null); S.measure = null; markDirty(); return; }
   if (R.on && !R.picking && e.key === ' ') {
@@ -3014,6 +3018,11 @@ function applyTheme() {
   if (S.main) { S.main.applyOptions(mainStyle()[1]); syncAlertLines(); }
   S.rts.forEach(recolorRt);
   updateWatermark(); updateLegend(); if (S.selected) select(S.selected); markDirty();
+  if (JR.eq) {
+    JR.eq.applyOptions({ layout: { background: { type: 'solid', color: C.panel }, textColor: C.muted }, grid: { horzLines: { color: C.grid } }, crosshair: { vertLine: { color: C.faint, labelBackgroundColor: C.crossLabel } } });
+    JR.eqSeries.applyOptions({ topLineColor: C.up, topFillColor1: alpha(C.up, 0.14), topFillColor2: alpha(C.up, 0.02), bottomLineColor: C.down, bottomFillColor1: alpha(C.down, 0.02), bottomFillColor2: alpha(C.down, 0.14) });
+  }
+  syncTradeMarks();
 }
 new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 if (mq.addEventListener) mq.addEventListener('change', applyTheme);
@@ -3021,7 +3030,7 @@ if (mq.addEventListener) mq.addEventListener('change', applyTheme);
 /* ---------- accounts: sign in with Google, profile, and syncing the setup across devices ----------
    Supabase keeps the accounts. The browser only ever holds the public "publishable" key; the database rules
    (row level security) let each person read and change only their own profile and saved setup. */
-const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme'];
+const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset'];
 function cleanState(d) {   // saved data is checked before it's used, whatever is in the database
   const o = {}; if (!d || typeof d !== 'object' || Array.isArray(d)) return o;
   const isId = v => typeof v === 'string' && v.length <= 40 && /^[A-Z0-9.:/_-]+$/.test(v);
@@ -3038,6 +3047,7 @@ function cleanState(d) {   // saved data is checked before it's used, whatever i
   if (typeof d.magnet === 'boolean') o.magnet = d.magnet;
   if (typeof d.rpSpeed === 'number' && d.rpSpeed > 0 && d.rpSpeed <= 50) o.rpSpeed = d.rpSpeed;
   if (d.theme === 'light' || d.theme === 'dark') o.theme = d.theme;
+  if (isObj(d.jset) && typeof d.jset.ccy === 'string' && /^[A-Z]{3}$/.test(d.jset.ccy)) o.jset = { ccy: d.jset.ccy };
   return o;
 }
 const safeAvatar = u => (typeof u === 'string' && /^https:\/\/[a-z0-9.-]+\.googleusercontent\.com\/[^\s"'<>]*$/i.test(u) ? u : '');
@@ -3071,6 +3081,7 @@ const Auth = {
       store.onSet = k => { if (SYNC_KEYS.includes(k)) this.schedule(); };
       await this.loadProfile();
       await this.pull();
+      await Journal.account();
       if (event === 'SIGNED_IN' && !sessionStorage.getItem('wickline:welcomed')) { sessionStorage.setItem('wickline:welcomed', '1'); toast(`Signed in as ${this.name()}. Your setup is saved to your account.`); }
     } else if (!u && this.user) {
       this.user = null; this.profile = null; store.onSet = null; this.render();
@@ -3093,7 +3104,7 @@ const Auth = {
     sessionStorage.setItem('wickline:applied', data.updated_at);
     for (const k of SYNC_KEYS) if (k in clean) store.raw(k, clean[k]);
     store.raw('syncedAt', data.updated_at);
-    location.replace(location.pathname);   // a clean address, so the account's chart opens (not the one in the old address)
+    location.replace(location.pathname + (curView() === 'journal' ? '?view=journal' : ''));   // a clean address, so the account's chart opens (not the one in the old address)
   },
   schedule() {
     if (!this.user) return;
@@ -3119,7 +3130,8 @@ const Auth = {
   setStatus(st) { this.status = st; const box = $('#acctSync'); if (box) { box.dataset.s = st; box.lastChild.textContent = { saved: 'Your setup is saved to your account.', saving: 'Saving…', error: "Couldn't save. It will try again in a moment." }[st]; } },
   signIn() {
     $('#googleBtn').disabled = true;
-    this.sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname + shareQuery() } })
+    const back = curView() === 'journal' ? '?view=journal' : shareQuery();
+    this.sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname + back } })
       .then(({ error }) => { if (error) { $('#googleBtn').disabled = false; toast("Couldn't start sign-in. Please try again."); } });
   },
   forgetLocal() { for (const k of SYNC_KEYS.concat(['syncedAt'])) store.raw(k, null); },
@@ -3184,6 +3196,605 @@ $('#delGo').onclick = () => { if ($('#delConfirm').value.trim() === 'DELETE') Au
 document.addEventListener('visibilitychange', () => { if (document.hidden && Auth.timer) Auth.save(); });   // don't lose a change when the tab is closed
 if (sessionStorage.getItem('wickline:deleted')) { sessionStorage.removeItem('wickline:deleted'); setTimeout(() => toast('Your account and everything saved to it have been deleted.'), 600); }
 
+/* ---------- pages: Chart and Journal ---------- */
+const curView = () => (document.body.dataset.view === 'journal' ? 'journal' : 'chart');
+function setView(v, push) {
+  v = v === 'journal' ? 'journal' : 'chart';
+  const was = curView();
+  document.body.dataset.view = v;
+  $('#journal').hidden = v !== 'journal';
+  document.querySelectorAll('.view-tab').forEach(a => a.setAttribute('aria-current', a.dataset.view === v ? 'page' : 'false'));
+  const url = v === 'journal' ? location.pathname + '?view=journal' : location.pathname + (S.ready && !S.sandbox ? shareQuery() : location.search.replace(/[?&]view=journal/, ''));
+  try { if (push && was !== v) history.pushState({ view: v }, '', url); else history.replaceState({ view: v }, '', url); } catch (e) { /* address can't be changed here */ }
+  $('#acctMenu').hidden = true; jTipHide();
+  if (v === 'journal') Journal.show();
+  else requestAnimationFrame(() => { sizeOverlay(); markDirty(); if (S.focusTime) focusChart(); });
+  updateDocTitle();
+}
+document.querySelectorAll('.view-tab').forEach(a => { a.onclick = e => { e.preventDefault(); setView(a.dataset.view, true); }; });
+window.addEventListener('popstate', () => setView(new URLSearchParams(location.search).get('view') === 'journal' ? 'journal' : 'chart'));
+document.body.dataset.view = 'chart';
+
+/* ---------- trade journal ----------
+   Signed in: trades live in the person's account (the Supabase "trades" table, private to them).
+   Signed out: they're kept in this browser, and move into the account at the next sign-in. */
+const JR = { trades: [], loaded: false, eq: null, eqSeries: null, eqPts: [], month: null, shown: 50, editing: null, side: 'long', tags: [], rating: null, delArm: 0,
+  f: { range: 'all', side: 'all', result: 'all', strategy: '', q: '', day: '' } };
+const JR_TAGS = ['Followed plan', 'FOMO', 'Revenge trade', 'Early exit', 'Late entry', 'Moved stop', 'Too big', 'Overtrading', 'News'];
+const JR_COLS = 'id,symbol,side,opened_at,closed_at,entry,exit,qty,fees,stop,target,pnl,strategy,tags,rating,notes';
+const JR_CSV = ['symbol', 'side', 'opened_at', 'closed_at', 'entry', 'exit', 'qty', 'fees', 'stop', 'target', 'pnl', 'strategy', 'tags', 'rating', 'notes'];
+const CCYS = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'NZD', 'PKR', 'INR', 'AED', 'SAR', 'TRY', 'ZAR', 'SGD', 'HKD'];
+const jset = () => { const v = store.get('jset', null); return { ccy: v && CCYS.includes(v.ccy) ? v.ccy : 'USD' }; };
+const jRemote = () => !!(Auth.user && Auth.sb);
+const jNum = v => { if (v === '' || v == null) return null; const n = Number(String(v).replace(/[, ]/g, '')); return isFinite(n) ? n : null; };
+const jDayKey = ms => { const d = new Date(ms); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+const toLocalInput = ms => { const d = new Date(ms); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+
+function jClean(t) {   // a trade from anywhere (account, browser, import) is checked before it's used
+  if (!t || typeof t !== 'object') return null;
+  const symbol = parseSymbol(String(t.symbol || '')); if (!symbol) return null;
+  const side = t.side === 'short' ? 'short' : t.side === 'long' ? 'long' : null; if (!side) return null;
+  const opened = Date.parse(t.opened_at); if (!isFinite(opened)) return null;
+  const entry = jNum(t.entry), qty = jNum(t.qty); if (!(entry > 0 && entry < 1e12) || !(qty > 0 && qty < 1e15)) return null;
+  let exit = jNum(t.exit), closed = t.closed_at ? Date.parse(t.closed_at) : NaN;
+  if (!(exit > 0 && exit < 1e12)) { exit = null; closed = NaN; } else if (!isFinite(closed) || closed < opened) closed = Math.max(opened, isFinite(closed) ? closed : opened);
+  const pos = v => { const n = jNum(v); return n > 0 && n < 1e12 ? n : null; };
+  const pnl = jNum(t.pnl);
+  const tags = Array.isArray(t.tags) ? t.tags : typeof t.tags === 'string' ? t.tags.split(/[;|]/) : [];
+  const rating = Math.round(jNum(t.rating));
+  return {
+    id: typeof t.id === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(t.id) ? t.id : 'local-' + uid(),
+    symbol, side, opened_at: new Date(opened).toISOString(), closed_at: exit != null ? new Date(closed).toISOString() : null,
+    entry, exit, qty, fees: Math.min(1e11, Math.max(0, jNum(t.fees) || 0)), stop: pos(t.stop), target: pos(t.target),
+    pnl: exit != null && pnl != null && Math.abs(pnl) < 1e15 ? pnl : null,
+    strategy: String(t.strategy || '').trim().slice(0, 60),
+    tags: Array.from(new Set(tags.map(x => String(x).trim().slice(0, 24)).filter(Boolean))).slice(0, 20),
+    rating: rating >= 1 && rating <= 5 ? rating : null, notes: String(t.notes || '').slice(0, 5000),
+  };
+}
+const jRow = t => { const { id, ...row } = t; return row; };   // what's sent to the account (the database makes the id)
+function jCalc(t) {
+  const dir = t.side === 'long' ? 1 : -1, closed = t.exit != null;
+  const gross = closed ? (t.exit - t.entry) * t.qty * dir : null;
+  const auto = closed ? gross - (t.fees || 0) : null;
+  const risk = t.stop != null && t.stop !== t.entry ? Math.abs(t.entry - t.stop) * t.qty : null;
+  return { closed, gross, auto, net: closed ? (t.pnl != null ? t.pnl : auto) : null, r: closed && risk ? auto / risk : null,
+    pct: closed ? ((t.exit - t.entry) / t.entry) * 100 * dir : null, held: closed ? (Date.parse(t.closed_at) - Date.parse(t.opened_at)) / 1000 : null };
+}
+function quoteCcy(id) {
+  const c = classOf(id), r = rawOf(id);
+  if (c === 'stock') return 'USD';
+  if (c === 'forex') return r.split('/')[1] || 'USD';
+  const q = splitSym(r)[1]; return ['USDT', 'USDC', 'FDUSD', 'TUSD', 'DAI'].includes(q) ? 'USD' : q || 'USD';
+}
+const MONEY = {};
+function money(v, signed, compact) {
+  if (v == null || !isFinite(v)) return '—';
+  const ccy = jset().ccy, k = ccy + (signed ? 's' : '') + (compact ? 'c' : '');
+  if (!MONEY[k]) {
+    try { MONEY[k] = new Intl.NumberFormat(undefined, { style: 'currency', currency: ccy, signDisplay: signed ? 'exceptZero' : 'auto', notation: compact ? 'compact' : 'standard', maximumFractionDigits: compact ? 1 : 2, minimumFractionDigits: compact ? 0 : 2 }); }
+    catch (e) { MONEY[k] = { format: n => (signed && n > 0 ? '+' : '') + n.toFixed(2) + ' ' + ccy }; }
+  }
+  return MONEY[k].format(compact && Math.abs(v) < 1000 ? Math.round(v) : v);
+}
+const fmtR = r => (r == null || !isFinite(r) ? '—' : (r > 0 ? '+' : '') + r.toFixed(2) + 'R');
+function fmtHeld(s) {
+  if (s == null) return '';
+  if (s < 3600) return Math.max(1, Math.round(s / 60)) + 'm';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ' + Math.round((s % 3600) / 60) + 'm';
+  return Math.floor(s / 86400) + 'd ' + Math.round((s % 86400) / 3600) + 'h';
+}
+const jWhen = iso => { const d = new Date(iso); return `${d.getDate()} ${MON[d.getMonth()]} ${String(d.getFullYear()).slice(2)} · ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const tradePx = (t, v) => (v == null ? '—' : fmtP(v, precFor(t.symbol, t.entry)));
+
+// ----- storage -----
+async function jLoad() {
+  if (jRemote()) {
+    const all = [];
+    for (let from = 0; from < 20000; from += 1000) {
+      const { data, error } = await Auth.sb.from('trades').select(JR_COLS).order('opened_at', { ascending: false }).range(from, from + 999);
+      if (error) throw error;
+      all.push(...data); if (data.length < 1000) break;
+    }
+    JR.trades = all.map(jClean).filter(Boolean);
+  } else {
+    const v = store.get('journal', []);
+    JR.trades = (Array.isArray(v) ? v : []).map(jClean).filter(Boolean);
+  }
+  JR.loaded = true;
+}
+const jKeepLocal = () => store.raw('journal', JR.trades);
+async function jInsert(list) {
+  if (!list.length) return 0;
+  if (jRemote()) {
+    let n = 0;
+    for (let i = 0; i < list.length; i += 500) {
+      const { data, error } = await Auth.sb.from('trades').insert(list.slice(i, i + 500).map(jRow)).select(JR_COLS);
+      if (error) throw error;
+      JR.trades.push(...data.map(jClean).filter(Boolean)); n += data.length;
+    }
+    return n;
+  }
+  JR.trades.push(...list); jKeepLocal(); return list.length;
+}
+async function jUpdate(id, t) {
+  if (jRemote()) {
+    const { data, error } = await Auth.sb.from('trades').update(jRow(t)).eq('id', id).select(JR_COLS).single();
+    if (error) throw error;
+    t = jClean(data);
+  } else t.id = id;
+  JR.trades = JR.trades.map(x => (x.id === id ? t : x)); if (!jRemote()) jKeepLocal();
+}
+async function jDelete(id) {
+  if (jRemote()) { const { error } = await Auth.sb.from('trades').delete().eq('id', id); if (error) throw error; }
+  JR.trades = JR.trades.filter(x => x.id !== id); if (!jRemote()) jKeepLocal();
+}
+async function jAdopt() {   // trades kept in this browser move into the account at sign-in
+  const v = store.get('journal', []);
+  const local = (Array.isArray(v) ? v : []).map(jClean).filter(Boolean);
+  if (!local.length || !jRemote()) return;
+  try {
+    for (let i = 0; i < local.length; i += 500) {
+      const { error } = await Auth.sb.from('trades').insert(local.slice(i, i + 500).map(jRow));
+      if (error) throw error;
+    }
+  } catch (e) { toast("Your journal couldn't be moved into your account yet. It's still saved in this browser."); return; }
+  store.raw('journal', null);
+  toast(`Moved ${local.length} trade${local.length === 1 ? '' : 's'} from this browser into your account.`);
+}
+
+// ----- filtering and statistics -----
+function jRangeStart(r) {
+  const d = new Date(); d.setHours(0, 0, 0, 0);
+  if (r === 'week') { d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); }
+  if (r === 'month') { d.setDate(1); return d.getTime(); }
+  if (r === '30') return d.getTime() - 29 * 864e5;
+  if (r === '90') return d.getTime() - 89 * 864e5;
+  if (r === 'year') { d.setMonth(0, 1); return d.getTime(); }
+  return -Infinity;
+}
+function jFiltered(skipDay) {
+  const f = JR.f, from = jRangeStart(f.range), q = f.q.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return JR.trades.filter(t => {
+    const c = jCalc(t), when = Date.parse(t.closed_at || t.opened_at);
+    if (when < from) return false;
+    if (!skipDay && f.day && !(t.closed_at && jDayKey(Date.parse(t.closed_at)) === f.day)) return false;   // a calendar day shows the trades closed that day, like its total
+    if (f.side !== 'all' && t.side !== f.side) return false;
+    if (f.result === 'win' && !(c.net > 0)) return false;
+    if (f.result === 'loss' && !(c.net < 0)) return false;
+    if (f.result === 'open' && c.closed) return false;
+    if (f.strategy && t.strategy !== f.strategy) return false;
+    if (q && !label(t.symbol).replace(/[^A-Z0-9]/g, '').includes(q) && !nameOf(t.symbol).toUpperCase().replace(/[^A-Z0-9]/g, '').includes(q)) return false;
+    return true;
+  });
+}
+function jStats(list) {
+  const closed = list.filter(t => t.exit != null).map(t => ({ t, c: jCalc(t) })).sort((a, b) => Date.parse(a.t.closed_at) - Date.parse(b.t.closed_at));
+  let net = 0, gw = 0, gl = 0, wins = 0, losses = 0, best = null, worst = null, eq = 0, peak = 0, dd = 0;
+  const rs = [];
+  for (const { c } of closed) {
+    net += c.net;
+    if (c.net > 0) { wins++; gw += c.net; } else if (c.net < 0) { losses++; gl += c.net; }
+    if (best == null || c.net > best) best = c.net;
+    if (worst == null || c.net < worst) worst = c.net;
+    eq += c.net; peak = Math.max(peak, eq); dd = Math.min(dd, eq - peak);
+    if (c.r != null && isFinite(c.r)) rs.push(c.r);
+  }
+  const n = closed.length;
+  return { closed, n, open: list.length - n, net, wins, losses, winRate: n ? wins / n : null, avgWin: wins ? gw / wins : null, avgLoss: losses ? gl / losses : null,
+    pf: gl < 0 ? gw / -gl : gw > 0 ? Infinity : null, exp: n ? net / n : null, avgR: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null, best, worst, maxDD: dd };
+}
+
+// ----- tooltip (hover and keyboard focus) -----
+function jTip(target, build) {
+  const show = () => {
+    const tip = $('#jTip'); tip.replaceChildren(); build(tip); tip.hidden = false;
+    const r = target.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+    let x = r.left + r.width / 2 - w / 2, y = r.top - h - 8;
+    if (y < 8) y = r.bottom + 8;
+    tip.style.left = clamp(x, 8, innerWidth - w - 8) + 'px'; tip.style.top = clamp(y, 8, innerHeight - h - 8) + 'px';
+  };
+  target.addEventListener('pointerenter', show); target.addEventListener('focus', show);
+  target.addEventListener('pointerleave', jTipHide); target.addEventListener('blur', jTipHide);
+}
+function jTipHide() { const t = $('#jTip'); if (t) t.hidden = true; }
+const tipLine = (tip, strong, text, cls) => { const row = el('div'); const b = el('b', cls || null, strong); row.append(b); if (text) row.append(document.createTextNode(' '), el('span', null, text)); tip.append(row); };
+const signCls = v => (v > 0 ? 'up-t' : v < 0 ? 'dn-t' : null);
+
+// ----- rendering -----
+const Journal = {
+  init() {
+    const sel = $('#jCcy'); CCYS.forEach(c => { const o = el('option', null, c); o.value = c; sel.append(o); }); sel.value = jset().ccy;
+    jLoad().then(() => { this.changed(); }).catch(() => {});
+  },
+  async account() {   // signed in: bring in browser trades, then load the account's journal
+    await jAdopt();
+    try { await jLoad(); } catch (e) { toast("Your journal couldn't be loaded. Check your connection."); }
+    this.changed();
+  },
+  changed() {
+    if (curView() === 'journal') this.render();
+    syncTradeMarks();
+  },
+  async show() {
+    if (!JR.loaded) { try { await jLoad(); } catch (e) { /* render what's there */ } }
+    this.render();
+  },
+  render() {
+    const signedIn = jRemote(), sub = $('#jSub'); sub.replaceChildren();
+    if (signedIn) sub.textContent = 'Saved to your account. Only you can see it.';
+    else if (Auth.sb) {
+      sub.append(document.createTextNode('Saved in this browser only. '));
+      const b = el('button', null, 'Sign in'); b.type = 'button'; b.onclick = () => $('#acctBtn').click();
+      sub.append(b, document.createTextNode(' to keep it in your account and use it on any device.'));
+    } else sub.textContent = 'Saved in this browser.';
+    const any = JR.trades.length > 0;
+    $('#jEmpty').hidden = any; $('#jBody').hidden = !any; $('.j-filters').hidden = !any; $('#jExport').hidden = !any;
+    // strategy filter options
+    const ss = $('#jStrategy'), cur = JR.f.strategy, strategies = Array.from(new Set(JR.trades.map(t => t.strategy).filter(Boolean))).sort();
+    ss.replaceChildren(el('option', null, 'All strategies')); ss.firstChild.value = '';
+    strategies.forEach(x => { const o = el('option', null, x); o.value = x; ss.append(o); });
+    if (!strategies.includes(cur)) JR.f.strategy = ''; ss.value = JR.f.strategy;
+    const chip = $('#jDayChip'); chip.replaceChildren();
+    if (JR.f.day) {
+      const [y, m, d] = JR.f.day.split('-').map(Number);
+      const c = el('span', 'j-chip-day', `${d} ${MON[m - 1]} ${y}`); const x = el('button'); x.type = 'button'; x.innerHTML = svg('x'); x.setAttribute('aria-label', 'Show all days');
+      x.onclick = () => { JR.f.day = ''; this.render(); }; c.append(x); chip.append(c);
+    }
+    if (!any) return;
+    const list = jFiltered(), st = jStats(list);
+    this.kpis(st); this.equity(st); this.calendar(jFiltered(true)); this.bars('#jBySym', list, t => label(t.symbol)); this.bars('#jByStrat', list, t => t.strategy || 'No strategy');
+    this.table(list);
+  },
+  kpis(st) {
+    const box = $('#jKpis'); box.replaceChildren();
+    const tile = (k, v, s, hero, cls) => { const d = el('div', 'j-tile' + (hero ? ' hero' : '')); d.append(el('p', 'k', k)); const vv = el('div', 'v' + (cls ? ' ' + cls : ''), v); d.append(vv); if (s) d.append(el('div', 's', s)); box.append(d); };
+    tile('Net result', money(st.net, true), `${st.n} closed trade${st.n === 1 ? '' : 's'}${st.open ? ` · ${st.open} open` : ''}`, true, signCls(st.net));
+    tile('Win rate', st.winRate == null ? '—' : Math.round(st.winRate * 100) + '%', st.n ? `${st.wins} won · ${st.losses} lost` : '');
+    tile('Profit factor', st.pf == null ? '—' : st.pf === Infinity ? 'No losses' : st.pf.toFixed(2), 'Money won ÷ money lost');
+    tile('Average win / loss', st.avgWin == null && st.avgLoss == null ? '—' : `${money(st.avgWin)} / ${money(st.avgLoss)}`, `Per trade: ${money(st.exp, true)}${st.avgR != null ? ' · ' + fmtR(st.avgR) : ''}`);
+    tile('Largest drawdown', st.n ? money(st.maxDD) : '—', st.n ? `Best ${money(st.best, true)} · worst ${money(st.worst, true)}` : '');
+  },
+  equity(st) {
+    const box = $('#jEq'), read = $('#jEqRead');
+    if (st.closed.length < 1) { if (JR.eq) { JR.eq.remove(); JR.eq = null; } box.replaceChildren(el('div', 'j-noeq', 'Close a trade to start your equity curve.')); read.textContent = ''; return; }
+    if (!JR.eq) {
+      box.replaceChildren();
+      JR.eq = createChart(box, {
+        autoSize: true,
+        layout: { background: { type: 'solid', color: C.panel }, textColor: C.muted, fontSize: 11, fontFamily: FONT_DATA, attributionLogo: false },
+        grid: { vertLines: { visible: false }, horzLines: { color: C.grid } },
+        rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.12, bottom: 0.08 } },
+        timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, tickMarkFormatter: tickFmt },
+        crosshair: { mode: CrosshairMode.Magnet, vertLine: { color: C.faint, labelBackgroundColor: C.crossLabel }, horzLine: { visible: false, labelVisible: false } },
+        handleScroll: false, handleScale: false,
+        localization: { timeFormatter: t => fmtTime(t), priceFormatter: v => money(v, false, true) },
+      });
+      JR.eqSeries = JR.eq.addSeries(BaselineSeries, {
+        baseValue: { type: 'price', price: 0 }, lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+        topLineColor: C.up, topFillColor1: alpha(C.up, 0.14), topFillColor2: alpha(C.up, 0.02),
+        bottomLineColor: C.down, bottomFillColor1: alpha(C.down, 0.02), bottomFillColor2: alpha(C.down, 0.14),
+        priceFormat: { type: 'custom', formatter: v => money(v, false, true), minMove: 0.01 },
+      });
+      JR.eq.subscribeCrosshairMove(p => {
+        const pt = p && p.time != null ? JR.eqPts.find(x => x.time === p.time) : null;
+        if (!pt || !pt.t) { jEqDefault(); return; }
+        read.textContent = `${jWhen(pt.t.closed_at)} · ${label(pt.t.symbol)} ${money(pt.net, true)} · total ${money(pt.value, true)}`;
+      });
+    }
+    const pts = []; let eq = 0, last = -Infinity;
+    const t0 = Math.floor(Date.parse(st.closed[0].t.opened_at) / 1000);
+    pts.push({ time: t0, value: 0 }); last = t0;
+    for (const { t, c } of st.closed) { eq += c.net; let s = Math.floor(Date.parse(t.closed_at) / 1000); if (s <= last) s = last + 1; last = s; pts.push({ time: s, value: eq, t, net: c.net }); }
+    JR.eqPts = pts;
+    JR.eqSeries.setData(pts.map(x => ({ time: x.time, value: x.value })));
+    JR.eq.timeScale().fitContent();
+    jEqDefault();
+  },
+  calendar(list) {
+    if (!JR.month) {
+      const lastClosed = list.filter(t => t.closed_at).map(t => Date.parse(t.closed_at)).sort((a, b) => b - a)[0];
+      const d = new Date(lastClosed || Date.now()); JR.month = { y: d.getFullYear(), m: d.getMonth() };
+    }
+    const { y, m } = JR.month, first = new Date(y, m, 1), days = new Date(y, m + 1, 0).getDate(), lead = (first.getDay() + 6) % 7;
+    $('#jMonth').textContent = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    const by = {};
+    for (const t of list) {
+      if (t.exit == null) continue;
+      const k = jDayKey(Date.parse(t.closed_at)), c = jCalc(t), o = (by[k] = by[k] || { net: 0, n: 0, w: 0 });
+      o.net += c.net; o.n++; if (c.net > 0) o.w++;
+    }
+    let total = 0, maxAbs = 0;
+    for (let d = 1; d <= days; d++) { const o = by[jDayKey(new Date(y, m, d).getTime())]; if (o) { total += o.net; maxAbs = Math.max(maxAbs, Math.abs(o.net)); } }
+    $('#jCalTotal').textContent = money(total, true);
+    const cal = $('#jCal'); cal.replaceChildren();
+    ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach(n => cal.append(el('div', 'dow', n)));
+    for (let i = 0; i < lead; i++) cal.append(el('div', 'j-day empty'));
+    const today = jDayKey(Date.now());
+    for (let d = 1; d <= days; d++) {
+      const key = jDayKey(new Date(y, m, d).getTime()), o = by[key];
+      const cell = el('button', 'j-day' + (key === today ? ' today' : '') + (key === JR.f.day ? ' sel' : '')); cell.type = 'button';
+      cell.append(el('span', 'd', String(d)));
+      if (o) {
+        const share = maxAbs ? Math.abs(o.net) / maxAbs : 0, tint = Math.round(12 + share * 30);
+        if (o.net !== 0) cell.style.background = `color-mix(in srgb, var(${o.net > 0 ? '--up' : '--down'}) ${tint}%, var(--panel))`;
+        cell.append(el('span', 'a', money(o.net, true, true)));
+        cell.setAttribute('aria-label', `${d} ${MON[m]}: ${money(o.net, true)}, ${o.n} trade${o.n === 1 ? '' : 's'}`);
+        jTip(cell, tip => { tipLine(tip, money(o.net, true), first.toLocaleDateString(undefined, { month: 'short' }) + ' ' + d, signCls(o.net)); tipLine(tip, String(o.n), `trade${o.n === 1 ? '' : 's'} · ${o.w} won`); tipLine(tip, '', 'Click to see these trades'); });
+        cell.onclick = () => { JR.f.day = JR.f.day === key ? '' : key; this.render(); };
+      } else { cell.setAttribute('aria-label', `${d} ${MON[m]}: no closed trades`); cell.tabIndex = -1; }
+      cal.append(cell);
+    }
+  },
+  bars(sel, list, keyFn) {
+    const box = $(sel); box.replaceChildren();
+    const g = {};
+    for (const t of list) { if (t.exit == null) continue; const k = keyFn(t), c = jCalc(t), o = (g[k] = g[k] || { net: 0, n: 0, w: 0 }); o.net += c.net; o.n++; if (c.net > 0) o.w++; }
+    let rows = Object.entries(g).sort((a, b) => b[1].net - a[1].net);
+    if (!rows.length) { box.append(el('p', 'j-none', 'No closed trades here yet.')); return; }
+    if (rows.length > 8) {
+      const byMag = rows.slice().sort((a, b) => Math.abs(b[1].net) - Math.abs(a[1].net)), keep = new Set(byMag.slice(0, 7).map(r => r[0]));
+      const rest = rows.filter(r => !keep.has(r[0])).reduce((a, [, v]) => ({ net: a.net + v.net, n: a.n + v.n, w: a.w + v.w }), { net: 0, n: 0, w: 0 });
+      rows = rows.filter(r => keep.has(r[0])).concat([[`Other (${Object.keys(g).length - 7})`, rest]]);
+    }
+    const max = Math.max(1e-9, ...rows.map(([, v]) => Math.abs(v.net)));
+    for (const [name, v] of rows) {
+      const row = el('div', 'j-bar'); row.tabIndex = 0;
+      const tr = el('span', 'tr'), bar = el('i', v.net >= 0 ? 'up' : 'dn'); bar.style.width = `calc(${(Math.abs(v.net) / max) * 49}% - 1px)`;
+      if (v.net !== 0) tr.append(bar);
+      row.append(el('span', 'nm', name), tr, el('span', 'val', money(v.net, true)));
+      row.setAttribute('aria-label', `${name}: ${money(v.net, true)} from ${v.n} trades`);
+      jTip(row, tip => { tipLine(tip, money(v.net, true), name, signCls(v.net)); tipLine(tip, `${v.n}`, `trade${v.n === 1 ? '' : 's'} · ${Math.round((v.w / v.n) * 100)}% won`); });
+      box.append(row);
+    }
+  },
+  table(list) {
+    const box = $('#jTable'); box.replaceChildren();
+    $('#jCount').textContent = String(list.length);
+    const h = el('div', 'j-row h'); h.setAttribute('role', 'row');
+    ['Entry time', 'Symbol', 'Side', 'Entry', 'Exit', 'Size', 'Net result', 'R', 'Strategy', 'Rating'].forEach((n, i) => { const c = el('span', i >= 3 && i <= 7 ? 'num' : null, n); c.setAttribute('role', 'columnheader'); h.append(c); });
+    box.append(h);
+    if (!list.length) { box.append(el('p', 'j-none', 'No trades match these filters.')); $('#jMore').hidden = true; return; }
+    const sorted = list.slice().sort((a, b) => Date.parse(b.opened_at) - Date.parse(a.opened_at));
+    for (const t of sorted.slice(0, JR.shown)) {
+      const c = jCalc(t), row = el('div', 'j-row'); row.setAttribute('role', 'row'); row.tabIndex = 0;
+      const [b, q] = symParts(t.symbol);
+      const sym = el('span', 'sym c-sym'); sym.append(document.createTextNode(b), el('em', null, q));
+      const side = el('span', 'c-side'); side.append(el('span', 'side-pill ' + t.side, t.side === 'long' ? 'Long' : 'Short'));
+      const pnl = el('span', 'num c-pnl ' + (signCls(c.net) || ''));
+      if (c.closed) pnl.textContent = money(c.net, true); else pnl.append(el('span', 'open-pill', 'Open'));
+      const rate = el('span', 'stars c-rate'); if (t.rating) { rate.append(document.createTextNode('★'.repeat(t.rating))); rate.append(el('span', 'off', '★'.repeat(5 - t.rating))); } else rate.append(el('span', 'muted', '—'));
+      row.append(el('span', 'muted c-date', jWhen(t.opened_at)), sym, side, el('span', 'num c-entry', tradePx(t, t.entry)), el('span', 'num c-exit', tradePx(t, t.exit)),
+        el('span', 'num c-qty', String(+t.qty.toPrecision(10))), pnl, el('span', 'num c-r muted', fmtR(c.r)), el('span', 'muted c-strat', t.strategy || '—'), rate,
+        el('span', 'c-meta', `${t.side === 'long' ? 'Long' : 'Short'} · ${jWhen(t.opened_at)}${t.strategy ? ' · ' + t.strategy : ''}`));
+      row.onclick = () => this.edit(t.id);
+      row.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.edit(t.id); } };
+      box.append(row);
+    }
+    $('#jMore').hidden = sorted.length <= JR.shown;
+  },
+
+  // ----- the trade form -----
+  open(t, prefill) {
+    JR.editing = t ? t.id : null; JR.delArm = 0;
+    const v = t || prefill || {};
+    $('#tTitle').textContent = t ? 'Edit trade' : 'New trade';
+    $('#tSym').value = v.symbol ? label(v.symbol) : '';
+    JR.side = v.side === 'short' ? 'short' : 'long';
+    $('#tOpen').value = toLocalInput(v.opened_at ? Date.parse(v.opened_at) : Date.now());
+    $('#tClose').value = v.closed_at ? toLocalInput(Date.parse(v.closed_at)) : '';
+    const num = (id, x) => { $(id).value = x == null ? '' : String(x); };
+    num('#tEntry', v.entry); num('#tQty', v.qty); num('#tExit', v.exit); num('#tFees', v.fees || ''); num('#tStop', v.stop); num('#tTarget', v.target); num('#tPnl', v.pnl);
+    $('#tStrat').value = v.strategy || ''; $('#tNotes').value = v.notes || '';
+    JR.tags = (v.tags || []).slice(); JR.rating = v.rating || null;
+    $('#tDel').hidden = !t; $('#tDel').textContent = 'Delete'; $('#tChart').hidden = !t;
+    const sl = $('#tSymList'); sl.replaceChildren();
+    const seen = new Set();
+    S.watch.concat(STOCKS.map(s => 'US:' + s[0]), FX.map(s => 'FX:' + s[0]), Object.keys(CFD), Object.keys(CRYPTO_DEMO).map(s => 'BINANCE:' + s)).forEach(id => {
+      const l = label(id); if (seen.has(l)) return; seen.add(l); const o = el('option'); o.value = l; o.label = nameOf(id); sl.append(o);
+    });
+    const st = $('#tStratList'); st.replaceChildren();
+    Array.from(new Set(JR.trades.map(x => x.strategy).filter(Boolean))).forEach(x => { const o = el('option'); o.value = x; st.append(o); });
+    this.formSide(); this.formTags(); this.formRate(); this.preview();
+    $('#tradeDlg').showModal();
+    if (!v.symbol) $('#tSym').focus();
+  },
+  edit(id) { const t = JR.trades.find(x => x.id === id); if (t) this.open(t); },
+  formSide() { document.querySelectorAll('#tSide .btn').forEach(b => { const on = b.dataset.side === JR.side; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }); },
+  formTags() {
+    const box = $('#tTags'); box.replaceChildren();
+    const all = JR_TAGS.concat(JR.tags.filter(x => !JR_TAGS.includes(x)));
+    for (const name of all) {
+      const b = el('button', 't-tag', name); b.type = 'button'; b.setAttribute('aria-pressed', String(JR.tags.includes(name)));
+      b.onclick = () => { JR.tags = JR.tags.includes(name) ? JR.tags.filter(x => x !== name) : JR.tags.concat(name).slice(0, 20); this.formTags(); };
+      box.append(b);
+    }
+    const inp = el('input', 'field'); inp.placeholder = '+ Add tag'; inp.maxLength = 24; inp.setAttribute('aria-label', 'Add a tag');
+    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); const v = inp.value.trim().slice(0, 24); if (v && !JR.tags.includes(v)) { JR.tags = JR.tags.concat(v).slice(0, 20); this.formTags(); $('#tTags input').focus(); } } };
+    box.append(inp);
+  },
+  formRate() {
+    const box = $('#tRate'); box.replaceChildren();
+    for (let i = 1; i <= 5; i++) {
+      const b = el('button', JR.rating >= i ? 'on' : null, '★'); b.type = 'button'; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(JR.rating === i)); b.setAttribute('aria-label', `${i} out of 5`);
+      b.onclick = () => { JR.rating = JR.rating === i ? null : i; this.formRate(); };
+      box.append(b);
+    }
+  },
+  read(strict) {   // the form as a trade, or null with a message when strict
+    const fail = (msg, sel) => { if (strict) { toast(msg); if (sel) $(sel).focus(); } return null; };
+    const symbol = parseSymbol($('#tSym').value); if (!symbol) return fail('Type the symbol you traded, for example AAPL or EUR/USD.', '#tSym');
+    const opened = Date.parse($('#tOpen').value); if (!isFinite(opened)) return fail('Add the time you entered the trade.', '#tOpen');
+    const entry = jNum($('#tEntry').value); if (!(entry > 0)) return fail('Add the entry price.', '#tEntry');
+    const qty = jNum($('#tQty').value); if (!(qty > 0)) return fail('Add the size of the trade (units, shares or lots).', '#tQty');
+    const exitRaw = $('#tExit').value.trim(), exit = jNum(exitRaw);
+    if (exitRaw && !(exit > 0)) return fail('The exit price must be a number above zero.', '#tExit');
+    let closed = Date.parse($('#tClose').value);
+    if (exit != null && !isFinite(closed)) closed = Math.max(opened, Date.now());
+    if (exit != null && closed < opened) return fail('The exit time is before the entry time.', '#tClose');
+    for (const [sel, nm] of [['#tStop', 'stop loss'], ['#tTarget', 'take profit'], ['#tFees', 'fees']]) { const raw = $(sel).value.trim(); if (raw && !(jNum(raw) >= 0)) return fail(`The ${nm} must be a number.`, sel); }
+    const pnlRaw = $('#tPnl').value.trim(); if (pnlRaw && jNum(pnlRaw) == null) return fail('The net result must be a number, for example -25.50.', '#tPnl');
+    return jClean({ id: JR.editing || undefined, symbol, side: JR.side, opened_at: new Date(opened).toISOString(), closed_at: exit != null ? new Date(closed).toISOString() : null,
+      entry, exit, qty, fees: $('#tFees').value, stop: $('#tStop').value, target: $('#tTarget').value, pnl: exit != null ? pnlRaw : '', strategy: $('#tStrat').value,
+      tags: JR.tags, rating: JR.rating, notes: $('#tNotes').value });
+  },
+  preview() {
+    const box = $('#tCalc'); box.replaceChildren();
+    const t = this.read(false), sym = parseSymbol($('#tSym').value), qc = sym ? quoteCcy(sym) : '', acct = jset().ccy;
+    const hint = $('#tPnlHint'), pnlIn = $('#tPnl');
+    if (!t) { box.append(el('span', null, 'Fill in the symbol, entry and size to see the result here.')); pnlIn.placeholder = ''; hint.textContent = 'worked out for you'; return; }
+    const c = jCalc(t);
+    const risk = t.stop != null ? Math.abs(t.entry - t.stop) * t.qty : null, reward = t.target != null ? Math.abs(t.target - t.entry) * t.qty : null;
+    if (!c.closed) {
+      box.append(el('span', null, 'Open trade. Add the exit price when you close it.'));
+      if (risk) box.append(el('span', null, `Risk ${fmtP(risk, 2)} ${qc}${reward ? ` · reward ${fmtP(reward, 2)} ${qc} (${(reward / risk).toFixed(1)} : 1)` : ''}`));
+      pnlIn.placeholder = ''; hint.textContent = 'after you close it'; return;
+    }
+    const sameCcy = qc === acct;
+    pnlIn.placeholder = sameCcy ? fmtP(c.auto, 2) : '';
+    hint.textContent = sameCcy ? 'worked out for you' : `type it in ${acct}`;
+    const shown = t.pnl != null ? money(t.pnl, true) : sameCcy ? money(c.auto, true) : `${c.auto > 0 ? '+' : ''}${fmtP(c.auto, 2)} ${qc}`;
+    const res = el('span'); res.append(document.createTextNode('Result '), el('b', signCls(t.pnl != null ? t.pnl : c.auto), shown)); box.append(res);
+    box.append(el('span', null, `${c.pct > 0 ? '+' : ''}${c.pct.toFixed(2)}%`));
+    if (c.r != null) box.append(el('span', null, fmtR(c.r)));
+    box.append(el('span', null, 'held ' + fmtHeld(c.held)));
+    if (!sameCcy && t.pnl == null) box.append(el('span', null, `This market is priced in ${qc}. Type the result in ${acct} under Net result so your totals add up.`));
+  },
+  async save() {
+    const t = this.read(true); if (!t) return;
+    const go = $('#tSave'); go.disabled = true;
+    try {
+      if (JR.editing) { await jUpdate(JR.editing, t); toast('Trade updated.'); }
+      else { await jInsert([t]); toast('Trade saved to your journal.'); }
+      $('#tradeDlg').close(); this.changed();
+    } catch (e) { toast("The trade couldn't be saved. Check your connection and try again."); }
+    finally { go.disabled = false; }
+  },
+  async remove() {
+    const b = $('#tDel');
+    if (Date.now() - JR.delArm > 4000) { JR.delArm = Date.now(); b.textContent = 'Click again to delete'; setTimeout(() => { if (b.textContent !== 'Delete' && Date.now() - JR.delArm >= 4000) b.textContent = 'Delete'; }, 4100); return; }
+    b.disabled = true;
+    try { await jDelete(JR.editing); $('#tradeDlg').close(); toast('Trade deleted.'); this.changed(); }
+    catch (e) { toast("The trade couldn't be deleted. Please try again."); }
+    finally { b.disabled = false; b.textContent = 'Delete'; JR.delArm = 0; }
+  },
+  fromPosition(d) {   // a long/short position drawn on the chart becomes a new journal entry
+    if (!isPos(d)) return;
+    const lv = posLevels(d), r = v => Number(v.toFixed(Math.max(S.prec, 2)));
+    setView('journal', true);
+    this.open(null, { symbol: S.symbol, side: d.type, opened_at: new Date(Math.min(Date.now(), d.p1.t * 1000)).toISOString(), entry: r(lv.entry), stop: r(lv.stop), target: r(lv.target) });
+  },
+  openOnChart() {
+    const t = JR.trades.find(x => x.id === JR.editing); if (!t) return;
+    $('#tradeDlg').close();
+    S.focusTime = Math.floor(Date.parse(t.opened_at) / 1000);
+    setView('chart', true);
+    if (t.symbol !== S.symbol) setSymbol(t.symbol); else focusChart();
+  },
+
+  // ----- CSV -----
+  exportCsv() {
+    const cell = (v, text) => {
+      if (v == null) return '';
+      let s = String(v);
+      if (text && /^[=+\-@\t\r]/.test(s)) s = "'" + s;   // stops a spreadsheet from running a cell as a formula
+      return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = [JR_CSV.join(',')];
+    for (const t of JR.trades.slice().sort((a, b) => Date.parse(a.opened_at) - Date.parse(b.opened_at))) {
+      lines.push([cell(label(t.symbol), true), t.side, t.opened_at, cell(t.closed_at), t.entry, cell(t.exit), t.qty, t.fees, cell(t.stop), cell(t.target), cell(t.pnl),
+        cell(t.strategy, true), cell(t.tags.join('; '), true), cell(t.rating), cell(t.notes, true)].join(','));
+    }
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = el('a'); a.href = URL.createObjectURL(blob); a.download = `${CFG.siteName.replace(/[^A-Za-z0-9]+/g, '-')}-journal-${jDayKey(Date.now())}.csv`;
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  },
+  async importCsv(file) {
+    if (!file) return;
+    if (file.size > 2e6) { toast('That file is too big. The limit is 2 MB.'); return; }
+    let text; try { text = await file.text(); } catch (e) { toast("That file couldn't be read."); return; }
+    const rows = parseCsv(text.replace(/^﻿/, ''));
+    if (rows.length < 2) { toast('No trades found in that file.'); return; }
+    const head = rows[0].map(h => h.trim().toLowerCase().replace(/\s+/g, '_'));
+    if (!head.includes('symbol') || !head.includes('entry')) { toast('That file needs at least symbol, side, opened_at, entry and qty columns. Export a CSV here to see the format.'); return; }
+    const unq = v => (typeof v === 'string' && /^'[=+\-@\t\r]/.test(v) ? v.slice(1) : v);
+    const trades = []; let skipped = 0;
+    for (const r of rows.slice(1, 5001)) {
+      if (!r.some(x => x.trim())) continue;
+      const o = {}; head.forEach((h, i) => { o[h] = unq(r[i] != null ? r[i] : ''); });
+      delete o.id;
+      const t = jClean(o); if (t) trades.push(t); else skipped++;
+    }
+    if (!trades.length) { toast(`No trades could be read from that file${skipped ? ` (${skipped} rows skipped)` : ''}.`); return; }
+    try { const n = await jInsert(trades); toast(`Imported ${n} trade${n === 1 ? '' : 's'}${skipped ? `. ${skipped} row${skipped === 1 ? '' : 's'} couldn't be read and were skipped.` : '.'}`); this.changed(); }
+    catch (e) { toast("The trades couldn't be imported. Please try again."); }
+  },
+};
+function jEqDefault() { const p = JR.eqPts[JR.eqPts.length - 1]; $('#jEqRead').textContent = p ? `Total ${money(p.value, true)}` : ''; }
+function parseCsv(text) {   // RFC 4180: quoted fields, doubled quotes, line breaks inside quotes
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; continue; }
+    if (ch === '"') q = true;
+    else if (ch === ',') { row.push(cur); cur = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cur); rows.push(row); row = []; cur = ''; }
+    else cur += ch;
+  }
+  if (cur || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+
+// ----- your journal's trades on the chart -----
+let tMarks = null, tMarksOn = null;
+function syncTradeMarks() {
+  if (!S.main || !LWC.createSeriesMarkers) return;
+  if (tMarksOn !== S.main) { tMarks = null; tMarksOn = S.main; }
+  const T = S.bars, m = [];
+  if (!R.on && T.length) {
+    const first = T[0].time, step = tfOf(S.tf).sec, lastT = T[T.length - 1].time + step;
+    const at = s => (s < first || s > lastT ? null : T[Math.max(0, rpIndexFor(T, s))].time);
+    for (const t of JR.trades) {
+      if (t.symbol !== S.symbol) continue;
+      const long = t.side === 'long', a = at(Date.parse(t.opened_at) / 1000);
+      if (a != null) m.push({ time: a, position: long ? 'belowBar' : 'aboveBar', shape: long ? 'arrowUp' : 'arrowDown', color: C.draw, text: (long ? 'Buy ' : 'Sell ') + fmtP(t.entry, S.prec) });
+      if (t.exit != null) { const b = at(Date.parse(t.closed_at) / 1000), c = jCalc(t); if (b != null) m.push({ time: b, position: long ? 'aboveBar' : 'belowBar', shape: 'circle', color: c.net >= 0 ? C.up : C.down, text: money(c.net, true) }); }
+    }
+    m.sort((x, y) => x.time - y.time);
+  }
+  if (!tMarks) { if (m.length) tMarks = LWC.createSeriesMarkers(S.main, m); } else tMarks.setMarkers(m);
+}
+function focusChart() {
+  const sec = S.focusTime; if (!sec || !S.bars.length || curView() !== 'chart') return;
+  S.focusTime = 0;
+  const i = rpIndexFor(S.bars, sec);
+  if (i < 0) { toast('This trade is older than the chart history loaded here. Try a higher timeframe, such as 1D.'); return; }
+  chart.timeScale().setVisibleLogicalRange({ from: i - 60, to: i + 40 });
+}
+
+// ----- controls -----
+$('#jNew').onclick = () => Journal.open(null);
+$('#jFirst').onclick = () => Journal.open(null);
+$('#jExport').onclick = () => Journal.exportCsv();
+$('#jImport').onclick = () => $('#jFile').click();
+$('#jFile').onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; Journal.importCsv(f); };
+$('#jRange').onchange = e => { JR.f.range = e.target.value; JR.f.day = ''; Journal.render(); };
+$('#jResult').onchange = e => { JR.f.result = e.target.value; Journal.render(); };
+$('#jStrategy').onchange = e => { JR.f.strategy = e.target.value; Journal.render(); };
+$('#jSearch').oninput = e => { JR.f.q = e.target.value; Journal.render(); };
+$('#jSide').onclick = e => { const b = e.target.closest('.btn'); if (!b) return; JR.f.side = b.dataset.v; document.querySelectorAll('#jSide .btn').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', String(x === b)); }); Journal.render(); };
+$('#jCcy').onchange = e => { store.set('jset', { ccy: e.target.value }); Journal.render(); syncTradeMarks(); };
+$('#jPrev').onclick = () => { const m = JR.month; JR.month = m.m === 0 ? { y: m.y - 1, m: 11 } : { y: m.y, m: m.m - 1 }; Journal.calendar(jFiltered(true)); };
+$('#jNext').onclick = () => { const m = JR.month; JR.month = m.m === 11 ? { y: m.y + 1, m: 0 } : { y: m.y, m: m.m + 1 }; Journal.calendar(jFiltered(true)); };
+$('#jMore').onclick = () => { JR.shown += 100; Journal.table(jFiltered()); };
+$('#tSide').onclick = e => { const b = e.target.closest('.btn'); if (!b) return; JR.side = b.dataset.side; Journal.formSide(); Journal.preview(); };
+$('#tForm').addEventListener('input', () => Journal.preview());
+$('#tForm').addEventListener('submit', e => { e.preventDefault(); Journal.save(); });
+$('#tDel').onclick = () => Journal.remove();
+$('#tChart').onclick = () => Journal.openOnChart();
+$('#selJournal').onclick = () => { const d = S.selected && findDrawing(S.selected); if (d) Journal.fromPosition(d); };
+document.addEventListener('scroll', jTipHide, true);
+
 /* ---------- boot ---------- */
 async function probeTD() {
   if (TD.key === 'site') { try { return (await fetchT(API + '/', 4500)).ok; } catch (e) { return false; } }
@@ -3198,6 +3809,8 @@ async function boot() {
   (Array.isArray(S.ind) ? S.ind : DEFAULT_IND).map(normInst).filter(Boolean).forEach(addRt);
   saveInd(); applyTheme(); sizeOverlay(); requestAnimationFrame(frame);
   renderWatch(); renderDetails(); renderFeed(); veil('Connecting to market data…');
+  Journal.init();
+  if (new URLSearchParams(location.search).get('view') === 'journal') setView('journal');
   Auth.init().catch(() => { /* the site works without accounts */ });
   const oandaUp = OANDA.configured() ? OANDA.connect().then(() => true, e => { OANDA.state = e.code === 401 ? 'bad' : 'offline'; return false; }) : Promise.resolve(false);
   const [bin, tdOk, goldOk, oaOk, krOk] = await Promise.all([Live.probe(), probeTD(), GoldApi.price('XAU').then(q => { S.spot.XAU = q; return true; }, () => false), oandaUp, Kraken.probe()]);
