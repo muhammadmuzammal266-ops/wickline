@@ -239,6 +239,9 @@ body:is([data-view="journal"],[data-view="ideas"]) .top>:is(#symBtn,.vsep,#tfSeg
 .t-f .field{width:100%;flex:none;height:32px;font-family:var(--font-body)}
 .t-f .field.t-notes{height:auto}
 .t-wide{grid-column:span 2}
+.dlg-body .t-sec{grid-column:1/-1;max-width:none;display:flex;align-items:baseline;gap:8px;margin:8px 0 -4px;font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--fg)}
+.t-sec i{font-style:normal;font-weight:400;font-size:11.5px;letter-spacing:0;text-transform:none;color:var(--faint)}
+.t-sec::after{content:"";flex:1;height:1px;background:var(--line);align-self:center}
 .t-side{background:var(--panel-2);border-radius:6px;padding:2px;height:30px}
 .t-side .btn{flex:1;justify-content:center;height:26px;font-family:var(--font-body);font-size:12.5px}
 .t-side .btn[data-side="long"].on{color:var(--up);background:var(--panel)}
@@ -965,12 +968,15 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
     <div class="t-grid">
       <label class="t-f t-wide"><span>Symbol</span><input class="field" id="tSym" list="tSymList" autocomplete="off" spellcheck="false" placeholder="e.g. AAPL, EUR/USD, BTCUSDT, SPX500/USD"></label>
       <div class="t-f"><span>Side</span><div class="seg t-side" id="tSide" role="radiogroup" aria-label="Side"><button type="button" class="btn" data-side="long" role="radio">Long</button><button type="button" class="btn" data-side="short" role="radio">Short</button></div></div>
+      <p class="t-sec">Entry <i>when you opened the trade</i></p>
       <label class="t-f"><span>Entry time</span><input class="field" id="tOpen" type="datetime-local"></label>
       <label class="t-f"><span>Entry price</span><input class="field" id="tEntry" inputmode="decimal" autocomplete="off"></label>
       <label class="t-f"><span>Size <i>units, shares or lots</i></span><input class="field" id="tQty" inputmode="decimal" autocomplete="off"></label>
+      <p class="t-sec">Exit <i>when you closed it. Leave empty if the trade is still open</i></p>
       <label class="t-f"><span>Exit time</span><input class="field" id="tClose" type="datetime-local"></label>
-      <label class="t-f"><span>Exit price <i>empty if still open</i></span><input class="field" id="tExit" inputmode="decimal" autocomplete="off"></label>
+      <label class="t-f"><span>Exit price</span><input class="field" id="tExit" inputmode="decimal" autocomplete="off"></label>
       <label class="t-f"><span>Fees</span><input class="field" id="tFees" inputmode="decimal" autocomplete="off" placeholder="0"></label>
+      <p class="t-sec">Plan and result</p>
       <label class="t-f"><span>Stop loss</span><input class="field" id="tStop" inputmode="decimal" autocomplete="off"></label>
       <label class="t-f"><span>Take profit</span><input class="field" id="tTarget" inputmode="decimal" autocomplete="off"></label>
       <label class="t-f"><span>Net result <i id="tPnlHint">worked out for you</i></span><input class="field" id="tPnl" inputmode="decimal" autocomplete="off"></label>
