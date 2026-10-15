@@ -314,18 +314,18 @@ const pad = n => String(n).padStart(2, '0');
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 // Daily and weekly bars are dated in UTC, so a bar never shows the previous day for viewers west of London.
-function dparts(sec) {
-  const d = new Date(sec * 1000), u = tfOf(S.tf).sec >= DAY;
+function dparts(sec, tf) {
+  const d = new Date(sec * 1000), u = tfOf(tf || S.tf).sec >= DAY;
   return u ? { y: d.getUTCFullYear(), mo: d.getUTCMonth(), d: d.getUTCDate(), w: d.getUTCDay(), h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds() }
            : { y: d.getFullYear(), mo: d.getMonth(), d: d.getDate(), w: d.getDay(), h: d.getHours(), mi: d.getMinutes(), s: d.getSeconds() };
 }
-function fmtTime(sec) {
-  const p = dparts(sec);
+function fmtTime(sec, tf) {
+  const p = dparts(sec, tf);
   const day = `${DOW[p.w]} ${p.d} ${MON[p.mo]} '${String(p.y).slice(2)}`;
-  return tfOf(S.tf).sec < DAY ? `${day}  ${pad(p.h)}:${pad(p.mi)}` : day;
+  return tfOf(tf || S.tf).sec < DAY ? `${day}  ${pad(p.h)}:${pad(p.mi)}` : day;
 }
-function tickFmt(time, type) {
-  const p = dparts(time);
+function tickFmt(time, type, locale, tf) {
+  const p = dparts(time, tf);
   switch (type) {
     case 0: return String(p.y);
     case 1: return MON[p.mo];
@@ -646,17 +646,17 @@ function atr(bars, n) {
   }
   return o;
 }
-function vwapKey(t) {
-  const sec = tfOf(S.tf).sec, d = new Date(t * 1000);
+function vwapKey(t, tf, sym) {
+  const sec = tfOf(tf || S.tf).sec, d = new Date(t * 1000);
   if (sec >= WEEK) return d.getUTCFullYear();
   if (sec >= DAY) return d.getUTCFullYear() * 12 + d.getUTCMonth();
-  if (classOf(S.symbol) === 'stock') { const p = ny(t); return p.y * 10000 + p.m * 100 + p.d; }
+  if (classOf(sym || S.symbol) === 'stock') { const p = ny(t); return p.y * 10000 + p.m * 100 + p.d; }
   return Math.floor(t / DAY);
 }
-function vwap(bars) {
+function vwap(bars, tf, sym) {
   const o = new Array(bars.length).fill(null); let key = null, pv = 0, vv = 0;
   for (let i = 0; i < bars.length; i++) {
-    const b = bars[i], k = vwapKey(b.time);
+    const b = bars[i], k = vwapKey(b.time, tf, sym);
     if (k !== key) { key = k; pv = 0; vv = 0; }
     const v = b.volume > 0 ? b.volume : 0;
     pv += ((b.high + b.low + b.close) / 3) * v; vv += v;
@@ -679,12 +679,12 @@ function seriesColor(rt, k) {
   if (rt.inst.type === 'vol') return C.muted;
   return c;
 }
-function addRt(inst) {
-  const def = IND[inst.type];
-  const rt = { inst, series: [], out: null, lines: [], vals: [] };
+// The series an indicator draws with, on any chart (the live chart or an idea's chart).
+function indSeries(ch, inst, prec, paneIdx) {
+  const rt = { series: [], lines: [] };
   const base = { priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, visible: !inst.hidden };
-  const pf = pricePF(S.prec);
-  const paneIdx = def.pane ? chart.panes().length : 0;
+  const pf = pricePF(prec);
+  const chart = ch;
   switch (inst.type) {
     case 'sma': case 'ema':
       rt.series.push(chart.addSeries(LineSeries, Object.assign({}, base, { color: inst.color, lineWidth: 2, priceFormat: pf }), 0));
@@ -724,7 +724,7 @@ function addRt(inst) {
       break;
     }
     case 'macd': {
-      const p2 = pricePF(Math.min(8, S.prec + 2));
+      const p2 = pricePF(Math.min(8, prec + 2));
       rt.series.push(
         chart.addSeries(HistogramSeries, Object.assign({}, base, { priceFormat: p2, lastValueVisible: false }), paneIdx),
         chart.addSeries(LineSeries, Object.assign({}, base, { color: seriesColor({ inst }, 1), lineWidth: 2, priceFormat: p2 }), paneIdx),
@@ -732,6 +732,11 @@ function addRt(inst) {
       break;
     }
   }
+  return rt;
+}
+function addRt(inst) {
+  const def = IND[inst.type];
+  const rt = Object.assign({ inst, out: null, vals: [] }, indSeries(chart, inst, S.prec, def.pane ? chart.panes().length : 0));
   makeLegendRow(rt);
   S.rts.push(rt);
   if (S.bars.length) setRtData(rt);
@@ -749,30 +754,33 @@ function removeRt(rt) {
 function restretch() { chart.panes().forEach((p, i) => { try { p.setStretchFactor(i === 0 ? 3 : 1); } catch (e) { /* older pane API */ } }); markDirty(); }
 function saveInd() { S.ind = S.rts.map(r => r.inst); store.set('ind', S.ind); }
 
-function computeRt(rt) {
-  const p = rt.inst.params; const cl = S.bars.map(b => b.close);
-  switch (rt.inst.type) {
-    case 'sma': rt.out = [sma(cl, p.len)]; break;
-    case 'ema': rt.out = [ema(cl, p.len)]; break;
-    case 'bb': rt.out = bbands(cl, p.len, p.mult); break;
-    case 'vwap': rt.out = [vwap(S.bars)]; break;
-    case 'stoch': rt.out = stoch(S.bars, p.k, p.smooth, p.d); break;
-    case 'atr': rt.out = [atr(S.bars, p.len)]; break;
-    case 'vol': rt.out = [S.bars.map(b => b.volume)]; break;
-    case 'rsi': rt.out = [rsi(cl, p.len)]; break;
-    case 'macd': rt.out = macd(cl, p.fast, p.slow, p.signal); break;
+function indCompute(inst, bars, tf, sym) {
+  const p = inst.params; const cl = bars.map(b => b.close);
+  switch (inst.type) {
+    case 'sma': return [sma(cl, p.len)];
+    case 'ema': return [ema(cl, p.len)];
+    case 'bb': return bbands(cl, p.len, p.mult);
+    case 'vwap': return [vwap(bars, tf, sym)];
+    case 'stoch': return stoch(bars, p.k, p.smooth, p.d);
+    case 'atr': return [atr(bars, p.len)];
+    case 'vol': return [bars.map(b => b.volume)];
+    case 'rsi': return [rsi(cl, p.len)];
+    case 'macd': return macd(cl, p.fast, p.slow, p.signal);
   }
+  return [];
 }
-function rtPoint(rt, k, i) {
-  const v = rt.out[k][i]; const t = S.bars[i].time;
-  if (rt.inst.type === 'vol') { const b = S.bars[i]; return { time: t, value: v, color: alpha(b.close >= b.open ? C.up : C.down, 0.42) }; }
-  if (rt.inst.type === 'macd' && k === 0) {
-    const pv = rt.out[0][i - 1];
+function computeRt(rt) { rt.out = indCompute(rt.inst, S.bars); }
+function indPoint(type, out, k, i, bars) {
+  const v = out[k][i]; const t = bars[i].time;
+  if (type === 'vol') { const b = bars[i]; return { time: t, value: v, color: alpha(b.close >= b.open ? C.up : C.down, 0.42) }; }
+  if (type === 'macd' && k === 0) {
+    const pv = out[0][i - 1];
     const strong = pv == null || (v >= 0 ? v >= pv : v <= pv);
     return { time: t, value: v, color: alpha(v >= 0 ? C.up : C.down, strong ? 0.8 : 0.38) };
   }
   return { time: t, value: v };
 }
+function rtPoint(rt, k, i) { return indPoint(rt.inst.type, rt.out, k, i, S.bars); }
 function setRtData(rt) {
   computeRt(rt);
   rt.series.forEach((s, k) => {
@@ -883,14 +891,15 @@ function updateWatermark() {
 }
 
 /* ---------- coordinate mapping for drawings ---------- */
-function mapper() {
-  if (!S.main || S.bars.length < 2) return null;
-  const ts = chart.timeScale(); const vr = ts.getVisibleLogicalRange(); if (!vr) return null;
+function mapper() { return S.main && S.bars.length >= 2 ? mapperFor(chart, S.main, S.bars, tfOf(S.tf).sec) : null; }
+function mapperFor(ch, s, T, step) {   // time and price <-> pixels on a chart, for drawings
+  if (!s || T.length < 2) return null;
+  const ts = ch.timeScale(); const vr = ts.getVisibleLogicalRange(); if (!vr) return null;
   const L0 = Math.floor(vr.from); const x0 = ts.logicalToCoordinate(L0); const x1 = ts.logicalToCoordinate(L0 + 20);
   if (x0 == null) return null;
   let sp = x1 != null ? (x1 - x0) / 20 : ts.options().barSpacing;
   if (!isFinite(sp) || sp <= 0) sp = ts.options().barSpacing || 6;
-  const T = S.bars, n = T.length, step = tfOf(S.tf).sec;
+  const n = T.length;
   const tToL = t => {
     if (t <= T[0].time) return (t - T[0].time) / step;
     if (t >= T[n - 1].time) return n - 1 + (t - T[n - 1].time) / step;
@@ -903,7 +912,6 @@ function mapper() {
     if (Lg >= n - 1) return T[n - 1].time + (Lg - (n - 1)) * step;
     const i = Math.floor(Lg); return T[i].time + (Lg - i) * (T[i + 1].time - T[i].time);
   };
-  const s = S.main;
   return {
     sp,
     L: x => L0 + (x - x0) / sp,
@@ -929,7 +937,11 @@ function pointAt(x, y, snap) {
 }
 
 /* ---------- drawing overlay ---------- */
-const ov = $('#overlay'); const octx = ov.getContext('2d'); const wmBrand = $('#wmBrand');
+const ov = $('#overlay'); let octx = ov.getContext('2d'); const wmBrand = $('#wmBrand');
+function withCtx(ctx, prec, fn) {   // paint with the drawing code on another canvas, at another price precision
+  const o = octx, p = S.prec; octx = ctx; S.prec = prec;
+  try { fn(); } finally { octx = o; S.prec = p; }
+}
 let dpr = 1, ovW = 0, ovH = 0, dirty = true, lastSig = '';
 function markDirty() { dirty = true; }
 function sizeOverlay() {
@@ -1082,6 +1094,7 @@ function drawOverlay(m) {
   let ps; try { ps = chart.paneSize(0); } catch (e) { return; }
   const W = ps.width, H = ps.height;
   octx.save(); octx.beginPath(); octx.rect(0, 0, W, H); octx.clip();
+  if (S.idea && S.idea.symbol === S.symbol) drawIdeaLayer(m, W, H);
   for (const d of curDrawings()) drawShape(d, m, W, H, d.id === S.selected, false);
   if (S.draft && S.draft.type !== 'measure') drawShape(S.draft, m, W, H, false, true);
   const meas = S.draft && S.draft.type === 'measure' ? S.draft : S.measure;
@@ -2527,6 +2540,7 @@ $('#rpExit').onclick = rpExit;
 /* ---------- symbol / timeframe / type ---------- */
 function setSymbol(id) {
   if (id === S.symbol) return;
+  if (S.idea && S.idea.symbol !== id) ideaLayerOff();
   S.symbol = id; store.set('symbol', id);
   S.draft = null; S.measure = null; select(null);
   wl.querySelectorAll('.wl-item').forEach(li => li.classList.toggle('active', li.dataset.sym === id));
@@ -2621,7 +2635,7 @@ function openSearch(mode, seed) {
 $('#sTabs').addEventListener('click', e => {
   const b = e.target.closest('.s-tab'); if (!b) return;
   sTab = b.dataset.tab;
-  document.querySelectorAll('.s-tab').forEach(x => x.setAttribute('aria-selected', String(x === b)));
+  document.querySelectorAll('#sTabs .s-tab').forEach(x => x.setAttribute('aria-selected', String(x === b)));
   runSearch(); sInput.focus();
 });
 async function cryptoUniverse() {
@@ -2894,11 +2908,12 @@ function shareQuery() {
 }
 function shareUrl() { return location.href.split(/[?#]/)[0] + shareQuery(); }
 function updateUrl() {
-  if (!S.ready || S.sandbox || curView() === 'journal') return;
+  if (!S.ready || S.sandbox || curView() !== 'chart') return;
   try { history.replaceState(null, '', shareQuery()); } catch (e) { /* address can't be changed here */ }
 }
 function updateDocTitle() {
   if (curView() === 'journal') { document.title = `Trade journal · ${CFG.siteName}`; return; }
+  if (curView() === 'ideas') { document.title = ID.open && ID.cur ? `${ID.cur.title} · Ideas · ${CFG.siteName}` : `Ideas · ${CFG.siteName}`; return; }
   const t = S.tickers[S.symbol];
   const px = t ? ' ' + fmtP(t.last, t.prec) : '';
   const pct = t && t.ref ? ' ' + fmtPct(((t.last - t.ref) / t.ref) * 100) : '';
@@ -2980,7 +2995,7 @@ document.addEventListener('keydown', e => {
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea' || e.target.isContentEditable) return;
   if (document.querySelector('dialog[open]')) return;
-  if (curView() === 'journal') return;
+  if (curView() !== 'chart') return;
   if (e.key === 'Escape' && R.picking) { rpCancelPick(); return; }
   if (e.key === 'Escape') { if (S.tool !== 'cursor' || S.draft) finishTool(); select(null); S.measure = null; markDirty(); return; }
   if (R.on && !R.picking && e.key === ' ') {
@@ -3023,6 +3038,7 @@ function applyTheme() {
     JR.eqSeries.applyOptions({ topLineColor: C.up, topFillColor1: alpha(C.up, 0.14), topFillColor2: alpha(C.up, 0.02), bottomLineColor: C.down, bottomFillColor1: alpha(C.down, 0.02), bottomFillColor2: alpha(C.down, 0.14) });
   }
   syncTradeMarks();
+  ideasRetheme();
 }
 new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 if (mq.addEventListener) mq.addEventListener('change', applyTheme);
@@ -3082,9 +3098,10 @@ const Auth = {
       await this.loadProfile();
       await this.pull();
       await Journal.account();
+      Ideas.account();
       if (event === 'SIGNED_IN' && !sessionStorage.getItem('wickline:welcomed')) { sessionStorage.setItem('wickline:welcomed', '1'); toast(`Signed in as ${this.name()}. Your setup is saved to your account.`); }
     } else if (!u && this.user) {
-      this.user = null; this.profile = null; store.onSet = null; this.render();
+      this.user = null; this.profile = null; store.onSet = null; this.render(); Ideas.account();
     }
   },
   name() { return (this.profile && this.profile.display_name) || (this.user && (this.user.user_metadata.full_name || this.user.email)) || 'you'; },
@@ -3104,7 +3121,7 @@ const Auth = {
     sessionStorage.setItem('wickline:applied', data.updated_at);
     for (const k of SYNC_KEYS) if (k in clean) store.raw(k, clean[k]);
     store.raw('syncedAt', data.updated_at);
-    location.replace(location.pathname + (curView() === 'journal' ? '?view=journal' : ''));   // a clean address, so the account's chart opens (not the one in the old address)
+    location.replace(location.pathname + viewQuery());   // a clean address, so the account's chart opens (not the one in the old address)
   },
   schedule() {
     if (!this.user) return;
@@ -3130,7 +3147,7 @@ const Auth = {
   setStatus(st) { this.status = st; const box = $('#acctSync'); if (box) { box.dataset.s = st; box.lastChild.textContent = { saved: 'Your setup is saved to your account.', saving: 'Saving…', error: "Couldn't save. It will try again in a moment." }[st]; } },
   signIn() {
     $('#googleBtn').disabled = true;
-    const back = curView() === 'journal' ? '?view=journal' : shareQuery();
+    const back = curView() === 'chart' ? shareQuery() : viewQuery();
     this.sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname + back } })
       .then(({ error }) => { if (error) { $('#googleBtn').disabled = false; toast("Couldn't start sign-in. Please try again."); } });
   },
@@ -3196,23 +3213,40 @@ $('#delGo').onclick = () => { if ($('#delConfirm').value.trim() === 'DELETE') Au
 document.addEventListener('visibilitychange', () => { if (document.hidden && Auth.timer) Auth.save(); });   // don't lose a change when the tab is closed
 if (sessionStorage.getItem('wickline:deleted')) { sessionStorage.removeItem('wickline:deleted'); setTimeout(() => toast('Your account and everything saved to it have been deleted.'), 600); }
 
-/* ---------- pages: Chart and Journal ---------- */
-const curView = () => (document.body.dataset.view === 'journal' ? 'journal' : 'chart');
+/* ---------- pages: Chart, Ideas and Journal ---------- */
+const VIEWS = ['chart', 'ideas', 'journal'];
+const curView = () => (VIEWS.includes(document.body.dataset.view) ? document.body.dataset.view : 'chart');
+function viewQuery(v) {
+  v = v || curView();
+  if (v === 'journal') return '?view=journal';
+  if (v === 'ideas') return '?view=ideas' + (ID.open ? '&idea=' + ID.open : '');
+  return '';
+}
 function setView(v, push) {
-  v = v === 'journal' ? 'journal' : 'chart';
-  const was = curView();
+  v = VIEWS.includes(v) ? v : 'chart';
   document.body.dataset.view = v;
-  $('#journal').hidden = v !== 'journal';
+  $('#journal').hidden = v !== 'journal'; $('#ideas').hidden = v !== 'ideas';
   document.querySelectorAll('.view-tab').forEach(a => a.setAttribute('aria-current', a.dataset.view === v ? 'page' : 'false'));
-  const url = v === 'journal' ? location.pathname + '?view=journal' : location.pathname + (S.ready && !S.sandbox ? shareQuery() : location.search.replace(/[?&]view=journal/, ''));
-  try { if (push && was !== v) history.pushState({ view: v }, '', url); else history.replaceState({ view: v }, '', url); } catch (e) { /* address can't be changed here */ }
+  let url;
+  if (v === 'chart') {
+    const q = new URLSearchParams(location.search); q.delete('view'); q.delete('idea');
+    url = location.pathname + (S.ready && !S.sandbox ? shareQuery() : (String(q) ? '?' + q : ''));
+  } else url = location.pathname + viewQuery(v);
+  try { if (push && url !== location.pathname + location.search) history.pushState({ view: v }, '', url); else history.replaceState({ view: v }, '', url); } catch (e) { /* address can't be changed here */ }
   $('#acctMenu').hidden = true; jTipHide();
   if (v === 'journal') Journal.show();
+  else if (v === 'ideas') Ideas.show();
   else requestAnimationFrame(() => { sizeOverlay(); markDirty(); if (S.focusTime) focusChart(); });
+  if (v !== 'ideas') Ideas.leave();
   updateDocTitle();
 }
-document.querySelectorAll('.view-tab').forEach(a => { a.onclick = e => { e.preventDefault(); setView(a.dataset.view, true); }; });
-window.addEventListener('popstate', () => setView(new URLSearchParams(location.search).get('view') === 'journal' ? 'journal' : 'chart'));
+function readViewFromUrl() {
+  const q = new URLSearchParams(location.search), v = q.get('view'), id = q.get('idea');
+  ID.open = v === 'ideas' && isUuid(id) ? id.toLowerCase() : null;
+  return VIEWS.includes(v) ? v : 'chart';
+}
+document.querySelectorAll('.view-tab').forEach(a => { a.onclick = e => { e.preventDefault(); if (a.dataset.view === 'ideas') ID.open = null; setView(a.dataset.view, true); }; });
+window.addEventListener('popstate', () => setView(readViewFromUrl()));
 document.body.dataset.view = 'chart';
 
 /* ---------- trade journal ----------
@@ -3768,7 +3802,7 @@ function focusChart() {
   const sec = S.focusTime; if (!sec || !S.bars.length || curView() !== 'chart') return;
   S.focusTime = 0;
   const i = rpIndexFor(S.bars, sec);
-  if (i < 0) { toast('This trade is older than the chart history loaded here. Try a higher timeframe, such as 1D.'); return; }
+  if (i < 0) { toast(S.idea ? 'This idea is older than the chart history loaded here. Try a higher timeframe, such as 1D.' : 'This trade is older than the chart history loaded here. Try a higher timeframe, such as 1D.'); return; }
   chart.timeScale().setVisibleLogicalRange({ from: i - 60, to: i + 40 });
 }
 
@@ -3795,6 +3829,956 @@ $('#tChart').onclick = () => Journal.openOnChart();
 $('#selJournal').onclick = () => { const d = S.selected && findDrawing(S.selected); if (d) Journal.fromPosition(d); };
 document.addEventListener('scroll', jTipHide, true);
 
+/* ---------- ideas ----------
+   People publish their view of a chart: the bars they were looking at, their drawings and indicators, a title,
+   a long / short / neutral call and their analysis. Everyone can read ideas; signed-in people like and comment.
+   An idea's chart is stored as numbers (never a picture), checked again whenever it's read back, and drawn here.
+   The database rules (Supabase) decide who may publish, change, delete or moderate: this code only asks. */
+Object.assign(ICON, {
+  heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
+  chat: '<path d="M5 5h14v10H10l-4 3.5V15H5z"/>',
+  share: '<path d="M14 5h5v5M19 5l-8 8"/><path d="M17 14v5H5V7h5"/>',
+  flag: '<path d="M6 21V4M6 4h11l-2 4 2 4H6"/>',
+  back: '<path d="M15 6l-6 6 6 6"/>',
+  pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  trash: '<path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/>',
+  eyeoff: '<path d="M3 3l18 18"/><path d="M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 8.5 4.2 9.5 6-.5.9-1.6 2.5-3.2 3.8M6.6 7.6C4.6 8.9 3.1 10.8 2.5 12c1 1.8 4.5 6 9.5 6 1.5 0 2.9-.4 4.1-1"/>',
+  eye: '<path d="M2.5 12c1-1.8 4.5-6 9.5-6s8.5 4.2 9.5 6c-1 1.8-4.5 6-9.5 6s-8.5-4.2-9.5-6z"/><circle cx="12" cy="12" r="3"/>',
+  next: '<path d="M4 18l6-6-6-6"/><path d="M12 18h8"/>',
+  open: '<path d="M4 19l5-6 4 3 7-9"/><path d="M15 7h5v5"/>',
+});
+const ID = { who: null, open: null, cur: null, list: [], page: 0, done: false, loading: false, req: 0, dreq: 0, failed: false, scroll: 0,
+  f: { market: 'all', dir: 'all', sort: 'new', q: '', mine: false, author: null, authorName: '' },
+  liked: new Set(), admin: false, mod: false, comments: [], editing: null, reportFor: null };
+S.idea = null;   // an idea shown on top of the live chart
+const IDEA_PAGE = 24;
+const IDEA_LIST = 'id,user_id,symbol,market,tf,direction,title,excerpt,thumb,likes,comments,hidden,created_at,author:profiles(display_name,avatar_url)';
+const IDEA_FULL = 'id,user_id,symbol,market,tf,direction,title,body,price,chart,likes,comments,hidden,created_at,updated_at,author:profiles(display_name,avatar_url)';
+const COMMENT_COLS = 'id,idea_id,user_id,body,hidden,created_at,author:profiles(display_name,avatar_url)';
+const MARKETS = [['all', 'All'], ['crypto', 'Crypto'], ['stock', 'Stocks'], ['fund', 'Funds'], ['forex', 'Forex'], ['index', 'Indices'], ['futures', 'Futures'], ['bond', 'Bonds']];
+const MARKET_NAME = { crypto: 'Crypto', stock: 'US stock', fund: 'Fund', forex: 'Forex', index: 'Index', futures: 'Commodity', bond: 'Bond' };
+const DIR_NAME = { long: 'Long', short: 'Short', neutral: 'Neutral' };
+const DRAW_TYPES = ['trend', 'ray', 'hline', 'rect', 'fib', 'long', 'short'];
+const REASONS = { spam: 'Spam', abuse: 'Abuse', misleading: 'Scam or misleading', illegal: 'Illegal', other: 'Other' };
+const isUuid = v => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+const finite = v => typeof v === 'number' && isFinite(v);
+const isoOk = v => (typeof v === 'string' && isFinite(Date.parse(v)) ? v : new Date().toISOString());
+const ideaUrl = id => location.origin + location.pathname + '?view=ideas&idea=' + id;
+
+// ----- checking what comes back from the database -----
+function cleanDrawing(d) {
+  if (!d || typeof d !== 'object' || !DRAW_TYPES.includes(d.type)) return null;
+  const pt = q => (q && typeof q === 'object' && finite(q.t) && finite(q.p) && Math.abs(q.t) < 1e10 && Math.abs(q.p) < 1e13 ? { t: q.t, p: q.p } : null);
+  const p1 = pt(d.p1); if (!p1) return null;
+  const o = { type: d.type, p1, color: typeof d.color === 'string' && /^#[0-9a-f]{6}$/i.test(d.color) ? d.color : null };
+  if (d.type !== 'hline') { const p2 = pt(d.p2); if (!p2) return null; o.p2 = p2; }
+  if (d.type === 'long' || d.type === 'short') o.tp = finite(d.tp) && Math.abs(d.tp) < 1e13 ? d.tp : null;
+  return o;
+}
+function cleanBars(a, max) {   // [[time, open, high, low, close, volume], ...], all or nothing
+  if (!Array.isArray(a) || a.length > max) return [];
+  const out = []; let last = -Infinity;
+  for (const r of a) {
+    if (!Array.isArray(r) || r.length < 5) return [];
+    const [t, o, h, l, c] = r;
+    if (![t, o, h, l, c].every(finite) || t <= last || t < 0 || t > 1e10 || [o, h, l, c].some(v => Math.abs(v) > 1e13)) return [];
+    out.push({ time: t, open: o, high: Math.max(h, o, c), low: Math.min(l, o, c), close: c, volume: finite(r[5]) && r[5] > 0 ? r[5] : 0 });
+    last = t;
+  }
+  return out;
+}
+function cleanRange(r, n) {
+  return Array.isArray(r) && finite(r[0]) && finite(r[1]) && r[1] - r[0] >= 2 ? [clamp(r[0], -200, n), clamp(r[1], 2, n + 500)] : [Math.max(0, n - 120), n + 4];
+}
+const cleanType = t => (['candles', 'bars', 'heikin', 'line', 'area'].includes(t) ? t : 'candles');
+const cleanPrec = p => (Number.isInteger(p) && p >= 0 && p <= 10 ? p : 2);
+function cleanChart(c) {
+  if (!c || typeof c !== 'object' || c.v !== 1) return null;
+  const bars = cleanBars(c.b, 1200); if (bars.length < 2) return null;
+  return {
+    bars, r: cleanRange(c.r, bars.length), type: cleanType(c.ty), prec: cleanPrec(c.p),
+    drawings: (Array.isArray(c.d) ? c.d.slice(0, 100) : []).map(cleanDrawing).filter(Boolean),
+    ind: (Array.isArray(c.i) ? c.i.slice(0, 12) : []).map(x => (x && typeof x === 'object' ? normInst({ type: x.type, params: x.params, color: x.color }) : null)).filter(Boolean),
+  };
+}
+function cleanThumb(t) {
+  if (!t || typeof t !== 'object') return null;
+  const bars = cleanBars(t.b, 200); if (bars.length < 2) return null;
+  return { bars, r: cleanRange(t.r, bars.length), type: cleanType(t.ty), prec: cleanPrec(t.p), drawings: (Array.isArray(t.d) ? t.d.slice(0, 50) : []).map(cleanDrawing).filter(Boolean) };
+}
+function cleanAuthor(a) {
+  a = a && typeof a === 'object' ? a : {};
+  return { name: String(a.display_name || '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Trader', avatar: safeAvatar(a.avatar_url) };
+}
+function cleanIdea(row, full) {
+  if (!row || !isUuid(row.id) || !isUuid(row.user_id)) return null;
+  const sym = parseSymbol(row.symbol);
+  if (!sym || sym !== row.symbol) return null;
+  const it = {
+    id: row.id.toLowerCase(), user_id: row.user_id.toLowerCase(), symbol: sym,
+    market: MARKET_NAME[row.market] ? row.market : catOf(sym),
+    tf: TFS.some(t => t.id === row.tf) ? row.tf : '1h',
+    direction: DIR_NAME[row.direction] ? row.direction : 'neutral',
+    title: String(row.title || '').slice(0, 100) || 'Untitled idea',
+    likes: Math.max(0, Math.floor(Number(row.likes) || 0)), comments: Math.max(0, Math.floor(Number(row.comments) || 0)), hidden: row.hidden === true,
+    created_at: isoOk(row.created_at), updated_at: isoOk(row.updated_at || row.created_at),
+    author: cleanAuthor(row.author),
+  };
+  if (full) {
+    it.body = String(row.body || '').slice(0, 5000);
+    const p = Number(row.price); it.price = isFinite(p) && p > 0 ? p : null;
+    it.chart = cleanChart(row.chart); if (!it.chart) return null;
+  } else {
+    it.excerpt = String(row.excerpt || '').slice(0, 240);
+    it.thumb = cleanThumb(row.thumb);
+  }
+  return it;
+}
+function cleanComment(row) {
+  if (!row || !isUuid(row.id) || !isUuid(row.user_id)) return null;
+  return { id: row.id.toLowerCase(), user_id: row.user_id.toLowerCase(), body: String(row.body || '').slice(0, 1500), hidden: row.hidden === true, created_at: isoOk(row.created_at), author: cleanAuthor(row.author) };
+}
+
+// ----- small pieces -----
+function avatarEl(name, url, cls) {
+  const box = el('span', cls || 'pic'), src = safeAvatar(url);
+  const letter = () => el('span', 'avatar-letter', String(name || '?').trim().charAt(0).toUpperCase() || '?');
+  if (src) { const img = el('img', 'avatar'); img.alt = ''; img.referrerPolicy = 'no-referrer'; img.loading = 'lazy'; img.src = src; img.onerror = () => img.replaceWith(letter()); box.append(img); }
+  else box.append(letter());
+  return box;
+}
+function ago(iso) {
+  const ms = Date.parse(iso), s = (Date.now() - ms) / 1000, d = new Date(ms);
+  const n = (v, w) => `${v} ${w}${v === 1 ? '' : 's'} ago`;
+  if (s < 60) return 'just now';
+  if (s < 3600) return n(Math.floor(s / 60), 'minute');
+  if (s < 86400) return n(Math.floor(s / 3600), 'hour');
+  if (s < 7 * 86400) return n(Math.floor(s / 86400), 'day');
+  return `${d.getDate()} ${MON[d.getMonth()]}${d.getFullYear() !== new Date().getFullYear() ? ' ' + d.getFullYear() : ''}`;
+}
+const fullWhen = iso => { const d = new Date(iso); return `${d.getDate()} ${MON[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+function dirPill(dir) { const p = el('span', 'dir ' + dir, DIR_NAME[dir]); p.title = { long: 'Expects the price to rise', short: 'Expects the price to fall', neutral: 'No clear direction' }[dir]; return p; }
+function iconBtn(cls, icon, text, title) {
+  const b = el('button', cls); b.type = 'button'; b.innerHTML = svg(icon);
+  if (text != null) b.append(el('span', null, text));
+  if (title) { b.title = title; if (text == null) b.setAttribute('aria-label', title); }
+  return b;
+}
+function statEl(icon, n, on, what) {
+  const s = el('span', 'i-stat' + (on ? ' on' : '')); s.innerHTML = svg(icon); s.append(document.createTextNode(String(n)));
+  s.setAttribute('aria-label', `${n} ${what}${n === 1 ? '' : 's'}`); s.title = s.getAttribute('aria-label');
+  return s;
+}
+function openSignIn() { $('#googleBtn').disabled = false; if (!$('#signInDlg').open) $('#signInDlg').showModal(); }
+function errText(e, fallback) {   // the database's own messages (limits, edit window) are written for people; others aren't
+  const m = e && e.message ? String(e.message) : '';
+  if (e && e.code === '23514' && m && !/violates|constraint/i.test(m)) return m;
+  if (e && (e.code === '42501' || /row-level security/i.test(m))) return "You can't do that.";
+  return fallback;
+}
+function heikinOf(B) {
+  const out = []; let prev = null;
+  for (const b of B) {
+    const c = (b.open + b.high + b.low + b.close) / 4, o = prev ? (prev.open + prev.close) / 2 : (b.open + b.close) / 2;
+    prev = { time: b.time, open: o, high: Math.max(b.high, o, c), low: Math.min(b.low, o, c), close: c }; out.push(prev);
+  }
+  return out;
+}
+function seriesStyle(type, prec) {   // the live chart's look, for an idea's chart
+  const pf = pricePF(prec);
+  switch (type) {
+    case 'line': return [LineSeries, { color: C.draw, lineWidth: 2, priceFormat: pf }];
+    case 'area': return [AreaSeries, { lineColor: C.draw, topColor: alpha(C.draw, 0.28), bottomColor: alpha(C.draw, 0.02), lineWidth: 2, priceFormat: pf }];
+    case 'bars': return [BarSeries, { upColor: C.up, downColor: C.down, thinBars: false, priceFormat: pf }];
+    default: return [CandlestickSeries, { upColor: C.up, downColor: C.down, borderUpColor: C.up, borderDownColor: C.down, wickUpColor: C.up, wickDownColor: C.down, priceFormat: pf }];
+  }
+}
+function brandMark() { const w = $('#wmBrand').cloneNode(true); w.removeAttribute('id'); w.querySelectorAll('[id]').forEach(x => x.removeAttribute('id')); return w; }
+
+// ----- the chart a person is about to publish -----
+function captureIdea() {
+  const T = S.bars, n = T.length; if (n < 10 || !S.main) return null;
+  const vr = chart.timeScale().getVisibleLogicalRange(); if (!vr) return null;
+  let from = Math.max(0, Math.floor(vr.from)); const to = Math.min(n - 1, Math.ceil(vr.to));
+  if (to - from < 4) return null;
+  if (to - from + 1 > 600) from = to - 599;   // zoomed far out: the latest 600 bars on screen
+  const start = Math.max(0, from - 200);      // a little history before the view, so the indicators start right
+  const dec = Math.min(10, S.prec + 2), rd = v => Number(v.toFixed(dec));
+  const b = T.slice(start, to + 1).map(x => [x.time, rd(x.open), rd(x.high), rd(x.low), rd(x.close), x.volume > 0 ? Number(Number(x.volume).toPrecision(5)) : 0]);
+  return {
+    symbol: S.symbol, tf: S.tf, price: T[n - 1].close,
+    chart: {
+      v: 1, b, r: [Math.max(vr.from, from) - start, vr.to - start], ty: S.type, p: S.prec,
+      d: curDrawings().map(cleanDrawing).filter(Boolean).slice(0, 100),
+      i: S.rts.filter(rt => !rt.inst.hidden).slice(0, 12).map(rt => ({ type: rt.inst.type, params: rt.inst.params, color: rt.inst.color })),
+    },
+  };
+}
+function thumbOf(c) {   // up to 120 candles covering the view, for the idea cards
+  const f = Math.max(0, Math.floor(c.r[0])), l = Math.min(c.b.length - 1, Math.ceil(c.r[1]));
+  const vis = c.b.slice(f, l + 1), k = Math.max(1, Math.ceil(vis.length / 120)), sig = v => Number(v.toPrecision(7)), out = [];
+  for (let i = 0; i < vis.length; i += k) {
+    const g = vis.slice(i, i + k);
+    out.push([g[0][0], sig(g[0][1]), sig(Math.max(...g.map(x => x[2]))), sig(Math.min(...g.map(x => x[3]))), sig(g[g.length - 1][4])]);
+  }
+  return { b: out, r: [(c.r[0] - f) / k, (c.r[1] - f) / k], ty: c.ty, p: c.p, d: c.d.slice(0, 50) };
+}
+
+// ----- drawing an idea's chart without the chart library (cards and the publish preview) -----
+function staticMapper(T, r0, sp, left, yP, pOf) {
+  const n = T.length, step = n > 1 ? (T[n - 1].time - T[0].time) / (n - 1) || 60 : 60;
+  const tToL = t => {
+    if (t <= T[0].time) return (t - T[0].time) / step;
+    if (t >= T[n - 1].time) return n - 1 + (t - T[n - 1].time) / step;
+    let lo = 0, hi = n - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (T[mid].time <= t) lo = mid; else hi = mid; }
+    return lo + (t - T[lo].time) / (T[hi].time - T[lo].time);
+  };
+  const LToT = Lg => (Lg <= 0 ? T[0].time + Lg * step : Lg >= n - 1 ? T[n - 1].time + (Lg - (n - 1)) * step : T[Math.floor(Lg)].time + (Lg - Math.floor(Lg)) * (T[Math.floor(Lg) + 1].time - T[Math.floor(Lg)].time));
+  return { sp, L: x => r0 + (x - left) / sp, x: t => left + (tToL(t) - r0) * sp, t: x => LToT(r0 + (x - left) / sp), y: yP, p: pOf };
+}
+function drawThumb(cv, th) {
+  const W = cv.clientWidth, H = cv.clientHeight; if (!W || !H) return;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = C.panel; g.fillRect(0, 0, W, H);
+  if (!th) { g.fillStyle = C.faint; g.font = `12px ${FONT_BODY}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('Chart not available', W / 2, H / 2); return; }
+  const B = th.type === 'heikin' ? heikinOf(th.bars) : th.bars, n = B.length, [r0, r1] = th.r;
+  const left = 6, right = 6, top = 28, bottom = 10, sp = (W - left - right) / Math.max(1, r1 - r0);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = Math.max(0, Math.floor(r0)); i <= Math.min(n - 1, Math.ceil(r1)); i++) { lo = Math.min(lo, B[i].low); hi = Math.max(hi, B[i].high); }
+  if (!isFinite(lo)) { lo = Math.min(...B.map(b => b.low)); hi = Math.max(...B.map(b => b.high)); }
+  {   // keep drawings that sit in the view inside the picture, within reason
+    const t0 = B[Math.max(0, Math.floor(r0))].time, t1 = B[Math.min(n - 1, Math.ceil(r1))].time, span = hi - lo;
+    for (const d of th.drawings) {
+      const pts = [d.p1, d.p2].filter(Boolean);
+      if (d.type !== 'hline' && !pts.some(q => q.t >= t0 && q.t <= t1)) continue;
+      const ps = pts.map(q => q.p); if (d.tp != null) ps.push(d.tp);
+      for (const v of ps) if (v > lo - span * 0.6 && v < hi + span * 0.6) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    }
+  }
+  if (hi - lo < Math.abs(hi) * 1e-9) { hi += Math.abs(hi) * 0.01 || 1; lo -= Math.abs(lo) * 0.01 || 1; }
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const yP = p => top + ((hi - p) / (hi - lo)) * (H - top - bottom), pOf = y => hi - ((y - top) / (H - top - bottom)) * (hi - lo);
+  const xL = L => left + (L - r0) * sp;
+  g.strokeStyle = C.grid; g.lineWidth = 1;
+  for (let k = 1; k <= 3; k++) { const y = Math.round(top + ((H - top - bottom) * k) / 4) + 0.5; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+  if (th.type === 'line' || th.type === 'area') {
+    g.beginPath(); B.forEach((b, i) => { const x = xL(i), y = yP(b.close); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+    if (th.type === 'area') {
+      g.save(); g.lineTo(xL(n - 1), H); g.lineTo(xL(0), H); g.closePath();
+      const gr = g.createLinearGradient(0, top, 0, H); gr.addColorStop(0, alpha(C.draw, 0.28)); gr.addColorStop(1, alpha(C.draw, 0.02)); g.fillStyle = gr; g.fill(); g.restore();
+      g.beginPath(); B.forEach((b, i) => { const x = xL(i), y = yP(b.close); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+    }
+    g.strokeStyle = C.draw; g.lineWidth = 1.6; g.stroke();
+  } else {
+    const bw = Math.max(1, Math.min(14, sp * 0.62));
+    for (let i = 0; i < n; i++) {
+      const b = B[i], x = xL(i); if (x < -bw || x > W + bw) continue;
+      const col = b.close >= b.open ? C.up : C.down; g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 1;
+      if (th.type === 'bars') {
+        g.beginPath(); g.moveTo(Math.round(x) + 0.5, yP(b.high)); g.lineTo(Math.round(x) + 0.5, yP(b.low));
+        g.moveTo(x - bw / 2, yP(b.open)); g.lineTo(x, yP(b.open)); g.moveTo(x, yP(b.close)); g.lineTo(x + bw / 2, yP(b.close)); g.stroke();
+      } else {
+        g.beginPath(); g.moveTo(Math.round(x) + 0.5, yP(b.high)); g.lineTo(Math.round(x) + 0.5, yP(b.low)); g.stroke();
+        const yo = yP(b.open), yc = yP(b.close); g.fillRect(x - bw / 2, Math.min(yo, yc), bw, Math.max(1, Math.abs(yc - yo)));
+      }
+    }
+  }
+  if (th.drawings.length) {
+    const m = staticMapper(th.bars, r0, sp, left, yP, pOf);
+    withCtx(g, th.prec, () => { g.save(); g.beginPath(); g.rect(0, 0, W, H); g.clip(); for (const d of th.drawings) drawShape(d, m, W, H, false, false); g.restore(); });
+  }
+}
+
+// ----- an idea's chart, interactive, drawn with the chart library -----
+const IV = { ch: null, main: null, box: null, ov: null, ctx: null, it: null, bars: [], step: 3600, rts: [], raf: 0, sig: '', dirty: true, next: false, lg: null };
+function ideaChartClose() {
+  cancelAnimationFrame(IV.raf); IV.raf = 0;
+  if (IV.ch) { try { IV.ch.remove(); } catch (e) { /* already gone */ } }
+  Object.assign(IV, { ch: null, main: null, box: null, ov: null, ctx: null, it: null, bars: [], rts: [], sig: '', next: false, lg: null });
+}
+function ideaChartOpen(box, it) {
+  ideaChartClose();
+  const c = it.chart; IV.it = it; IV.box = box; IV.bars = c.bars.slice(); IV.step = tfOf(it.tf).sec;
+  const holder = el('div', 'lwc'); IV.ov = el('canvas', 'i-ov'); IV.ctx = IV.ov.getContext('2d');
+  IV.lg = el('div', 'legend'); box.replaceChildren(holder, IV.ov, IV.lg, brandMark());
+  IV.ch = createChart(holder, {
+    autoSize: true,
+    layout: { background: { type: 'solid', color: C.panel }, textColor: C.muted, fontSize: 11, fontFamily: FONT_DATA, attributionLogo: false, panes: { enableResize: false, separatorColor: C.line } },
+    grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
+    crosshair: { mode: CrosshairMode.Normal, vertLine: { color: C.faint, labelBackgroundColor: C.crossLabel }, horzLine: { color: C.faint, labelBackgroundColor: C.crossLabel } },
+    rightPriceScale: { borderColor: C.line },
+    timeScale: { borderColor: C.line, timeVisible: IV.step < DAY, secondsVisible: false, rightOffset: 0, barSpacing: 8, minBarSpacing: 0.5, tickMarkFormatter: (t, ty, loc) => tickFmt(t, ty, loc, it.tf) },
+    localization: { timeFormatter: t => fmtTime(t, it.tf) },
+  });
+  const [def, opts] = seriesStyle(c.type, c.prec);
+  IV.main = IV.ch.addSeries(def, Object.assign({ lastValueVisible: true, priceLineVisible: false }, opts), 0);
+  const vol = c.ind.some(x => x.type === 'vol');
+  IV.main.priceScale().applyOptions({ autoScale: true, scaleMargins: vol ? { top: 0.08, bottom: 0.2 } : { top: 0.08, bottom: 0.06 } });
+  IV.rts = c.ind.map(inst => Object.assign({ inst }, indSeries(IV.ch, inst, c.prec, IND[inst.type].pane ? IV.ch.panes().length : 0)));
+  IV.ch.panes().forEach((p, i) => { try { p.setStretchFactor(i === 0 ? 3 : 1); } catch (e) { /* older pane API */ } });
+  ideaChartData();
+  IV.ch.timeScale().setVisibleLogicalRange({ from: c.r[0], to: c.r[1] });
+  IV.ch.subscribeCrosshairMove(p => ideaLegend(p && p.time != null ? p.time : null));
+  ideaLegend(null);
+  IV.raf = requestAnimationFrame(ideaFrame);
+}
+function ideaChartData() {
+  const c = IV.it.chart, B = IV.bars;
+  const pts = c.type === 'line' || c.type === 'area' ? B.map(b => ({ time: b.time, value: b.close })) : c.type === 'heikin' ? heikinOf(B) : B.map(b => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }));
+  try { IV.ch.clearCrosshairPosition(); } catch (e) { /* older library */ }
+  IV.main.setData(pts);
+  for (const rt of IV.rts) {
+    const out = indCompute(rt.inst, B, IV.it.tf, IV.it.symbol);
+    rt.series.forEach((s, k) => { const arr = out[k] || [], data = []; for (let i = 0; i < arr.length; i++) if (arr[i] != null && isFinite(arr[i])) data.push(indPoint(rt.inst.type, out, k, i, B)); s.setData(data); });
+  }
+  IV.dirty = true;
+}
+function ideaLegend(time) {
+  const it = IV.it; if (!it || !IV.lg) return;
+  const B = IV.bars, i = time == null ? B.length - 1 : Math.max(0, rpIndexFor(B, time)), b = B[i];
+  const head = el('div', 'lg-head'), title = el('span', 'lg-title', `${label(it.symbol)} `);
+  title.append(el('span', null, `· ${tfOf(it.tf).label} · ${nameOf(it.symbol)}`));
+  head.append(title);
+  if (b) {
+    const o = el('span', 'ohlc ' + (b.close >= b.open ? 'up' : 'down'));
+    [['O', b.open], ['H', b.high], ['L', b.low], ['C', b.close]].forEach(([k, v]) => { const s = el('span'); s.append(el('i', null, k), el('b', null, fmtP(v, it.chart.prec))); o.append(s); });
+    head.append(o);
+  }
+  IV.lg.replaceChildren(head);
+}
+function ideaFrame() {
+  IV.raf = requestAnimationFrame(ideaFrame);
+  if (!IV.ch || document.hidden || !IV.box) return;
+  const W = IV.box.clientWidth, H = IV.box.clientHeight; if (!W || !H) return;
+  const m = mapperFor(IV.ch, IV.main, IV.bars, IV.step);
+  let sig = `${W}x${H}`;
+  if (m) { const ref = IV.bars[IV.bars.length - 1].close; sig += `|${m.x(IV.bars[0].time).toFixed(2)}|${m.sp.toFixed(4)}|${m.y(ref)}|${m.y(ref * 1.05)}`; }
+  try { sig += '|' + IV.ch.panes().map(p => p.getHeight()).join(','); } catch (e) { /* ignore */ }
+  if (sig === IV.sig && !IV.dirty) return;
+  IV.sig = sig; IV.dirty = false;
+  const dpr = window.devicePixelRatio || 1, g = IV.ctx;
+  IV.ov.width = Math.round(W * dpr); IV.ov.height = Math.round(H * dpr); IV.ov.style.width = W + 'px'; IV.ov.style.height = H + 'px';
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  if (!m) return;
+  let ps; try { ps = IV.ch.paneSize(0); } catch (e) { return; }
+  const it = IV.it, pub = Date.parse(it.created_at) / 1000, xp = m.x(pub);
+  g.save(); g.beginPath(); g.rect(0, 0, ps.width, ps.height); g.clip();
+  if (IV.next && xp < ps.width) { g.fillStyle = alpha(C.accent, 0.06); g.fillRect(Math.max(0, xp), 0, ps.width - Math.max(0, xp), ps.height); }
+  withCtx(g, it.chart.prec, () => {
+    for (const d of it.chart.drawings) drawShape(d, m, ps.width, ps.height, false, false);
+    if (xp >= 0 && xp <= ps.width) {
+      g.strokeStyle = alpha(C.accent, 0.85); g.lineWidth = 1; g.setLineDash([4, 4]); seg(Math.round(xp) + 0.5, 0, Math.round(xp) + 0.5, ps.height); g.setLineDash([]);
+      pill(xp, ps.height - 14, 'Published', C.accent, 'center', ps.width);
+    }
+  });
+  g.restore();
+}
+async function ideaNext(btn) {   // load today's prices after the idea, on the same chart
+  const it = IV.it; if (!it || IV.next) return;
+  if (!S.ready) { toast('Still connecting to market data. Try again in a moment.'); return; }
+  if (srcOf(it.symbol) === 'demo' || S.sandbox) { toast(`Live prices for ${label(it.symbol)} aren't available right now.`); return; }
+  const txt = btn.lastChild.textContent; btn.disabled = true; btn.lastChild.textContent = 'Loading prices…';
+  try {
+    const feed = feedFor(it.symbol), lastT = it.chart.bars[it.chart.bars.length - 1].time;
+    let fresh = await feed.klines(it.symbol, it.tf);
+    for (let k = 0; k < 6 && fresh.length && fresh[0].time > lastT + IV.step; k++) {   // reach back to the idea
+      const older = await feed.klines(it.symbol, it.tf, fresh[0].time), add = older.filter(b => b.time < fresh[0].time);
+      if (!add.length) break; fresh = add.concat(fresh);
+    }
+    if (IV.it !== it) return;
+    const after = fresh.filter(b => b.time > lastT).map(b => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume || 0 }));
+    if (!after.length) { toast('No newer prices yet. Check back later.'); return; }
+    IV.bars = it.chart.bars.concat(after); IV.next = true; ideaChartData(); ideaLegend(null);
+    IV.ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, Math.min(it.chart.r[0], IV.bars.length - 300)), to: IV.bars.length + 6 });
+    btn.hidden = true;
+    Ideas.nextNote(IV.bars[IV.bars.length - 1].close, after[0].time > lastT + IV.step * 3);
+  } catch (e) {
+    if (IV.it === it) toast("Newer prices couldn't be loaded. Please try again.");
+  } finally { if (btn.isConnected) { btn.disabled = false; btn.lastChild.textContent = txt; } }
+}
+
+// ----- an idea on top of the live chart -----
+function drawIdeaLayer(m, W, H) {
+  const L = S.idea;
+  for (const d of L.drawings) drawShape(d, m, W, H, false, false);
+  const x = m.x(L.at);
+  if (x >= 0 && x <= W) {
+    octx.strokeStyle = alpha(C.accent, 0.85); octx.lineWidth = 1; octx.setLineDash([4, 4]); seg(Math.round(x) + 0.5, 0, Math.round(x) + 0.5, H); octx.setLineDash([]);
+    pill(x, Math.max(14, Math.min(H - 14, ovH - 92)), 'Idea published', C.accent, 'center', W);   // clear of the legend and of the idea banner
+  }
+}
+function ideaLayerOn(it) {
+  S.idea = { id: it.id, symbol: it.symbol, tf: it.tf, title: it.title, author: it.author.name, drawings: it.chart.drawings, at: Math.floor(Date.parse(it.created_at) / 1000) };
+  const nm = $('#ideaBarName'); nm.replaceChildren(document.createTextNode('Idea: '), el('b', null, it.title), document.createTextNode(` · ${it.author.name}`));
+  nm.title = `${it.title} by ${it.author.name}`;
+  $('#ideaCopy').hidden = !it.chart.drawings.length;
+  $('#ideaBar').hidden = false; wrap.classList.add('idea-on'); markDirty();
+}
+function ideaLayerOff() { S.idea = null; $('#ideaBar').hidden = true; wrap.classList.remove('idea-on'); markDirty(); }
+function openChartAt(sym, tf, focus) {
+  S.focusTime = focus || 0;
+  const tfChange = tf && tf !== S.tf;
+  if (tfChange) { S.tf = tf; store.set('tf', tf); S.draft = null; S.measure = null; }
+  setView('chart', true);
+  if (sym !== S.symbol) setSymbol(sym);
+  else if (tfChange) { loadChart(); updateUrl(); }
+  else focusChart();
+}
+$('#ideaClose').onclick = ideaLayerOff;
+$('#ideaBack').onclick = () => { if (S.idea) Ideas.open(S.idea.id, true); };
+$('#ideaCopy').onclick = () => {
+  const L = S.idea; if (!L || L.symbol !== S.symbol) return;
+  pushUndo(); const list = curDrawings();
+  L.drawings.forEach(d => list.push(Object.assign(JSON.parse(JSON.stringify(d)), { id: uid() })));
+  saveDrawings(); toast(`Added ${L.drawings.length} drawing${L.drawings.length === 1 ? '' : 's'} to your chart.`); ideaLayerOff();
+};
+
+// ----- publishing -----
+const Pub = {
+  cap: null, dir: null,
+  open() {
+    if (!Auth.sb) { toast("Publishing ideas needs the site's accounts, which aren't set up here."); return; }
+    if (!Auth.user) { openSignIn(); return; }
+    if (R.on) { toast('Leave bar replay first. Ideas are published from the live chart.'); return; }
+    if (!S.ready || S.sandbox || !S.bars.length || srcOf(S.symbol) === 'demo') { toast("This chart isn't showing live prices right now, so it can't be published as an idea."); return; }
+    const cap = captureIdea();
+    if (!cap) { toast('Scroll the chart so the bars you want to talk about are on screen, then try again.'); return; }
+    this.cap = cap; ID.editing = null;
+    $('#pTitleH').textContent = 'Publish idea'; $('#pGo').textContent = 'Publish idea';
+    $('#pDirWrap').hidden = false; $('#pWhoWrap').hidden = false; $('#pFine').hidden = false; $('#pErr').hidden = true;
+    $('#pName').value = (Auth.profile && Auth.profile.display_name) || '';
+    $('#pPic').replaceWith(Object.assign(Auth.pic('pic'), { id: 'pPic' }));
+    const nd = cap.chart.d.length, ni = cap.chart.i.length, info = $('#pInfo'); info.replaceChildren();
+    info.append(el('b', null, `${label(cap.symbol)} · ${tfOf(cap.tf).label}`), document.createTextNode(` ${nameOf(cap.symbol)} · ${nd} drawing${nd === 1 ? '' : 's'} · ${ni} indicator${ni === 1 ? '' : 's'} · the chart exactly as you see it now`));
+    this.setDir(this.dir); this.count();
+    $('#publishDlg').showModal();
+    requestAnimationFrame(() => drawThumb($('#pCanvas'), cleanThumb(thumbOf(cap.chart))));
+    $('#pTitle').focus();
+  },
+  edit(it) {
+    ID.editing = it.id; this.cap = null;
+    $('#pTitleH').textContent = 'Edit idea'; $('#pGo').textContent = 'Save changes';
+    $('#pDirWrap').hidden = true; $('#pWhoWrap').hidden = true; $('#pFine').hidden = true; $('#pErr').hidden = true;
+    $('#pTitle').value = it.title; $('#pBody').value = it.body;
+    const info = $('#pInfo'); info.replaceChildren(el('b', null, `${label(it.symbol)} · ${tfOf(it.tf).label}`), document.createTextNode(` · ${DIR_NAME[it.direction]} · the chart and the call can't be changed`));
+    this.count(); $('#publishDlg').showModal();
+    requestAnimationFrame(() => drawThumb($('#pCanvas'), cleanThumb(thumbOf({ b: it.chart.bars.map(b => [b.time, b.open, b.high, b.low, b.close]), r: it.chart.r, ty: it.chart.type, p: it.chart.prec, d: it.chart.drawings }))));
+  },
+  setDir(d) {
+    this.dir = DIR_NAME[d] ? d : null;
+    document.querySelectorAll('#pDir .btn').forEach(b => { const on = b.dataset.dir === this.dir; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
+  },
+  count() { const n = $('#pBody').value.length; $('#pCount').textContent = `${n.toLocaleString('en-US')} / 5,000`; },
+  err(msg) { const e = $('#pErr'); e.textContent = msg; e.hidden = !msg; },
+  async submit() {
+    const title = $('#pTitle').value.replace(/\s+/g, ' ').trim(), body = $('#pBody').value.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim();
+    const name = $('#pName').value.replace(/\s+/g, ' ').trim();
+    if (title.length < 5) return this.err('Give your idea a title of at least 5 characters.');
+    if (!ID.editing && !this.dir) return this.err('Choose your view: long, short or neutral.');
+    if (body.length < 20) return this.err('Write a sentence or two about what you see (at least 20 characters).');
+    if (!ID.editing && name.length < 2) return this.err('Enter the name to show on your ideas (at least 2 characters).');
+    if (!Auth.user) { openSignIn(); return; }
+    this.err(''); const go = $('#pGo'); go.disabled = true;
+    try {
+      if (ID.editing) {
+        const { data, error } = await Auth.sb.from('ideas').update({ title, body }).eq('id', ID.editing).select(IDEA_FULL).single();
+        if (error) throw error;
+        const it = cleanIdea(data, true); if (it) { ID.cur = it; Ideas.patchList(it); }
+        $('#publishDlg').close(); toast('Idea updated.'); Ideas.renderDetail(); return;
+      }
+      if (name !== ((Auth.profile && Auth.profile.display_name) || '')) {
+        const { error } = await Auth.sb.from('profiles').update({ display_name: name }).eq('id', Auth.user.id);
+        if (error) throw error;
+        if (Auth.profile) Auth.profile.display_name = name; Auth.render();
+      }
+      const cap = this.cap;
+      const row = { symbol: cap.symbol, market: catOf(cap.symbol), tf: cap.tf, direction: this.dir, title, body, price: cap.price, chart: cap.chart, thumb: thumbOf(cap.chart) };
+      const { data, error } = await Auth.sb.from('ideas').insert(row).select('id').single();
+      if (error) throw error;
+      $('#publishDlg').close(); $('#pTitle').value = ''; $('#pBody').value = ''; this.setDir(null);
+      toast('Your idea is published.'); ID.list = []; ID.page = 0;
+      Ideas.open(String(data.id).toLowerCase(), true);
+    } catch (e) {
+      this.err(errText(e, ID.editing ? "The idea couldn't be saved. Check your connection and try again." : "The idea couldn't be published. Check your connection and try again."));
+    } finally { go.disabled = false; }
+  },
+};
+$('#ideaBtn').onclick = () => Pub.open();
+$('#pDir').onclick = e => { const b = e.target.closest('.btn'); if (b) Pub.setDir(b.dataset.dir); };
+$('#pBody').oninput = () => Pub.count();
+$('#pForm').addEventListener('submit', e => { e.preventDefault(); Pub.submit(); });
+
+// ----- reports -----
+function openReport(kind, id) {
+  if (!Auth.user) { openSignIn(); return; }
+  ID.reportFor = { kind, id };
+  $('#rTitle').textContent = kind === 'idea' ? 'Report this idea' : 'Report this comment';
+  $('#rForm').reset(); $('#rGo').disabled = true; $('#reportDlg').showModal();
+}
+$('#rReasons').onchange = () => { $('#rGo').disabled = !$('#rForm').querySelector('input[name="reason"]:checked'); };
+$('#rForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const pick = $('#rForm').querySelector('input[name="reason"]:checked'), f = ID.reportFor; if (!pick || !f) return;
+  const go = $('#rGo'); go.disabled = true;
+  const row = { reason: pick.value, note: $('#rNote').value.trim().slice(0, 500) }; row[f.kind === 'idea' ? 'idea_id' : 'comment_id'] = f.id;
+  const { error } = await Auth.sb.from('reports').insert(row);
+  go.disabled = false;
+  if (error && error.code === '23505') { $('#reportDlg').close(); toast("You've already reported this. Thanks."); return; }
+  if (error) { toast(errText(error, "The report couldn't be sent. Please try again.")); return; }
+  $('#reportDlg').close(); toast('Thanks. The moderator will take a look.');
+});
+
+// ----- the Ideas page -----
+function ideasRetheme() {
+  if (curView() === 'ideas') Ideas.paintThumbs();
+  if (IV.ch) {
+    IV.ch.applyOptions({
+      layout: { background: { type: 'solid', color: C.panel }, textColor: C.muted, panes: { separatorColor: C.line } },
+      grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
+      crosshair: { vertLine: { color: C.faint, labelBackgroundColor: C.crossLabel }, horzLine: { color: C.faint, labelBackgroundColor: C.crossLabel } },
+      rightPriceScale: { borderColor: C.line }, timeScale: { borderColor: C.line },
+    });
+    IV.main.applyOptions(seriesStyle(IV.it.chart.type, IV.it.chart.prec)[1]);
+    IV.rts.forEach(rt => rt.lines.forEach(l => l.applyOptions({ color: C.faint })));
+    ideaChartData();
+  }
+}
+const Ideas = {
+  boot() { this.renderMarkets(); this.renderFilters(); },
+  async account() {   // someone signed in or out
+    const who = Auth.user ? Auth.user.id : null;
+    ID.liked = new Set(); ID.admin = false;
+    if (who && Auth.sb) { try { const { data } = await Auth.sb.rpc('is_admin'); ID.admin = data === true; } catch (e) { /* not a moderator */ } }
+    if (!who) { ID.f.mine = false; ID.mod = false; }
+    this.renderFilters(); this.modCount();
+    if (who !== ID.who) { ID.who = who; if (curView() === 'ideas') this.show(true); }
+  },
+  show(refresh) {
+    const box = $('#ideas');
+    $('#iFeed').hidden = !!ID.open || ID.mod; $('#iDetail').hidden = !ID.open; $('#iMod').hidden = !ID.mod || !!ID.open;
+    if (!Auth.sb) { this.unavailable(); return; }
+    if (ID.open) { if (refresh || !ID.cur || ID.cur.id !== ID.open) this.detail(ID.open); else if (!IV.ch) this.renderDetail(); box.scrollTop = 0; }
+    else {
+      ideaChartClose();
+      if (ID.mod) this.modList();
+      else if (refresh || (!ID.list.length && !ID.loading)) this.feed(true);
+      else { this.renderGrid(); requestAnimationFrame(() => { box.scrollTop = ID.scroll; }); }
+    }
+    $('#iSub').textContent = Auth.user ? 'Chart analysis shared by traders. Ideas are opinions, not financial advice.' : 'Chart analysis shared by traders. Sign in to publish, like and comment. Ideas are opinions, not financial advice.';
+    updateDocTitle();
+  },
+  leave() { ideaChartClose(); },
+  open(id, push) {
+    if (!ID.open) ID.scroll = $('#ideas').scrollTop;
+    ID.open = id; ID.mod = false; ID.cur = ID.cur && ID.cur.id === id ? ID.cur : null;
+    setView('ideas', push); window.scrollTo(0, 0);
+  },
+  toFeed() { ID.open = null; ID.mod = false; setView('ideas', true); },
+  unavailable() {
+    $('#iFeed').hidden = false; $('#iDetail').hidden = true; $('#iMod').hidden = true;
+    $('.i-filters').hidden = true; $('#iGrid').replaceChildren(); $('#iMore').hidden = true; $('#iPublish').hidden = true;
+    const e = $('#iEmpty'); e.hidden = false;
+    e.replaceChildren(el('h2', null, 'Ideas need accounts'), el('p', null, "Ideas are stored with the site's accounts, which aren't set up in this copy of the page. Open the published site to read and share ideas."));
+  },
+
+  // ----- the feed -----
+  renderMarkets() {
+    const box = $('#iMarkets'); box.replaceChildren();
+    for (const [v, name] of MARKETS) {
+      const b = el('button', 's-tab', name); b.type = 'button'; b.setAttribute('aria-pressed', String(ID.f.market === v)); b.setAttribute('aria-selected', String(ID.f.market === v));
+      b.onclick = () => { ID.f.market = v; this.renderMarkets(); this.feed(true); }; box.append(b);
+    }
+  },
+  renderFilters() {
+    $('#iMine').hidden = !Auth.user; $('#iMine').setAttribute('aria-pressed', String(ID.f.mine));
+    $('#iModBtn').hidden = !ID.admin;
+    const chip = $('#iChip'); chip.replaceChildren();
+    if (ID.f.author) {
+      const c = el('span', 'i-chip-author'); c.append(el('span', null, `Ideas by ${ID.f.authorName}`));
+      const x = el('button'); x.type = 'button'; x.innerHTML = svg('x'); x.setAttribute('aria-label', 'Show ideas by everyone');
+      x.onclick = () => { ID.f.author = null; this.renderFilters(); this.feed(true); }; c.append(x); chip.append(c);
+    }
+  },
+  filtered() { const f = ID.f; return f.market !== 'all' || f.dir !== 'all' || f.q || f.mine || f.author; },
+  byAuthor(uid, name) { ID.f.author = uid; ID.f.authorName = name; ID.f.mine = false; ID.open = null; ID.mod = false; ID.list = []; this.renderFilters(); setView('ideas', true); },
+  skeleton() { const g = $('#iGrid'); g.replaceChildren(); for (let i = 0; i < 6; i++) g.append(el('div', 'i-skel')); $('#iEmpty').hidden = true; $('#iMore').hidden = true; },
+  async feed(reset) {
+    if (!Auth.sb) { this.unavailable(); return; }
+    $('.i-filters').hidden = false; $('#iPublish').hidden = false;
+    if (reset) { ID.list = []; ID.page = 0; ID.done = false; ID.scroll = 0; this.skeleton(); }
+    const req = ++ID.req; ID.loading = true; ID.failed = false; $('#iMore').disabled = true;
+    try {
+      const f = ID.f;
+      let q = Auth.sb.from('ideas').select(IDEA_LIST);
+      if (f.mine && Auth.user) q = q.eq('user_id', Auth.user.id); else q = q.eq('hidden', false);
+      if (f.author) q = q.eq('user_id', f.author);
+      if (f.market !== 'all') q = q.eq('market', f.market);
+      if (f.dir !== 'all') q = q.eq('direction', f.dir);
+      if (f.q) {
+        const id = parseSymbol(f.q);
+        if (id && (NAMES[id] || DEMO[id] || CFD[id] || classOf(id) === 'crypto')) q = q.eq('symbol', id);
+        else q = q.ilike('symbol', `%:${f.q}%`);
+      }
+      if (f.sort === 'new') q = q.order('created_at', { ascending: false });
+      else {
+        if (f.sort !== 'all') q = q.gte('created_at', new Date(Date.now() - (f.sort === 'week' ? 7 : 30) * 864e5).toISOString());
+        q = q.order('likes', { ascending: false }).order('created_at', { ascending: false });
+      }
+      const from = ID.page * IDEA_PAGE;
+      const { data, error } = await q.range(from, from + IDEA_PAGE - 1);
+      if (req !== ID.req) return;
+      if (error) throw error;
+      const seen = new Set(ID.list.map(x => x.id));
+      const rows = (data || []).map(r => cleanIdea(r, false)).filter(x => x && !seen.has(x.id));
+      await this.loadLiked(rows.map(r => r.id));
+      if (req !== ID.req) return;
+      ID.list = ID.list.concat(rows); ID.page++; ID.done = (data || []).length < IDEA_PAGE;
+    } catch (e) {
+      if (req !== ID.req) return;
+      ID.failed = true;
+    }
+    ID.loading = false; this.renderGrid();
+  },
+  async loadLiked(ids) {
+    if (!Auth.user || !ids.length) return;
+    try { const { data } = await Auth.sb.from('idea_likes').select('idea_id').in('idea_id', ids); (data || []).forEach(r => { if (isUuid(r.idea_id)) ID.liked.add(r.idea_id.toLowerCase()); }); } catch (e) { /* hearts stay empty */ }
+  },
+  renderGrid() {
+    const grid = $('#iGrid'), empty = $('#iEmpty'); grid.replaceChildren();
+    $('#iMore').hidden = ID.done || !ID.list.length || ID.failed; $('#iMore').disabled = false;
+    if (!ID.list.length) {
+      empty.hidden = false; empty.replaceChildren();
+      if (ID.failed) {
+        const b = el('button', 'primary', 'Try again'); b.type = 'button'; b.onclick = () => this.feed(true);
+        empty.append(el('h2', null, "Ideas couldn't be loaded"), el('p', null, 'Check your connection and try again.'), b);
+      } else if (this.filtered()) {
+        const b = el('button', 'ghost', 'Show all ideas'); b.type = 'button';
+        b.onclick = () => { Object.assign(ID.f, { market: 'all', dir: 'all', q: '', mine: false, author: null }); $('#iSearch').value = ''; this.setDirSeg(); this.renderMarkets(); this.renderFilters(); this.feed(true); };
+        empty.append(el('h2', null, ID.f.mine ? "You haven't published any ideas yet" : 'No ideas match'), el('p', null, ID.f.mine ? 'Open a chart, draw your levels and press Publish idea at the top.' : 'Try another market or symbol, or show all ideas.'), b);
+      } else {
+        const b = el('button', 'primary', '+ Publish the first idea'); b.type = 'button'; b.onclick = () => this.startPublish();
+        empty.append(el('h2', null, 'No ideas yet'), el('p', null, 'Share how you read a chart: open one, draw your levels and press Publish idea at the top. Your idea shows here for everyone.'), b);
+      }
+      return;
+    }
+    empty.hidden = true;
+    for (const it of ID.list) grid.append(this.card(it));
+    this.paintThumbs();
+  },
+  card(it) {
+    const card = el('article', 'i-card');
+    const fig = el('div', 'i-thumb'), cv = el('canvas'); cv.setAttribute('aria-hidden', 'true'); cv._thumb = it.thumb;
+    fig.append(cv, el('span', 'i-sym', `${label(it.symbol)} · ${tfOf(it.tf).label}`));
+    const b = el('div', 'i-card-b'), pills = el('div', 'i-pills'); pills.append(dirPill(it.direction));
+    if (it.hidden) pills.append(el('span', 'hid-pill', 'Hidden by the moderator'));
+    const h = el('h3'), a = el('a', null, it.title); a.href = '?view=ideas&idea=' + it.id;
+    a.onclick = e => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); this.open(it.id, true); };
+    h.append(a); b.append(pills, h, el('p', 'i-ex', it.excerpt));
+    const foot = el('div', 'i-foot'), who = el('button', 'i-author'); who.type = 'button'; who.title = `More ideas by ${it.author.name}`;
+    who.append(avatarEl(it.author.name, it.author.avatar), el('span', null, it.author.name)); who.onclick = () => this.byAuthor(it.user_id, it.author.name);
+    const when = el('span', 'i-when', ago(it.created_at)); when.title = fullWhen(it.created_at);
+    foot.append(who, when, statEl('heart', it.likes, ID.liked.has(it.id), 'like'), statEl('chat', it.comments, false, 'comment'));
+    card.append(fig, b, foot);
+    return card;
+  },
+  paintThumbs() { requestAnimationFrame(() => document.querySelectorAll('#iGrid canvas').forEach(cv => drawThumb(cv, cv._thumb))); },
+  setDirSeg() { document.querySelectorAll('#iDir .btn').forEach(x => { const on = x.dataset.v === ID.f.dir; x.classList.toggle('on', on); x.setAttribute('aria-pressed', String(on)); }); },
+  patchList(it) { const x = ID.list.find(y => y.id === it.id); if (x) { x.title = it.title; x.likes = it.likes; x.comments = it.comments; x.hidden = it.hidden; if (it.body != null) x.excerpt = it.body.slice(0, 240); } },
+  startPublish() {
+    setView('chart', true);
+    toast('Set up the chart you want to share (symbol, timeframe and drawings), then press Publish idea at the top.');
+    const b = $('#ideaBtn'); b.classList.remove('pulse'); void b.offsetWidth; b.classList.add('pulse');
+  },
+
+  // ----- one idea -----
+  async detail(id) {
+    const box = $('#iDetail'); ideaChartClose();
+    box.replaceChildren(el('div', 'i-skel'));
+    ID.cur = null; ID.comments = [];
+    const req = ++ID.dreq;
+    try {
+      const { data, error } = await Auth.sb.from('ideas').select(IDEA_FULL).eq('id', id).maybeSingle();
+      if (req !== ID.dreq) return;
+      if (error) throw error;
+      const it = data && cleanIdea(data, true);
+      if (!it) { this.gone(false); return; }
+      if (Auth.user && it.user_id !== Auth.user.id) {
+        const { data: l } = await Auth.sb.from('idea_likes').select('idea_id').eq('idea_id', id).maybeSingle();
+        if (l) ID.liked.add(id); else ID.liked.delete(id);
+      }
+      if (req !== ID.dreq) return;
+      ID.cur = it; this.patchList(it); updateDocTitle();
+      this.renderDetail(); this.loadComments(it);
+    } catch (e) { if (req === ID.dreq) this.gone(true); }
+  },
+  gone(failed) {
+    const box = $('#iDetail'), g = el('div', 'i-gone'), b = el('button', 'primary', failed ? 'Try again' : 'See all ideas'); b.type = 'button';
+    b.onclick = () => (failed ? this.detail(ID.open) : this.toFeed());
+    g.append(el('h2', null, failed ? "This idea couldn't be loaded" : "This idea isn't available"), el('p', null, failed ? 'Check your connection and try again.' : 'It may have been deleted by its author or hidden by the moderator.'), b);
+    box.replaceChildren(g); updateDocTitle();
+  },
+  renderDetail() {
+    const it = ID.cur; if (!it) return;
+    const box = $('#iDetail'), main = el('div', 'i-main'), aside = el('aside', 'i-aside');
+    const mine = !!(Auth.user && Auth.user.id === it.user_id);
+    // heading
+    const top = el('div', 'i-top'), back = iconBtn('i-back', 'back', 'All ideas'); back.onclick = () => this.toFeed();
+    const meta = el('div', 'i-meta'), symB = el('button', 'sym', `${label(it.symbol)} · ${tfOf(it.tf).label}`); symB.type = 'button'; symB.title = 'Open this chart'; symB.onclick = () => openChartAt(it.symbol, it.tf);
+    const who = el('button', 'i-author'); who.type = 'button'; who.append(avatarEl(it.author.name, it.author.avatar), el('span', null, it.author.name)); who.onclick = () => this.byAuthor(it.user_id, it.author.name);
+    const when = el('span', null, ago(it.created_at)); when.title = fullWhen(it.created_at);
+    meta.append(dirPill(it.direction), symB, who, when);
+    if (Date.parse(it.updated_at) - Date.parse(it.created_at) > 60000) meta.append(el('span', null, 'edited'));
+    top.append(back, el('h1', 'i-title', it.title), meta);
+    main.append(top);
+    if (it.hidden) {
+      const ban = el('div', 'i-banner'); ban.append(el('b', null, 'Hidden.'), document.createTextNode(ID.admin ? ' Only you and the author can see this idea.' : ' The moderator has hidden this idea. Only you can see it.'));
+      if (ID.admin) { const u = el('button', 'ghost', 'Show it again'); u.type = 'button'; u.onclick = () => this.moderate('idea', it.id, 'unhide'); ban.append(u); }
+      main.append(ban);
+    }
+    // chart
+    const chartBox = el('div', 'i-chart'); chartBox.setAttribute('role', 'img'); chartBox.setAttribute('aria-label', `Chart of ${label(it.symbol)} on ${tfOf(it.tf).label} bars as published, with the author's drawings`);
+    const bar = el('div', 'i-chart-bar');
+    const nextB = iconBtn('ghost', 'next', 'What happened next', 'Add the prices since this idea was published'); nextB.onclick = () => ideaNext(nextB);
+    const liveB = iconBtn('ghost', 'open', 'Open on live chart', "Open this market on the live chart with the author's drawings"); liveB.onclick = () => { ideaLayerOn(it); openChartAt(it.symbol, it.tf, S.idea.at); };
+    const note = el('span', 'i-next-note'); note.id = 'iNextNote';
+    bar.append(nextB, liveB, note);
+    main.append(chartBox, bar);
+    // actions
+    const acts = el('div', 'i-actions');
+    const like = iconBtn('ghost i-like', 'heart', null, mine ? "Likes on your idea" : 'Like this idea'); like.append(el('b', null, String(it.likes))); like.setAttribute('aria-pressed', String(ID.liked.has(it.id)));
+    like.setAttribute('aria-label', `${mine ? 'Likes' : 'Like'}: ${it.likes}`); like.onclick = () => this.like(like);
+    const com = iconBtn('ghost', 'chat', String(it.comments), 'Go to the comments'); com.id = 'iComBtn'; com.onclick = () => { const s = $('#iComments'); if (s) { s.scrollIntoView({ behavior: 'smooth', block: 'start' }); const t = s.querySelector('textarea'); if (t) setTimeout(() => t.focus({ preventScroll: true }), 300); } };
+    const share = iconBtn('ghost', 'share', 'Share', 'Copy a link to this idea'); share.onclick = () => {
+      const url = ideaUrl(it.id);
+      try { navigator.clipboard.writeText(url).then(() => toast('Link copied. Anyone can open it.'), () => toast(url)); } catch (e) { toast(url); }
+    };
+    acts.append(like, com, share);
+    if (!mine) { const rep = iconBtn('ghost', 'flag', 'Report', 'Report this idea to the moderator'); rep.onclick = () => openReport('idea', it.id); acts.append(rep); }
+    if (mine && Date.now() - Date.parse(it.created_at) < 3600e3) { const ed = iconBtn('ghost', 'pen', 'Edit', 'Fix the title or text (for an hour after publishing)'); ed.onclick = () => Pub.edit(it); acts.append(ed); }
+    if (ID.admin && !it.hidden && !mine) { const hd = iconBtn('ghost', 'eyeoff', 'Hide', 'Hide this idea from everyone'); hd.onclick = () => this.moderate('idea', it.id, 'hide'); acts.append(hd); }
+    if (mine || ID.admin) { const del = iconBtn('danger', 'trash', 'Delete', 'Delete this idea'); del.onclick = () => this.remove(del); acts.append(del); }
+    main.append(acts);
+    // the analysis
+    const body = el('div', 'i-body'); body.append(el('p', 'i-text', it.body), el('p', 'i-disc', "This is the author's opinion, not financial advice. Prices can move against any idea."));
+    main.append(body);
+    const coms = el('section', 'i-com'); coms.id = 'iComments'; coms.setAttribute('aria-label', 'Comments'); main.append(coms);
+    // side panel
+    const who2 = el('div', 'i-card2'), wrow = el('div', 'i-who'), wtxt = el('div'); wtxt.style.minWidth = '0';
+    const more = el('button', null, `More ideas by ${it.author.name}`); more.type = 'button'; more.onclick = () => this.byAuthor(it.user_id, it.author.name);
+    wtxt.append(el('b', null, it.author.name), more); wrow.append(avatarEl(it.author.name, it.author.avatar), wtxt); who2.append(el('h2', null, 'Author'), wrow);
+    const facts = el('div', 'i-card2'), dl = el('dl', 'i-facts'); dl.id = 'iFacts';
+    const fact = (k, v) => { dl.append(el('dt', null, k)); const dd = el('dd'); if (typeof v === 'string') dd.textContent = v; else dd.append(v); dl.append(dd); return dd; };
+    const symB2 = el('button', null, label(it.symbol)); symB2.type = 'button'; symB2.title = 'Open this chart'; symB2.onclick = () => openChartAt(it.symbol, it.tf);
+    fact('Symbol', symB2); fact('Market', MARKET_NAME[it.market] || kindOf(it.symbol)); fact('Timeframe', tfOf(it.tf).label); fact('Call', DIR_NAME[it.direction]);
+    fact('Price then', it.price != null ? fmtP(it.price, it.chart.prec) : '—'); fact('Published', fullWhen(it.created_at));
+    facts.append(el('h2', null, 'The idea'), dl);
+    const moreBox = el('div', 'i-card2'); moreBox.id = 'iMoreBox'; moreBox.append(el('h2', null, `More on ${label(it.symbol)}`), el('p', 'fine', 'Loading…'));
+    aside.append(who2, facts, moreBox);
+    box.replaceChildren(main, aside);
+    ideaChartOpen(chartBox, it);
+    this.renderComments(); this.loadMore(it);
+  },
+  nextNote(now, gap) {
+    const it = ID.cur; if (!it) return;
+    const n = $('#iNextNote'), dl = $('#iFacts'); if (!n || !dl) return;
+    const chg = it.price ? ((now - it.price) / it.price) * 100 : null;
+    n.replaceChildren(document.createTextNode('Since the idea: '), el('b', chg > 0 ? 'up-t' : chg < 0 ? 'dn-t' : null, fmtPct(chg)));
+    if (it.direction !== 'neutral' && chg != null && chg !== 0) n.append(document.createTextNode((chg > 0) === (it.direction === 'long') ? ', in favour of the call' : ', against the call'));
+    if (gap) n.append(document.createTextNode('. Some bars in between are missing.'));
+    dl.append(el('dt', null, 'Price now'), el('dd', null, fmtP(now, it.chart.prec)), el('dt', null, 'Change since'));
+    dl.append(el('dd', chg > 0 ? 'up-t' : chg < 0 ? 'dn-t' : null, fmtPct(chg)));
+  },
+  async like(btn) {
+    const it = ID.cur; if (!it) return;
+    if (!Auth.user) { openSignIn(); return; }
+    if (it.user_id === Auth.user.id) { toast("You can't like your own idea."); return; }
+    const on = !ID.liked.has(it.id), paint = () => { btn.setAttribute('aria-pressed', String(ID.liked.has(it.id))); btn.querySelector('b').textContent = String(it.likes); btn.setAttribute('aria-label', `Like: ${it.likes}`); this.patchList(it); };
+    const flip = v => { if (v) ID.liked.add(it.id); else ID.liked.delete(it.id); it.likes = Math.max(0, it.likes + (v ? 1 : -1)); paint(); };
+    flip(on); btn.disabled = true;
+    try {
+      const r = on ? await Auth.sb.from('idea_likes').insert({ idea_id: it.id }) : await Auth.sb.from('idea_likes').delete().eq('idea_id', it.id).eq('user_id', Auth.user.id);
+      if (r.error && !(on && r.error.code === '23505')) throw r.error;
+    } catch (e) { flip(!on); toast("That didn't work. Please try again."); }
+    finally { btn.disabled = false; }
+  },
+  async remove(btn) {
+    const it = ID.cur; if (!it) return;
+    if (!btn._arm || Date.now() - btn._arm > 4000) {
+      btn._arm = Date.now(); btn.lastChild.textContent = 'Click again to delete';
+      setTimeout(() => { if (btn.isConnected && Date.now() - btn._arm >= 4000) btn.lastChild.textContent = 'Delete'; }, 4100); return;
+    }
+    btn.disabled = true;
+    const { error, count } = await Auth.sb.from('ideas').delete({ count: 'exact' }).eq('id', it.id);
+    btn.disabled = false;
+    if (error || count === 0) { toast(errText(error, "The idea couldn't be deleted. Please try again.")); return; }
+    ID.list = ID.list.filter(x => x.id !== it.id); ID.cur = null;
+    if (S.idea && S.idea.id === it.id) ideaLayerOff();
+    toast('Idea deleted.'); this.toFeed();
+  },
+  async moderate(kind, id, action) {
+    const { error } = await Auth.sb.rpc('moderate', { kind, target: id, action });
+    if (error) { toast(errText(error, "That didn't work. Please try again.")); return false; }
+    toast({ hide: kind === 'idea' ? 'Idea hidden. Only its author can see it now.' : 'Comment hidden.', unhide: kind === 'idea' ? 'The idea is visible again.' : 'The comment is visible again.', dismiss: 'Report dismissed.' }[action]);
+    if (kind === 'idea' && ID.cur && ID.cur.id === id && action !== 'dismiss') { ID.cur.hidden = action === 'hide'; this.patchList(ID.cur); this.renderDetail(); }
+    if (kind === 'comment') { const c = ID.comments.find(x => x.id === id); if (c && action !== 'dismiss') { const was = c.hidden; c.hidden = action === 'hide'; if (ID.cur && was !== c.hidden) { ID.cur.comments += c.hidden ? -1 : 1; this.syncComCount(); } this.renderComments(); } }
+    this.modCount(); if (ID.mod && !ID.open) this.modList();
+    return true;
+  },
+  async loadMore(it) {
+    const box = $('#iMoreBox'); if (!box) return;
+    let rows = [];
+    try {
+      const { data } = await Auth.sb.from('ideas').select('id,user_id,symbol,title,direction,likes,created_at,author:profiles(display_name)').eq('symbol', it.symbol).eq('hidden', false).neq('id', it.id).order('created_at', { ascending: false }).limit(5);
+      rows = (data || []).filter(r => isUuid(r.id));
+    } catch (e) { /* leave it empty */ }
+    if (!box.isConnected || !ID.cur || ID.cur.id !== it.id) return;
+    const list = el('div', 'i-more');
+    for (const r of rows) {
+      const a = el('a'); a.href = '?view=ideas&idea=' + r.id.toLowerCase();
+      a.onclick = e => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); this.open(r.id.toLowerCase(), true); };
+      const line = el('span'); line.append(dirPill(DIR_NAME[r.direction] ? r.direction : 'neutral'), document.createTextNode(`${cleanAuthor(r.author).name} · ${ago(isoOk(r.created_at))}`));
+      a.append(el('b', null, String(r.title || '').slice(0, 100)), line); list.append(a);
+    }
+    box.replaceChildren(el('h2', null, `More on ${label(it.symbol)}`));
+    if (rows.length) box.append(list); else box.append(el('p', 'fine', `No other ideas on ${label(it.symbol)} yet.`));
+  },
+
+  // ----- comments -----
+  async loadComments(it) {
+    try {
+      const { data, error } = await Auth.sb.from('idea_comments').select(COMMENT_COLS).eq('idea_id', it.id).order('created_at', { ascending: true }).limit(500);
+      if (error) throw error;
+      if (!ID.cur || ID.cur.id !== it.id) return;
+      ID.comments = (data || []).map(cleanComment).filter(Boolean); ID.comFail = false;
+    } catch (e) { ID.comFail = true; }
+    this.renderComments();
+  },
+  syncComCount() {
+    const b = $('#iComBtn'); if (b && ID.cur) b.lastChild.textContent = String(ID.cur.comments);
+    if (ID.cur) this.patchList(ID.cur);
+  },
+  renderComments() {
+    const sec = $('#iComments'), it = ID.cur; if (!sec || !it) return;
+    const shown = ID.comments.filter(c => !c.hidden).length;
+    const h = el('h2', null, 'Comments'); h.append(el('span', null, String(shown)));
+    sec.replaceChildren(h);
+    if (ID.comFail) sec.append(el('p', 'fine', "Comments couldn't be loaded."));
+    else if (!ID.comments.length) sec.append(el('p', 'fine', 'No comments yet. Start the conversation.'));
+    for (const c of ID.comments) sec.append(this.comment(c, it));
+    if (Auth.user) {
+      const f = el('form', 'i-form'); f.noValidate = true;
+      const ta = el('textarea', 'field'); ta.maxLength = 1500; ta.rows = 3; ta.placeholder = 'Add a comment'; ta.setAttribute('aria-label', 'Add a comment');
+      const row = el('div', 'row'), hint = el('p', 'fine', 'Be kind and stay on topic.'), cnt = el('span', 'p-count', ''), go = el('button', 'primary', 'Post comment'); go.type = 'submit';
+      ta.oninput = () => { cnt.textContent = ta.value.length > 1200 ? `${ta.value.length} / 1,500` : ''; };
+      row.append(hint, cnt, go); f.append(ta, row);
+      f.addEventListener('submit', e => { e.preventDefault(); this.postComment(ta, go); });
+      sec.append(f);
+    } else if (Auth.sb) {
+      const p = el('p', 'fine'), b = el('button', null, 'Sign in'); b.type = 'button'; b.style.cssText = 'color:var(--accent);font-weight:600;padding:0'; b.onclick = openSignIn;
+      p.append(b, document.createTextNode(' to like ideas and join the conversation.')); sec.append(p);
+    }
+  },
+  comment(c, it) {
+    const row = el('div', 'i-c' + (c.hidden ? ' hidden' : '')), head = el('div', 'i-c-h');
+    head.append(el('b', null, c.author.name));
+    if (c.user_id === it.user_id) head.append(el('span', 'by-author', 'Author'));
+    const t = el('span', null, ago(c.created_at)); t.title = fullWhen(c.created_at); head.append(t);
+    if (c.hidden) head.append(el('span', 'hid-pill', 'Hidden'));
+    const acts = el('span', 'acts'), me = Auth.user && Auth.user.id;
+    if (me && c.user_id !== me && !c.hidden) { const r = el('button', null, 'Report'); r.type = 'button'; r.onclick = () => openReport('comment', c.id); acts.append(r); }
+    if (ID.admin && c.user_id !== me) { const hb = el('button', null, c.hidden ? 'Show' : 'Hide'); hb.type = 'button'; hb.onclick = () => this.moderate('comment', c.id, c.hidden ? 'unhide' : 'hide'); acts.append(hb); }
+    if (me && (c.user_id === me || it.user_id === me || ID.admin)) { const d = el('button', 'warn', 'Delete'); d.type = 'button'; d.onclick = () => this.delComment(c, d); acts.append(d); }
+    head.append(acts);
+    row.append(avatarEl(c.author.name, c.author.avatar), head, el('p', null, c.hidden && !ID.admin && c.user_id !== me ? 'This comment was hidden by the moderator.' : c.body));
+    return row;
+  },
+  async postComment(ta, go) {
+    const it = ID.cur; if (!it || !Auth.user) return;
+    const body = ta.value.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim();
+    if (!body) { ta.focus(); return; }
+    go.disabled = true;
+    try {
+      const { data, error } = await Auth.sb.from('idea_comments').insert({ idea_id: it.id, body: body.slice(0, 1500) }).select(COMMENT_COLS).single();
+      if (error) throw error;
+      const c = cleanComment(data);
+      if (c) { if (!c.author || c.author.name === 'Trader') c.author = { name: Auth.name(), avatar: safeAvatar(Auth.profile && Auth.profile.avatar_url) }; ID.comments.push(c); }
+      it.comments++; this.syncComCount(); this.renderComments();
+      const s = $('#iComments'); if (s) s.lastElementChild.scrollIntoView({ block: 'nearest' });
+    } catch (e) { go.disabled = false; toast(errText(e, "Your comment couldn't be posted. Please try again.")); }
+  },
+  async delComment(c, btn) {
+    if (!btn._arm || Date.now() - btn._arm > 4000) {
+      btn._arm = Date.now(); btn.textContent = 'Click again to delete';
+      setTimeout(() => { if (btn.isConnected && Date.now() - btn._arm >= 4000) btn.textContent = 'Delete'; }, 4100); return;
+    }
+    btn.disabled = true;
+    const { error, count } = await Auth.sb.from('idea_comments').delete({ count: 'exact' }).eq('id', c.id);
+    if (error || count === 0) { btn.disabled = false; toast(errText(error, "The comment couldn't be deleted. Please try again.")); return; }
+    ID.comments = ID.comments.filter(x => x.id !== c.id);
+    if (ID.cur && !c.hidden) { ID.cur.comments = Math.max(0, ID.cur.comments - 1); this.syncComCount(); }
+    this.renderComments(); toast('Comment deleted.');
+  },
+
+  // ----- moderation (the site owner) -----
+  async modCount() {
+    const b = $('#iModBtn'); b.hidden = !ID.admin; if (!ID.admin || !Auth.sb) return;
+    try { const { count } = await Auth.sb.from('reports').select('id', { count: 'exact', head: true }).eq('resolved', false); b.textContent = count ? `Reports (${count})` : 'Reports'; }
+    catch (e) { b.textContent = 'Reports'; }
+  },
+  async modList() {
+    const box = $('#iMod'), head = el('div', 'j-head'), t = el('div'), back = iconBtn('i-back', 'back', 'All ideas'); back.onclick = () => this.toFeed();
+    t.append(back, el('h1', null, 'Reports'), el('p', 'j-sub', 'Ideas and comments people have reported. Hiding something removes it for everyone except its author.'));
+    head.append(t); box.replaceChildren(head, el('div', 'i-skel'));
+    let rows = [];
+    try {
+      const { data, error } = await Auth.sb.from('reports').select('id,reason,note,created_at,idea_id,comment_id,idea:ideas(id,title,hidden),comment:idea_comments(id,body,idea_id,hidden)').eq('resolved', false).order('created_at', { ascending: false }).limit(300);
+      if (error) throw error; rows = data || [];
+    } catch (e) { box.replaceChildren(head, el('p', 'fine', "Reports couldn't be loaded. Please try again.")); return; }
+    const groups = new Map();
+    for (const r of rows) {
+      const kind = r.comment_id ? 'comment' : 'idea', id = String(r.comment_id || r.idea_id || '').toLowerCase(); if (!isUuid(id)) continue;
+      let g = groups.get(id);
+      if (!g) {
+        const tgt = kind === 'idea' ? r.idea : r.comment;
+        g = { kind, id, text: kind === 'idea' ? String(tgt && tgt.title || 'An idea') : String(tgt && tgt.body || 'A comment'), ideaId: kind === 'idea' ? id : String(tgt && tgt.idea_id || '').toLowerCase(), hidden: !!(tgt && tgt.hidden), reasons: {}, notes: [] };
+        groups.set(id, g);
+      }
+      g.reasons[r.reason] = (g.reasons[r.reason] || 0) + 1;
+      if (r.note) g.notes.push(String(r.note).slice(0, 500));
+    }
+    box.replaceChildren(head);
+    if (!groups.size) { box.append(el('div', 'i-gone', 'No open reports.')); return; }
+    for (const g of groups.values()) {
+      const row = el('div', 'i-mod-row'), what = el('div'), n = Object.values(g.reasons).reduce((a, b) => a + b, 0);
+      what.append(el('div', 'what', `${g.kind === 'idea' ? 'Idea' : 'Comment'}${g.hidden ? ' · hidden' : ''}`), el('p', 'txt', g.text));
+      const why = el('div', 'why', `${n} report${n === 1 ? '' : 's'}: ${Object.entries(g.reasons).map(([k, v]) => `${REASONS[k] || k}${v > 1 ? ' ×' + v : ''}`).join(', ')}${g.notes.length ? ' · “' + g.notes.slice(0, 3).join('” “') + '”' : ''}`);
+      const acts = el('div', 'acts');
+      if (isUuid(g.ideaId)) { const o = el('button', 'ghost', 'Open'); o.type = 'button'; o.onclick = () => this.open(g.ideaId, true); acts.append(o); }
+      const hb = el('button', 'ghost', g.hidden ? 'Show again' : 'Hide'); hb.type = 'button'; hb.onclick = () => this.moderate(g.kind, g.id, g.hidden ? 'unhide' : 'hide');
+      const db = el('button', 'ghost', 'Dismiss'); db.type = 'button'; db.title = 'Nothing wrong: close these reports'; db.onclick = () => this.moderate(g.kind, g.id, 'dismiss');
+      acts.append(hb, db); row.append(what, acts, why); box.append(row);
+    }
+  },
+};
+
+// ----- controls -----
+$('#iPublish').onclick = () => Ideas.startPublish();
+$('#iMore').onclick = () => Ideas.feed(false);
+$('#iSort').onchange = e => { ID.f.sort = e.target.value; Ideas.feed(true); };
+$('#iDir').onclick = e => { const b = e.target.closest('.btn'); if (!b) return; ID.f.dir = b.dataset.v; Ideas.setDirSeg(); Ideas.feed(true); };
+$('#iMine').onclick = () => { ID.f.mine = !ID.f.mine; if (ID.f.mine) ID.f.author = null; Ideas.renderFilters(); Ideas.feed(true); };
+$('#iModBtn').onclick = () => { ID.mod = true; ID.open = null; setView('ideas', true); };
+{
+  let t = null;
+  const go = () => { const v = $('#iSearch').value.toUpperCase().replace(/[^A-Z0-9./-]/g, '').slice(0, 20); if (v === ID.f.q) return; ID.f.q = v; Ideas.feed(true); };
+  $('#iSearch').oninput = () => { clearTimeout(t); t = setTimeout(go, 450); };
+  $('#iSearch').onkeydown = e => { if (e.key === 'Enter') { clearTimeout(t); go(); } };
+}
+new ResizeObserver(() => { if (curView() === 'ideas' && !ID.open) Ideas.paintThumbs(); }).observe($('#iGrid'));
+
 /* ---------- boot ---------- */
 async function probeTD() {
   if (TD.key === 'site') { try { return (await fetchT(API + '/', 4500)).ok; } catch (e) { return false; } }
@@ -3810,8 +4794,9 @@ async function boot() {
   saveInd(); applyTheme(); sizeOverlay(); requestAnimationFrame(frame);
   renderWatch(); renderDetails(); renderFeed(); veil('Connecting to market data…');
   Journal.init();
-  if (new URLSearchParams(location.search).get('view') === 'journal') setView('journal');
   Auth.init().catch(() => { /* the site works without accounts */ });
+  Ideas.boot();
+  { const v = readViewFromUrl(); if (v !== 'chart') setView(v); }
   const oandaUp = OANDA.configured() ? OANDA.connect().then(() => true, e => { OANDA.state = e.code === 401 ? 'bad' : 'offline'; return false; }) : Promise.resolve(false);
   const [bin, tdOk, goldOk, oaOk, krOk] = await Promise.all([Live.probe(), probeTD(), GoldApi.price('XAU').then(q => { S.spot.XAU = q; return true; }, () => false), oandaUp, Kraken.probe()]);
   S.binance = bin; S.tdReach = tdOk; S.goldApi = goldOk; S.sandbox = !bin && !tdOk && !goldOk && !oaOk && !krOk;

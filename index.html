@@ -149,8 +149,8 @@ select option{background:var(--panel);color:var(--fg)}
 .view-tab{height:26px;padding:0 12px;border-radius:6px;display:inline-flex;align-items:center;font-weight:600;font-size:12.5px;color:var(--muted);text-decoration:none}
 .view-tab:hover{color:var(--fg)}
 .view-tab[aria-current="page"]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(8,12,20,.1)}
-body[data-view="journal"] .app>.tools,body[data-view="journal"] .app>.stage,body[data-view="journal"] .app>.side{display:none}
-body[data-view="journal"] .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn){display:none!important}
+body:is([data-view="journal"],[data-view="ideas"]) .app>:is(.tools,.stage,.side){display:none}
+body:is([data-view="journal"],[data-view="ideas"]) .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#ideaBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn){display:none!important}
 
 /* journal */
 .journal{grid-column:1/-1;grid-row:2/-1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px}
@@ -272,6 +272,173 @@ body[data-view="journal"] .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replay
   .t-wide{grid-column:1/-1}
 }
 .j-row>.c-meta{display:none}
+/* ideas */
+.ideas{grid-column:1/-1;grid-row:2/-1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.i-feed{display:flex;flex-direction:column;gap:6px}
+.i-filters{gap:8px}
+.i-chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;min-width:0;max-width:100%}
+.i-chips::-webkit-scrollbar{display:none}
+.i-chips .s-tab{height:28px;padding:0 12px;font-size:12.5px}
+.i-filters input.field{width:120px}
+.i-filters .i-mine[aria-pressed="true"]{background:var(--fg);border-color:var(--fg);color:var(--panel)}
+.i-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px}
+.i-card{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
+.i-card:hover{border-color:color-mix(in srgb,var(--fg) 28%,var(--line))}
+.i-card:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+.i-card :focus-visible{outline:none}
+.i-thumb{position:relative;aspect-ratio:16/9;border-bottom:1px solid var(--line);background:var(--panel)}
+.i-thumb canvas{position:absolute;inset:0;width:100%;height:100%}
+.i-sym{position:absolute;left:8px;top:7px;font-family:var(--font-data);font-size:11.5px;font-weight:600;padding:1px 6px;border-radius:4px;background:color-mix(in srgb,var(--panel) 88%,transparent);color:var(--fg);pointer-events:none}
+.i-card-b{padding:10px 12px 2px;display:flex;flex-direction:column;align-items:flex-start;gap:5px;flex:1;min-width:0}
+.i-card h3{margin:0;font-size:14.5px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.i-card h3 a{color:inherit;text-decoration:none}
+.i-card h3 a::after{content:"";position:absolute;inset:0;z-index:1}
+.i-ex{margin:0;color:var(--muted);font-size:12.5px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.i-foot{display:flex;align-items:center;gap:10px;padding:8px 12px 10px;font-size:12px;color:var(--muted);min-width:0}
+.i-foot .i-when{white-space:nowrap}
+.i-stat{display:inline-flex;align-items:center;gap:4px;font-family:var(--font-data);font-size:11.5px;white-space:nowrap}
+.i-stat svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.i-stat.on{color:var(--down-ink)}
+.i-stat.on svg{fill:currentColor}
+.i-foot .i-stat:first-of-type{margin-left:auto}
+.i-author{position:relative;z-index:2;display:inline-flex;align-items:center;gap:6px;min-width:0;font-weight:600;font-size:12px;color:var(--fg);padding:2px 4px 2px 2px;border-radius:999px}
+.i-author:hover{background:var(--panel-2)}
+.i-author span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.i-author .pic{width:20px;height:20px;border-radius:50%;overflow:hidden;flex:none}
+.i-author .avatar-letter{font-size:11px}
+.dir{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;background:var(--panel-2);color:var(--muted)}
+.dir.long{color:var(--up-ink);background:color-mix(in srgb,var(--up) 13%,transparent)}
+.dir.short{color:var(--down-ink);background:color-mix(in srgb,var(--down) 13%,transparent)}
+.dir.long::before{content:"▲"}.dir.short::before{content:"▼"}.dir.neutral::before{content:"●";font-size:8px}
+.hid-pill{font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-soft);padding:2px 8px;border-radius:999px;white-space:nowrap}
+.i-skel{background:var(--panel);border:1px solid var(--line);border-radius:8px;min-height:290px;position:relative;overflow:hidden}
+.i-skel::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,color-mix(in srgb,var(--panel-2) 80%,transparent) 50%,transparent 70%);animation:shimmer 1.3s infinite}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.i-chip-author{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 6px 0 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:600;max-width:240px}
+.i-chip-author span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.i-chip-author button{width:20px;height:20px;display:grid;place-items:center;border-radius:50%;color:inherit;flex:none}
+.i-chip-author svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2}
+.i-pills{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+#ideaBtn.pulse{animation:ideapulse 1s ease-out 3}
+@keyframes ideapulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 60%,transparent)}100%{box-shadow:0 0 0 10px transparent}}
+/* one idea */
+.i-detail{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:8px;align-items:start;max-width:1320px;width:100%;margin:0 auto;padding-bottom:20px}
+.i-main,.i-aside{display:flex;flex-direction:column;gap:8px;min-width:0}
+.i-top{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:2px 4px 0}
+.i-back{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 8px 0 4px;color:var(--muted);font-weight:600;font-size:12.5px}
+.i-back:hover{color:var(--fg);background:var(--panel-2)}
+.i-back svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.i-title{margin:0;font-family:var(--font-display);font-size:clamp(22px,3vw,30px);font-weight:800;letter-spacing:-.02em;line-height:1.15;overflow-wrap:anywhere}
+.i-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:12.5px;color:var(--muted)}
+.i-meta .sym{font-family:var(--font-data);font-weight:600;color:var(--fg)}
+.i-chart{position:relative;height:min(64vh,540px);min-height:340px;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.i-chart .lwc{position:absolute;inset:0}
+.i-chart .i-ov{position:absolute;left:0;top:0;pointer-events:none;z-index:3}
+.i-chart .legend{max-width:calc(100% - 110px)}
+.i-chart .wm-brand{bottom:34px}
+.i-chart-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.i-chart-bar .fine{margin-left:auto}
+.i-next-note{font-size:12.5px;color:var(--muted)}
+.i-next-note b{font-family:var(--font-data);font-weight:600}
+.i-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:2px 0}
+.i-actions :is(.ghost,.danger),.i-chart-bar .ghost{display:inline-flex;align-items:center;gap:6px;height:30px}
+.i-actions svg,.i-chart-bar svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.i-like[aria-pressed="true"]{color:var(--down-ink);border-color:color-mix(in srgb,var(--down) 45%,var(--line));background:color-mix(in srgb,var(--down) 8%,transparent)}
+.i-like[aria-pressed="true"] svg{fill:currentColor}
+.i-like b{font-family:var(--font-data);font-weight:600}
+.i-body{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
+.i-text{margin:0;font-size:14.5px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;max-width:78ch}
+.i-disc{margin:14px 0 0;font-size:11.5px;color:var(--faint)}
+.i-com{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px 14px;display:flex;flex-direction:column;gap:10px}
+.i-com h2{margin:0;font-size:14px;font-weight:600}
+.i-com h2 span{font-family:var(--font-data);font-weight:500;color:var(--faint);margin-left:4px}
+.i-c{display:grid;grid-template-columns:28px minmax(0,1fr);gap:4px 10px;padding-top:10px;border-top:1px solid var(--grid)}
+.i-c:first-of-type{border-top:0;padding-top:0}
+.i-c .pic{width:28px;height:28px;border-radius:50%;overflow:hidden;grid-row:span 2}
+.i-c-h{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;font-size:12px;color:var(--muted)}
+.i-c-h b{color:var(--fg);font-weight:600;font-size:12.5px}
+.i-c-h .by-author{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--accent)}
+.i-c-h .acts{margin-left:auto;display:flex;gap:2px}
+.i-c-h .acts button{font-size:11.5px;color:var(--faint);padding:1px 6px}
+.i-c-h .acts button:hover{color:var(--fg);background:var(--panel-2)}
+.i-c-h .acts button.warn{color:var(--down)}
+.i-c p{margin:0;font-size:13.5px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+.i-c.hidden p{color:var(--faint);font-style:italic}
+.i-form{display:flex;flex-direction:column;gap:6px;padding-top:10px;border-top:1px solid var(--line)}
+.i-form textarea{height:auto;min-height:64px;padding:8px 9px;resize:vertical;font-family:var(--font-body);line-height:1.5}
+.i-form .row{display:flex;align-items:center;gap:8px}
+.i-form .row .fine{margin-right:auto}
+.i-card2{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.i-card2 h2{margin:0;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.i-who{display:flex;align-items:center;gap:10px;min-width:0}
+.i-who .pic{width:40px;height:40px;border-radius:50%;overflow:hidden;flex:none}
+.i-who b{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.i-who button{font-size:12px;color:var(--accent);font-weight:600;padding:0}
+.i-facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px 12px;margin:0;font-size:12.5px}
+.i-facts dt{color:var(--muted)}
+.i-facts dd{margin:0;text-align:right;font-family:var(--font-data);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.i-facts dd button{font-family:var(--font-data);font-weight:600;color:var(--accent);padding:0}
+.i-more{display:flex;flex-direction:column}
+.i-more a{display:flex;flex-direction:column;gap:2px;padding:8px 6px;margin:0 -6px;border-radius:6px;color:inherit;text-decoration:none;border-top:1px solid var(--grid)}
+.i-more a:first-child{border-top:0}
+.i-more a:hover{background:var(--panel-2)}
+.i-more a b{font-size:13px;font-weight:600;line-height:1.3;overflow-wrap:anywhere}
+.i-more a span{font-size:11.5px;color:var(--muted);display:flex;gap:8px;align-items:center}
+.i-gone{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:48px 20px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px;grid-column:1/-1}
+.i-gone h2{margin:0;font-family:var(--font-display);font-size:20px;font-weight:800}
+.i-gone p{margin:0;color:var(--muted)}
+.i-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 12px;border-radius:8px;background:var(--accent-soft);color:var(--fg);font-size:12.5px}
+.i-banner b{color:var(--accent)}
+/* moderation */
+.i-mod{display:flex;flex-direction:column;gap:6px}
+.i-mod-row{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 14px;align-items:center}
+.i-mod-row .what{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+.i-mod-row .txt{margin:2px 0 0;font-size:13.5px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.i-mod-row .why{grid-column:1;font-size:12px;color:var(--muted)}
+.i-mod-row .acts{grid-row:1 / span 2;grid-column:2;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+/* idea shown on the live chart */
+.idea-bar{padding:4px 4px 4px 12px;gap:6px;z-index:6}
+.chart-wrap.idea-on .hint,.chart-wrap.idea-on #selbar,.chart-wrap.idea-on.replaying #ideaBar{bottom:86px}
+.chart-wrap.idea-on.replaying .hint,.chart-wrap.idea-on.replaying #selbar{bottom:134px}
+.idea-bar .nm{max-width:min(44vw,420px);overflow:hidden;text-overflow:ellipsis}
+.idea-bar .nm b{font-weight:600}
+.idea-bar .ghost{height:26px;padding:0 9px;font-size:12px}
+.idea-bar .icon-btn{width:26px;height:26px}
+/* publish */
+#publishDlg{width:min(720px,calc(100vw - 24px));max-height:calc(100vh - 32px)}
+#pForm>*{flex-shrink:0}
+.p-prev{position:relative;aspect-ratio:16/7;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
+.p-prev canvas{position:absolute;inset:0;width:100%;height:100%}
+.p-info{font-size:12px;color:var(--muted);margin:-4px 0 0}
+.p-info b{font-family:var(--font-data);color:var(--fg);font-weight:600}
+.p-dir{background:var(--panel-2);border-radius:6px;padding:2px;height:32px;align-self:flex-start}
+.p-dir .btn{height:28px;padding:0 14px;font-family:var(--font-body);font-size:12.5px;font-weight:600}
+.p-dir .btn[data-dir="long"].on{color:var(--up-ink);background:var(--panel)}
+.p-dir .btn[data-dir="short"].on{color:var(--down-ink);background:var(--panel)}
+.p-dir .btn[data-dir="neutral"].on{color:var(--fg);background:var(--panel)}
+.p-count{font-family:var(--font-data);font-size:11px;color:var(--faint);text-align:right}
+.p-who{display:flex;align-items:center;gap:8px}
+.p-who .pic{width:28px;height:28px;border-radius:50%;overflow:hidden;flex:none}
+.p-who .field{max-width:280px}
+.p-err{color:var(--down-ink);font-size:12.5px;margin:0}
+.r-list{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;border:0}
+.r-list label{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:6px;font-size:13px;cursor:pointer}
+.r-list label:hover{background:var(--panel-2)}
+.r-list input{accent-color:var(--accent);width:15px;height:15px;margin:0}
+@media (max-width: 1100px){
+  .i-detail{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width: 880px){
+  .ideas{grid-row:auto;overflow:visible}
+  .i-chart{height:min(58vh,420px);min-height:300px}
+  .i-grid{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+  .idea-bar .nm{max-width:40vw}
+}
+@media (max-width: 520px){
+  .i-grid{grid-template-columns:minmax(0,1fr)}
+  .i-filters input.field{width:100px}
+  .idea-bar .ghost.copy span{display:none}
+}
 /* account */
 .acct-btn{height:30px;display:inline-flex;align-items:center;gap:7px;padding:0 12px 0 9px;border:1px solid var(--line);border-radius:999px;font-weight:500;font-size:12.5px;color:var(--fg);white-space:nowrap}
 .acct-btn:hover{background:var(--panel-2)}
@@ -519,6 +686,7 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
     </div>
     <nav class="views" aria-label="Pages">
       <a class="view-tab" href="./" data-view="chart" aria-current="page">Chart</a>
+      <a class="view-tab" href="?view=ideas" data-view="ideas" aria-current="false">Ideas</a>
       <a class="view-tab" href="?view=journal" data-view="journal" aria-current="false">Journal</a>
     </nav>
     <button class="btn sym-btn" id="symBtn" title="Search crypto, stocks and forex (or just start typing)"><span id="symName">BTCUSDT</span><span class="ex" id="symEx">Binance</span></button>
@@ -534,6 +702,7 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
     </select></span>
     <button class="btn" id="indBtn"><svg viewBox="0 0 24 24"><path d="M3 17c3 0 4-10 7-10s3 10 6 10 3-6 5-6"/></svg>Indicators</button>
     <button class="btn" id="replayBtn" aria-pressed="false" title="Bar replay: replay the market from a past bar"><svg viewBox="0 0 24 24"><path d="M11.5 7l-6 5 6 5z"/><path d="M19.5 7l-6 5 6 5z"/></svg><span class="rp-btn-lbl">Replay</span></button>
+    <button class="btn" id="ideaBtn" title="Publish your view of this chart as an idea"><svg viewBox="0 0 24 24"><path d="M9.5 18h5M10.5 21h3"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></svg><span class="rp-btn-lbl">Publish idea</span></button>
     <span class="spacer"></span>
     <button class="feed" id="feedBtn" data-state="connecting" title="Data sources"><span class="dot"></span><span class="lbl" id="feedLbl">Connecting</span></button>
     <button class="icon-btn" id="snapBtn" hidden aria-label="Save the chart as an image" title="Save chart image"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
@@ -558,6 +727,12 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
           <span class="lg-chg" id="lgChg"></span>
         </div>
         <div id="lgRows"></div>
+      </div>
+      <div class="float idea-bar" id="ideaBar" hidden role="region" aria-label="Idea shown on the chart">
+        <span class="nm" id="ideaBarName"></span>
+        <button class="ghost copy" id="ideaCopy" type="button" title="Add these drawings to your own chart">Copy<span> drawings</span></button>
+        <button class="ghost" id="ideaBack" type="button">Back to idea</button>
+        <button class="icon-btn" id="ideaClose" type="button" aria-label="Stop showing this idea on the chart" title="Stop showing this idea"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </div>
       <div class="float hint" id="hint" hidden><span id="hintText"></span><span class="k">Esc</span></div>
       <div class="float selbar" id="selbar" hidden>
@@ -677,6 +852,37 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
       </div>
     </div>
   </section>
+
+  <section class="ideas" id="ideas" hidden aria-label="Ideas">
+    <div class="i-feed" id="iFeed">
+      <div class="j-head">
+        <div><h1>Ideas</h1><p class="j-sub" id="iSub">Chart analysis shared by traders. Ideas are opinions, not financial advice.</p></div>
+        <div class="j-actions">
+          <button class="ghost" id="iModBtn" type="button" hidden>Reports</button>
+          <button class="primary" id="iPublish" type="button">+ Publish an idea</button>
+        </div>
+      </div>
+      <div class="j-filters i-filters" role="group" aria-label="Filter ideas">
+        <div class="i-chips" id="iMarkets" role="group" aria-label="Market"></div>
+        <div class="seg" id="iDir" role="group" aria-label="Direction">
+          <button class="btn on" type="button" data-v="all" aria-pressed="true">All</button><button class="btn" type="button" data-v="long" aria-pressed="false">Long</button><button class="btn" type="button" data-v="short" aria-pressed="false">Short</button>
+        </div>
+        <select class="field" id="iSort" aria-label="Sort ideas">
+          <option value="new">Latest</option><option value="week">Most liked this week</option><option value="month">Most liked this month</option><option value="all">Most liked ever</option>
+        </select>
+        <input class="field" id="iSearch" placeholder="Symbol" autocomplete="off" spellcheck="false" aria-label="Show ideas for a symbol">
+        <span id="iChip"></span>
+        <span class="spacer"></span>
+        <button class="ghost i-mine" id="iMine" type="button" aria-pressed="false" hidden>My ideas</button>
+      </div>
+      <div class="i-grid" id="iGrid" aria-live="polite"></div>
+      <div class="j-empty" id="iEmpty" hidden></div>
+      <button class="ghost j-more" id="iMore" type="button" hidden>Show more ideas</button>
+      <p class="credit" style="margin-top:10px"><a href="rules.html" target="_blank" rel="noopener">Community rules</a> · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a></p>
+    </div>
+    <div class="i-detail" id="iDetail" hidden></div>
+    <div class="i-mod" id="iMod" hidden></div>
+  </section>
 </div>
 
 <dialog id="searchDlg" aria-label="Symbol search">
@@ -783,7 +989,8 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
   <div class="dlg-h"><h2>Sign in</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="dlg-body">
     <p>Sign in to keep your setup in your account and use it on any device:</p>
-    <ul class="signin-list"><li>Watchlist and sections</li><li>Drawings and indicators</li><li>Price alerts</li><li>Chart settings and theme</li></ul>
+    <ul class="signin-list"><li>Watchlist and sections</li><li>Drawings and indicators</li><li>Price alerts and your trade journal</li><li>Chart settings and theme</li></ul>
+    <p>Signing in also lets you publish ideas, like them and comment.</p>
     <button class="gbtn" id="googleBtn" type="button"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>Continue with Google</button>
     <p class="fine" style="margin-top:12px">We only get your name, email address and profile photo from Google. No password is stored here. <a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a></p>
   </div>
@@ -792,11 +999,43 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
 <dialog id="delDlg" aria-label="Delete your account">
   <div class="dlg-h"><h2>Delete your account</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="dlg-body">
-    <p>This permanently deletes your account, your profile and everything saved to it: watchlist, drawings, indicators, alerts and settings. It can't be undone.</p>
+    <p>This permanently deletes your account, your profile and everything saved to it: watchlist, drawings, indicators, alerts, settings, trade journal, and the ideas, comments and likes you've posted. It can't be undone.</p>
     <label class="fine" for="delConfirm">Type DELETE to confirm</label>
     <div class="key-row"><input class="field" id="delConfirm" autocomplete="off" spellcheck="false" placeholder="DELETE"></div>
     <div class="key-row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" type="button" data-close>Cancel</button><button class="danger-solid" id="delGo" type="button" disabled>Delete my account</button></div>
   </div>
+</dialog>
+
+<dialog id="publishDlg" aria-label="Publish idea">
+  <div class="dlg-h"><h2 id="pTitleH">Publish idea</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <form class="dlg-body" id="pForm" novalidate>
+    <div class="p-prev" id="pPrev"><canvas id="pCanvas"></canvas></div>
+    <p class="p-info" id="pInfo"></p>
+    <label class="t-f"><span>Title</span><input class="field" id="pTitle" maxlength="100" autocomplete="off" placeholder="e.g. Bitcoin is coiling under resistance"></label>
+    <div class="t-f" id="pDirWrap"><span>Your view</span><div class="seg p-dir" id="pDir" role="radiogroup" aria-label="Your view"><button type="button" class="btn" data-dir="long" role="radio" aria-checked="false">▲ Long</button><button type="button" class="btn" data-dir="short" role="radio" aria-checked="false">▼ Short</button><button type="button" class="btn" data-dir="neutral" role="radio" aria-checked="false">Neutral</button></div></div>
+    <label class="t-f"><span>Your analysis</span><textarea class="field t-notes" id="pBody" maxlength="5000" rows="7" placeholder="What do you see on the chart? Key levels, the setup, what would prove you wrong."></textarea><span class="p-count" id="pCount"></span></label>
+    <div class="t-f" id="pWhoWrap"><span>Name shown on your ideas and comments</span><div class="p-who"><span class="pic" id="pPic"></span><input class="field" id="pName" maxlength="40" autocomplete="nickname"></div></div>
+    <p class="fine" id="pFine">Ideas are public: anyone can see them, with your name and photo. The chart and your long or short call can't be changed after publishing, but you can fix the title and text for an hour. Please follow the <a href="rules.html" target="_blank" rel="noopener">community rules</a>.</p>
+    <p class="p-err" id="pErr" hidden></p>
+    <div class="t-actions"><span class="spacer"></span><button type="button" class="ghost" data-close>Cancel</button><button type="submit" class="primary" id="pGo">Publish idea</button></div>
+  </form>
+</dialog>
+
+<dialog id="reportDlg" aria-label="Report">
+  <div class="dlg-h"><h2 id="rTitle">Report this idea</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <form class="dlg-body" id="rForm" novalidate>
+    <p>What's wrong with it? The site's moderator will take a look.</p>
+    <fieldset class="r-list" id="rReasons">
+      <legend class="fine" style="padding:0;margin-bottom:4px">Reason</legend>
+      <label><input type="radio" name="reason" value="spam"> Spam or advertising</label>
+      <label><input type="radio" name="reason" value="abuse"> Abuse, harassment or hate</label>
+      <label><input type="radio" name="reason" value="misleading"> A scam or deliberately misleading</label>
+      <label><input type="radio" name="reason" value="illegal"> Illegal content</label>
+      <label><input type="radio" name="reason" value="other"> Something else</label>
+    </fieldset>
+    <label class="t-f"><span>Anything to add? <i>optional</i></span><textarea class="field t-notes" id="rNote" maxlength="500" rows="3" style="min-height:64px"></textarea></label>
+    <div class="t-actions"><span class="spacer"></span><button type="button" class="ghost" data-close>Cancel</button><button type="submit" class="primary" id="rGo" disabled>Send report</button></div>
+  </form>
 </dialog>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>

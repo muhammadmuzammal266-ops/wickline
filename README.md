@@ -1,6 +1,6 @@
 # Wickline Charts
 
-Free live charts for crypto, US stocks, forex, gold, stock indices, commodities and bonds, in your browser. It has candles, indicators, drawing tools, bar replay, a watchlist, price alerts and optional Google sign-in.
+Free live charts for crypto, US stocks, forex, gold, stock indices, commodities and bonds, in your browser. It has candles, indicators, drawing tools, bar replay, a watchlist, price alerts, a trade journal, an Ideas page where traders share their analysis, and optional Google sign-in.
 
 ## What's in this folder
 
@@ -10,6 +10,7 @@ Free live charts for crypto, US stocks, forex, gold, stock indices, commodities 
 | `index.html`, `app.js` | The app. You don't need to touch them to change settings. |
 | `vendor/` | The chart library and the sign-in library, served from your own site (with their licences). |
 | `privacy.html` | The privacy policy, linked from the sign-in window and the page footer. |
+| `rules.html` | The community rules for Ideas, linked from the Publish idea window. |
 | `oanda-worker.js` | Your Cloudflare helper. It keeps your OANDA token and Twelve Data key secret. See below. |
 | `favicon.svg`, `icon-*.png`, `apple-touch-icon.png`, `manifest.webmanifest`, `og-image.png` | Icons, phone home-screen support and the picture shown when someone shares your link. |
 
@@ -52,6 +53,22 @@ Before showing OANDA prices to the public, check OANDA's terms. Brokers often li
 The **Journal** tab (top left) is a trading journal. People log each trade (symbol, long or short, entry and exit, size, fees, stop, target, strategy, tags, a 1–5 rating and notes) and the page works out the result, the R-multiple and the holding time. It shows the net result, win rate, profit factor, average win and loss, largest drawdown, an equity curve, a calendar of daily results, and results by symbol and by strategy, with filters. Trades can be exported to and imported from CSV, opened on the chart, and a long or short position drawn on the chart can be added to the journal in one click. Journal trades also appear as markers on the chart.
 
 Signed-in people's journals are kept in their account (the `trades` table in Supabase, private to each person). Without signing in, the journal is kept in the browser and moves into the account at the next sign-in.
+
+## Ideas
+
+The **Ideas** tab is where people share how they read a chart, like TradingView's ideas. On the chart, someone sets up the symbol, timeframe, drawings and indicators, presses **Publish idea**, and adds a title, a long / short / neutral call and their analysis. Everyone can browse ideas (filtered by market, direction, symbol or author, newest or most liked), open one to see the author's chart with their drawings, press **What happened next** to add the prices since it was published, or open it on the live chart. Signed-in people can like ideas and comment.
+
+An idea's chart is saved as numbers (price bars, drawings and indicator settings), never as an uploaded picture, so nobody can upload images through it. Once published, the chart and the call can't be changed; the title and text can be fixed for an hour.
+
+**Moderating.** Anyone signed in can report an idea or comment. You're the moderator: when you're signed in, the Ideas page shows a **Reports** button with the reports waiting, and each idea and comment has a **Hide** button. Hiding removes it for everyone except its author. You can also delete any idea or comment. The rules people agree to are in `rules.html`.
+
+To add another moderator, open Supabase → SQL Editor and run (with their email):
+
+```sql
+insert into private.admins (user_id) select id from auth.users where email = 'their.email@example.com';
+```
+
+Ideas, likes, comments and reports live in Supabase (`ideas`, `idea_likes`, `idea_comments`, `reports`). Database rules let anyone read published ideas and comments, but only their authors can change or delete them, only moderators can hide them or read reports, and each person can publish up to 10 ideas a day.
 
 ## Accounts (Sign in with Google)
 
