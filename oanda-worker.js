@@ -1,5 +1,5 @@
 /*
-  Wickline helper (Cloudflare Worker, free plan)
+  RealChart helper (Cloudflare Worker, free plan)
   ----------------------------------------------
   Keeps your secret keys on Cloudflare, so they never reach visitors' browsers:
     - OANDA: forex, gold, indices, commodities and bonds (candles and prices, one-off or streamed)
@@ -9,7 +9,7 @@
   Setup: see README.md. In the Worker's Settings → Variables and Secrets add:
     OANDA_TOKEN     (type: Secret)  your OANDA personal access token
     TD_KEY          (type: Secret)  your Twelve Data API key
-    ALLOWED_ORIGIN  (type: Text)    your site's address, e.g. https://yourname.github.io
+    ALLOWED_ORIGIN  (type: Text)    your site's address, e.g. https://realchart.trade (several allowed, separated by commas)
   Optional:
     OANDA_ENV       practice or live. Found automatically from the token if left out.
     OANDA_ACCOUNT   your account ID. The first account is used if left out.
@@ -71,7 +71,11 @@ const TD_DATE = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/;
 
 export default {
   async fetch(request, env) {
-    const origin = env.ALLOWED_ORIGIN || '*';
+    // ALLOWED_ORIGIN can list several addresses, separated by commas (for example the site's own domain and www).
+    const allowedList = String(env.ALLOWED_ORIGIN || '*').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean);
+    const from = request.headers.get('Origin');
+    const anyOrigin = allowedList.includes('*');
+    const origin = anyOrigin ? '*' : (from && allowedList.includes(from) ? from : allowedList[0]);
     const cors = {
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -87,13 +91,12 @@ export default {
     if (request.method !== 'GET') return reply('Only GET is allowed.', 405);
 
     // Browsers on other websites are turned away (scripts can't be stopped this way, which is what the limits are for).
-    const from = request.headers.get('Origin');
-    if (from && origin !== '*' && from !== origin) return reply('Not allowed from this website.', 403);
+    if (from && !anyOrigin && !allowedList.includes(from)) return reply('Not allowed from this website.', 403);
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
     if (!allowed(ip)) return json({ status: 'error', code: 429, message: 'Too many requests. Please slow down.' }, 429);
 
     const url = new URL(request.url);
-    if (url.pathname === '/') return reply('Wickline helper is running.', 200);
+    if (url.pathname === '/') return reply('RealChart helper is running.', 200);
 
     // ----- Twelve Data: /td/quote and /td/time_series -----
     if (url.pathname === '/td/quote' || url.pathname === '/td/time_series') {

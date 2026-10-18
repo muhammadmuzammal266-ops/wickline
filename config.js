@@ -1,5 +1,5 @@
 /*
-  Wickline settings
+  RealChart settings
   -----------------
   Change the values below, then save (on GitHub: "Commit changes").
   Your live site updates about a minute later.
@@ -11,7 +11,7 @@
 window.WICKLINE_CONFIG = {
 
   // The name shown in the top-left corner and in the browser tab.
-  siteName: 'Wickline',
+  siteName: 'RealChart',
 
   // Your Cloudflare helper (oanda-worker.js). It keeps your OANDA token and Twelve Data key secret
   // and gives every visitor live forex, gold, indices, commodities, bonds and US stocks.

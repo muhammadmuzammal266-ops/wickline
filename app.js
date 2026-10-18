@@ -1,5 +1,5 @@
 // Refuse to run inside another website's frame (GitHub Pages can't send a header for this).
-if (window.top !== window.self) { document.documentElement.style.display = 'none'; throw new Error('Wickline must be opened directly.'); }
+if (window.top !== window.self) { document.documentElement.style.display = 'none'; throw new Error('RealChart must be opened directly.'); }
 (function () {
 'use strict';
 
@@ -58,10 +58,10 @@ const store = {
 try { localStorage.removeItem(NS + 'oanda'); } catch (e) { /* storage unavailable */ }
 
 /* ---------- site settings from config.js ---------- */
-const CFG = Object.assign({ siteName: 'Wickline', twelveDataKey: '', proxy: '', supabaseUrl: '', supabaseKey: '', defaultSymbol: 'BTCUSDT', defaultTimeframe: '1h', defaultWatchlist: null }, window.WICKLINE_CONFIG || {});
+const CFG = Object.assign({ siteName: 'RealChart', twelveDataKey: '', proxy: '', supabaseUrl: '', supabaseKey: '', defaultSymbol: 'BTCUSDT', defaultTimeframe: '1h', defaultWatchlist: null }, window.WICKLINE_CONFIG || {});
 // The site's Cloudflare helper: keeps the OANDA and Twelve Data keys off the page.
 const API = (v => (/^https:\/\/[a-z0-9.-]+$/i.test(v) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(v) ? v : ''))(String(CFG.proxy || CFG.oandaProxy || '').trim().replace(/\/+$/, ''));
-CFG.siteName = String(CFG.siteName || 'Wickline').slice(0, 40);
+CFG.siteName = String(CFG.siteName || 'RealChart').slice(0, 40);
 CFG.twelveDataKey = String(CFG.twelveDataKey || '').trim();
 
 /* ---------- market vocabulary ---------- */

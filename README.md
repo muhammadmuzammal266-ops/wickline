@@ -1,4 +1,4 @@
-# Wickline Charts
+# RealChart
 
 Free live charts for crypto, US stocks, forex, gold, stock indices, commodities and bonds, in your browser. It has candles, indicators, drawing tools, bar replay, a watchlist, price alerts, a trade journal, an Ideas page where traders share their analysis, and optional Google sign-in.
 
@@ -81,7 +81,7 @@ People can use the site without signing in. Signing in saves their watchlist, dr
 The setup has three parts:
 
 1. **Google Cloud** (console.cloud.google.com): an OAuth client of type *Web application*, with your site as an authorized JavaScript origin and `https://<your-project>.supabase.co/auth/v1/callback` as the authorized redirect URI. Publish the app under **Audience** so anyone can sign in.
-2. **Supabase** (Authentication): turn on the Google provider with that client's ID and secret. Under URL Configuration, set the Site URL to your site and add `https://yourname.github.io/wickline/**` to the redirect URLs.
+2. **Supabase** (Authentication): turn on the Google provider with that client's ID and secret. Under URL Configuration, set the Site URL to your site and add `https://realchart.trade/**` to the redirect URLs.
 3. **config.js:** `supabaseUrl` and `supabaseKey` (the *publishable* key from Supabase's API settings). These two are meant to be public.
 
 ## Security

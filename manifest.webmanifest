@@ -1,6 +1,6 @@
 {
-  "name": "Wickline Charts",
-  "short_name": "Wickline",
+  "name": "RealChart",
+  "short_name": "RealChart",
   "description": "Live charts for crypto, US stocks and forex with indicators, drawing tools, a watchlist and price alerts.",
   "start_url": "./",
   "scope": "./",
