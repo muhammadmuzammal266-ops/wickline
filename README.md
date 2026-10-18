@@ -48,6 +48,10 @@ Twelve Data's free plan allows 8 requests a minute and 800 a day, shared by ever
 
 Before showing OANDA prices to the public, check OANDA's terms. Brokers often license their price data for your own use only.
 
+## Indicators
+
+The **Indicators** button lists 25 indicators in five groups, with a search box: moving averages (SMA, EMA, WMA, Hull), trend (Ichimoku Cloud, Parabolic SAR, SuperTrend, ADX/DMI), oscillators (RSI, MACD, Stochastic, Stochastic RSI, CCI, Williams %R, Rate of Change, Awesome Oscillator), volatility (Bollinger Bands, Keltner Channels, Donchian Channels, ATR) and volume (Volume, VWAP, On Balance Volume, Money Flow Index, Chaikin Money Flow). Each can be shown, hidden, recoloured or set up from its name on the chart, and the formulas follow the usual TradingView defaults. With many indicators on the chart, the list of names can be folded away with the small arrow under them.
+
 ## Trade journal
 
 The **Journal** tab (top left) is a trading journal. People log each trade (symbol, long or short, entry and exit, size, fees, stop, target, strategy, tags, a 1–5 rating and notes) and the page works out the result, the R-multiple and the holding time. It shows the net result, win rate, profit factor, average win and loss, largest drawdown, an equity curve, a calendar of daily results, and results by symbol and by strategy, with filters. Trades can be exported to and imported from CSV, opened on the chart, and a long or short position drawn on the chart can be added to the journal in one click. Journal trades also appear as markers on the chart.

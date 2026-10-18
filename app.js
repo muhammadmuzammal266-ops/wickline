@@ -546,7 +546,7 @@ function createMain() {
 }
 function orderPane0() {
   const v = S.rts.find(r => r.inst.type === 'vol');
-  try { if (v) { v.series[0].setSeriesOrder(0); S.main.setSeriesOrder(1); } } catch (e) { /* ordering is cosmetic */ }
+  try { if (v) { v.series[0].setSeriesOrder(0); S.main.setSeriesOrder(1); } S.rts.forEach(r => (r.fills || []).forEach(f => f.s.setSeriesOrder(0))); } catch (e) { /* ordering is cosmetic */ }
 }
 function haAt(i) {
   const b = S.bars[i]; const c = (b.open + b.high + b.low + b.close) / 4; const p = S.ha[i - 1];
@@ -578,6 +578,317 @@ Object.assign(IND, {
   stoch: { label: 'Stochastic', short: p => `Stoch ${p.k} ${p.smooth} ${p.d}`, desc: 'Where the close sits in the recent high–low range, from 0 to 100.', params: [{ k: 'k', label: '%K length', def: 14, min: 2, max: 200, step: 1 }, { k: 'smooth', label: '%K smoothing', def: 3, min: 1, max: 50, step: 1 }, { k: 'd', label: '%D length', def: 3, min: 1, max: 50, step: 1 }], pane: true },
   atr: { label: 'Average True Range', short: p => `ATR ${p.len}`, desc: 'Average size of each bar’s move, gaps included. Handy for setting stop distances.', params: [{ k: 'len', label: 'Length', def: 14, min: 1, max: 200, step: 1 }], pane: true },
 });
+// ----- more indicators -----
+// Each one says how to work it out (compute) and how to draw it (series, levels, range, fills), so the same
+// definition draws on the live chart and on an idea's chart. Formulas follow the common TradingView defaults.
+const IND_CATS = [['ma', 'Moving averages'], ['trend', 'Trend'], ['osc', 'Oscillators'], ['volatility', 'Volatility'], ['volume', 'Volume']];
+Object.assign(IND.sma, { cat: 'ma', alias: 'sma simple' });
+Object.assign(IND.ema, { cat: 'ma', alias: 'exponential' });
+Object.assign(IND.bb, { cat: 'volatility', alias: 'bollinger bands', fills: [{ a: 0, b: 2, mode: 'band' }] });
+Object.assign(IND.vol, { cat: 'volume' });
+Object.assign(IND.rsi, { cat: 'osc', alias: 'relative strength' });
+Object.assign(IND.macd, { cat: 'osc', alias: 'moving average convergence divergence', check: p => (p.fast >= p.slow ? 'Fast length must be shorter than slow length' : '') });
+Object.assign(IND.vwap, { cat: 'volume', alias: 'volume weighted average price' });
+Object.assign(IND.stoch, { cat: 'osc', alias: 'stochastic oscillator' });
+Object.assign(IND.atr, { cat: 'volatility', alias: 'average true range' });
+const L1 = c => c;
+const SIG = c => (c === SIGNAL ? '#d8487f' : SIGNAL);
+Object.assign(IND, {
+  wma: { cat: 'ma', label: 'Weighted Moving Average', alias: 'wma linear weighted', short: p => `WMA ${p.len}`, desc: 'An average where each newer close counts a little more than the one before it.',
+    params: [{ k: 'len', label: 'Length', def: 20, min: 1, max: 500, step: 1 }], fmt: 'price',
+    series: [{ color: L1 }], compute: (B, p) => [wma(B.map(b => b.close), p.len)] },
+  hma: { cat: 'ma', label: 'Hull Moving Average', alias: 'hma hull', short: p => `HMA ${p.len}`, desc: 'A fast, smooth average that follows turns with very little lag.',
+    params: [{ k: 'len', label: 'Length', def: 21, min: 2, max: 500, step: 1 }], fmt: 'price',
+    series: [{ color: L1 }], compute: (B, p) => [hma(B.map(b => b.close), p.len)] },
+  ichimoku: { cat: 'trend', label: 'Ichimoku Cloud', alias: 'ichimoku kinko hyo cloud tenkan kijun senkou chikou', nocolor: true,
+    short: p => `Ichimoku ${p.conv} ${p.base} ${p.spanB} ${p.disp}`, desc: 'Conversion and base lines, a lagging line and a cloud that shows support, resistance and trend. The cloud is drawn up to the latest bar.',
+    params: [{ k: 'conv', label: 'Conversion line length', def: 9, min: 1, max: 100, step: 1 }, { k: 'base', label: 'Base line length', def: 26, min: 1, max: 200, step: 1 },
+      { k: 'spanB', label: 'Leading span B length', def: 52, min: 1, max: 300, step: 1 }, { k: 'disp', label: 'Displacement', def: 26, min: 1, max: 100, step: 1 }], fmt: 'price',
+    series: [{ name: 'Conversion', color: () => '#2f7fe0', width: 1 }, { name: 'Base', color: () => '#d8487f', width: 1 }, { name: 'Lagging', color: () => '#6f9a1a', width: 1, lag: true },
+      { name: 'Leading A', color: () => C.up, width: 1, last: false }, { name: 'Leading B', color: () => C.down, width: 1, last: false }],
+    fills: [{ a: 3, b: 4, mode: 'cloud' }], compute: (B, p) => ichimoku(B, p) },
+  psar: { cat: 'trend', label: 'Parabolic SAR', alias: 'sar stop and reverse parabolic', short: p => `SAR ${p.start} ${p.inc} ${p.max}`,
+    desc: 'Dots that trail the price and flip sides when the trend turns. Often used as a trailing stop.',
+    params: [{ k: 'start', label: 'Start', def: 0.02, min: 0.001, max: 0.5, step: 0.001 }, { k: 'inc', label: 'Increment', def: 0.02, min: 0.001, max: 0.5, step: 0.001 },
+      { k: 'max', label: 'Maximum', def: 0.2, min: 0.01, max: 1, step: 0.01 }], fmt: 'price',
+    check: p => (p.start > p.max ? 'Start must not be bigger than the maximum' : ''),
+    series: [{ kind: 'dots', color: L1 }], compute: (B, p) => [psar(B, p.start, p.inc, p.max)] },
+  supertrend: { cat: 'trend', label: 'SuperTrend', alias: 'super trend atr', nocolor: true, short: p => `SuperTrend ${p.len} ${p.factor}`,
+    desc: 'A line under the price in an uptrend (green) and above it in a downtrend (red), based on the average true range.',
+    params: [{ k: 'len', label: 'ATR length', def: 10, min: 1, max: 100, step: 1 }, { k: 'factor', label: 'Factor', def: 3, min: 0.5, max: 10, step: 0.1 }], fmt: 'price',
+    series: [{ name: 'Up', color: () => C.up, gaps: true }, { name: 'Down', color: () => C.down, gaps: true }], compute: (B, p) => supertrend(B, p.len, p.factor) },
+  adx: { cat: 'trend', label: 'Average Directional Index (DMI)', alias: 'adx dmi directional movement +di -di', pane: true, short: p => `ADX ${p.len} ${p.smooth}`,
+    desc: 'How strong the trend is (ADX), with +DI and −DI showing which side is winning. Above 25 is usually a strong trend.',
+    params: [{ k: 'len', label: 'DI length', def: 14, min: 1, max: 100, step: 1 }, { k: 'smooth', label: 'ADX smoothing', def: 14, min: 1, max: 100, step: 1 }], fmt: 'fixed', levels: [25],
+    series: [{ name: 'ADX', color: L1 }, { name: '+DI', color: () => C.up, width: 1 }, { name: '−DI', color: () => C.down, width: 1 }], compute: (B, p) => adx(B, p.len, p.smooth) },
+  cci: { cat: 'osc', label: 'Commodity Channel Index', alias: 'cci', pane: true, short: p => `CCI ${p.len}`,
+    desc: 'How far the price is from its average. Above +100 is stretched up, below −100 stretched down.',
+    params: [{ k: 'len', label: 'Length', def: 20, min: 2, max: 200, step: 1 }], fmt: 'fixed', levels: [100, -100],
+    series: [{ color: L1 }], compute: (B, p) => [cci(B, p.len)] },
+  willr: { cat: 'osc', label: 'Williams %R', alias: 'williams r percent', pane: true, short: p => `%R ${p.len}`,
+    desc: 'Where the close sits in the recent range, from 0 to −100. Above −20 is stretched up, below −80 stretched down.',
+    params: [{ k: 'len', label: 'Length', def: 14, min: 2, max: 200, step: 1 }], fmt: 'fixed', levels: [-20, -80], range: [-100, 0],
+    series: [{ color: L1 }], compute: (B, p) => [willr(B, p.len)] },
+  stochrsi: { cat: 'osc', label: 'Stochastic RSI', alias: 'stoch rsi stochrsi', pane: true, short: p => `Stoch RSI ${p.k} ${p.d} ${p.rsi} ${p.stoch}`,
+    desc: 'The Stochastic worked out on the RSI instead of the price, so it moves faster. Above 80 is stretched, below 20 washed out.',
+    params: [{ k: 'k', label: '%K smoothing', def: 3, min: 1, max: 50, step: 1 }, { k: 'd', label: '%D smoothing', def: 3, min: 1, max: 50, step: 1 },
+      { k: 'rsi', label: 'RSI length', def: 14, min: 2, max: 100, step: 1 }, { k: 'stoch', label: 'Stochastic length', def: 14, min: 2, max: 100, step: 1 }], fmt: 'fixed', levels: [80, 20], range: [0, 100],
+    series: [{ name: '%K', color: L1 }, { name: '%D', color: SIG, width: 1 }], compute: (B, p) => stochrsi(B, p.rsi, p.stoch, p.k, p.d) },
+  roc: { cat: 'osc', label: 'Rate of Change', alias: 'roc momentum percent', pane: true, short: p => `ROC ${p.len}`,
+    desc: 'The percentage change from N bars ago. Above zero means the price is higher than it was.',
+    params: [{ k: 'len', label: 'Length', def: 9, min: 1, max: 200, step: 1 }], fmt: 'fixed', levels: [0],
+    series: [{ color: L1 }], compute: (B, p) => [roc(B, p.len)] },
+  ao: { cat: 'osc', label: 'Awesome Oscillator', alias: 'ao bill williams', pane: true, nocolor: true, short: p => `AO ${p.fast} ${p.slow}`,
+    desc: 'Momentum as bars: the gap between a 5 and 34 bar average of the midpoint. Green when rising, red when falling.',
+    params: [{ k: 'fast', label: 'Fast length', def: 5, min: 1, max: 100, step: 1 }, { k: 'slow', label: 'Slow length', def: 34, min: 2, max: 300, step: 1 }], fmt: 'fine',
+    check: p => (p.fast >= p.slow ? 'Fast length must be shorter than slow length' : ''),
+    series: [{ kind: 'hist', rule: 'rise' }], compute: (B, p) => [ao(B, p.fast, p.slow)] },
+  keltner: { cat: 'volatility', label: 'Keltner Channels', alias: 'keltner channel kc', short: p => `KC ${p.len} ${p.mult} ${p.atr}`,
+    desc: 'An average with bands a multiple of the average true range away. Bands widen when the market gets busier.',
+    params: [{ k: 'len', label: 'Length', def: 20, min: 1, max: 300, step: 1 }, { k: 'mult', label: 'Multiplier', def: 2, min: 0.5, max: 5, step: 0.1 }, { k: 'atr', label: 'ATR length', def: 10, min: 1, max: 100, step: 1 }], fmt: 'price',
+    series: [{ name: 'Upper', color: L1, width: 1 }, { name: 'Basis', color: L1, width: 1, dashed: true }, { name: 'Lower', color: L1, width: 1 }],
+    fills: [{ a: 0, b: 2, mode: 'band' }], compute: (B, p) => keltner(B, p.len, p.mult, p.atr) },
+  donchian: { cat: 'volatility', label: 'Donchian Channels', alias: 'donchian channel dc breakout', short: p => `DC ${p.len}`,
+    desc: 'The highest high and lowest low of the last N bars, with the midpoint. A close outside the channel is a breakout.',
+    params: [{ k: 'len', label: 'Length', def: 20, min: 2, max: 300, step: 1 }], fmt: 'price',
+    series: [{ name: 'Upper', color: L1, width: 1 }, { name: 'Basis', color: L1, width: 1, dashed: true }, { name: 'Lower', color: L1, width: 1 }],
+    fills: [{ a: 0, b: 2, mode: 'band' }], compute: (B, p) => donchian(B, p.len) },
+  obv: { cat: 'volume', label: 'On Balance Volume', alias: 'obv', pane: true, short: () => 'OBV',
+    desc: 'A running total that adds volume on up bars and takes it away on down bars. Blank for markets without volume, such as forex.',
+    params: [], fmt: 'vol', series: [{ color: L1 }], compute: B => [obv(B)] },
+  mfi: { cat: 'volume', label: 'Money Flow Index', alias: 'mfi volume rsi', pane: true, short: p => `MFI ${p.len}`,
+    desc: 'Like the RSI, but weighted by volume, from 0 to 100. Blank for markets without volume, such as forex.',
+    params: [{ k: 'len', label: 'Length', def: 14, min: 2, max: 100, step: 1 }], fmt: 'fixed', levels: [80, 20], range: [0, 100],
+    series: [{ color: L1 }], compute: (B, p) => [mfi(B, p.len)] },
+  cmf: { cat: 'volume', label: 'Chaikin Money Flow', alias: 'cmf chaikin', pane: true, short: p => `CMF ${p.len}`,
+    desc: 'Whether money is flowing in (above zero) or out (below zero) over N bars. Blank for markets without volume, such as forex.',
+    params: [{ k: 'len', label: 'Length', def: 20, min: 2, max: 200, step: 1 }], fmt: 'fixed3', levels: [0],
+    series: [{ color: L1 }], compute: (B, p) => [cmf(B, p.len)] },
+});
+const FMT_OF = { sma: 'price', ema: 'price', bb: 'price', vwap: 'price', atr: 'price', macd: 'fine' };
+const indFmt = type => IND[type].fmt || FMT_OF[type] || '';
+const specOf = (type, k) => (IND[type] && IND[type].series ? IND[type].series[k] : null);
+
+// ----- the maths -----
+function wma(a, n) {   // weights 1..n, newest heaviest; restarts after a gap
+  const o = new Array(a.length).fill(null), den = (n * (n + 1)) / 2;
+  let run = 0, sum = 0, wsum = 0;
+  for (let i = 0; i < a.length; i++) {
+    const v = a[i];
+    if (v == null || !isFinite(v)) { run = 0; sum = 0; wsum = 0; continue; }
+    if (run < n) { run++; wsum += run * v; sum += v; if (run === n) o[i] = wsum / den; }
+    else { wsum = wsum + n * v - sum; sum = sum + v - a[i - n]; o[i] = wsum / den; }
+  }
+  return o;
+}
+function hma(a, n) {
+  const half = wma(a, Math.max(1, Math.floor(n / 2))), full = wma(a, n);
+  const diff = a.map((_, i) => (half[i] != null && full[i] != null ? 2 * half[i] - full[i] : null));
+  return wma(diff, Math.max(1, Math.floor(Math.sqrt(n))));
+}
+function rma(a, n) {   // Wilder's smoothing, as TradingView's ta.rma; skips leading gaps
+  const o = new Array(a.length).fill(null); let prev = null, cnt = 0, sum = 0;
+  for (let i = 0; i < a.length; i++) {
+    const v = a[i];
+    if (v == null || !isFinite(v)) { if (prev == null) { cnt = 0; sum = 0; } continue; }
+    if (prev == null) { sum += v; cnt++; if (cnt === n) { prev = sum / n; o[i] = prev; } }
+    else { prev = (prev * (n - 1) + v) / n; o[i] = prev; }
+  }
+  return o;
+}
+function rolling(a, n, max) {   // highest (or lowest) of the last n values, in one pass
+  const o = new Array(a.length).fill(null), q = []; let head = 0;
+  for (let i = 0; i < a.length; i++) {
+    const v = a[i];
+    while (q.length > head && (max ? a[q[q.length - 1]] <= v : a[q[q.length - 1]] >= v)) q.pop();
+    q.push(i);
+    if (q[head] <= i - n) head++;
+    if (i >= n - 1) o[i] = a[q[head]];
+  }
+  return o;
+}
+const highs = B => B.map(b => b.high), lows = B => B.map(b => b.low), closes = B => B.map(b => b.close);
+const hasVolume = B => B.some(b => b.volume > 0);
+function midOf(B, n) { const h = rolling(highs(B), n, true), l = rolling(lows(B), n, false); return h.map((v, i) => (v != null && l[i] != null ? (v + l[i]) / 2 : null)); }
+function ichimoku(B, p) {
+  const n = B.length, conv = midOf(B, p.conv), base = midOf(B, p.base), spanB = midOf(B, p.spanB), d = p.disp - 1;
+  const spanA = conv.map((v, i) => (v != null && base[i] != null ? (v + base[i]) / 2 : null));
+  const leadA = new Array(n).fill(null), leadB = new Array(n).fill(null), lag = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    if (i - d >= 0) { leadA[i] = spanA[i - d]; leadB[i] = spanB[i - d]; }
+    if (i + d < n) lag[i] = B[i + d].close;
+  }
+  return [conv, base, lag, leadA, leadB];
+}
+function psar(B, start, inc, max) {   // as TradingView's ta.sar
+  const n = B.length, o = new Array(n).fill(null); if (n < 2) return o;
+  let res = 0, ext = 0, af = start, below = true;
+  for (let i = 1; i < n; i++) {
+    const b = B[i]; let first = false;
+    if (i === 1) {
+      if (b.close > B[0].close) { below = true; ext = b.high; res = B[0].low; } else { below = false; ext = b.low; res = B[0].high; }
+      first = true; af = start;
+    }
+    res += af * (ext - res);
+    if (below) { if (res > b.low) { first = true; below = false; res = Math.max(b.high, ext); ext = b.low; af = start; } }
+    else if (res < b.high) { first = true; below = true; res = Math.min(b.low, ext); ext = b.high; af = start; }
+    if (!first) {
+      if (below) { if (b.high > ext) { ext = b.high; af = Math.min(af + inc, max); } }
+      else if (b.low < ext) { ext = b.low; af = Math.min(af + inc, max); }
+    }
+    if (below) { res = Math.min(res, B[i - 1].low); if (i > 1) res = Math.min(res, B[i - 2].low); }
+    else { res = Math.max(res, B[i - 1].high); if (i > 1) res = Math.max(res, B[i - 2].high); }
+    o[i] = res;
+  }
+  return o;
+}
+function supertrend(B, len, factor) {   // as TradingView's ta.supertrend
+  const n = B.length, a = atr(B, len), upL = new Array(n).fill(null), dnL = new Array(n).fill(null);
+  let pu = null, pl = null, pst = null;
+  for (let i = 0; i < n; i++) {
+    if (a[i] == null) continue;
+    const b = B[i], hl2 = (b.high + b.low) / 2;
+    let ub = hl2 + factor * a[i], lb = hl2 - factor * a[i];
+    if (pu != null) { const pc = B[i - 1].close; lb = lb > pl || pc < pl ? lb : pl; ub = ub < pu || pc > pu ? ub : pu; }
+    const isUp = pst == null ? false : pst === pu ? b.close > ub : !(b.close < lb);
+    const st = isUp ? lb : ub;
+    if (isUp) upL[i] = st; else dnL[i] = st;
+    pu = ub; pl = lb; pst = st;
+  }
+  return [upL, dnL];
+}
+function adx(B, len, smooth) {
+  const n = B.length, pdm = new Array(n).fill(null), mdm = new Array(n).fill(null), tr = new Array(n).fill(null);
+  for (let i = 1; i < n; i++) {
+    const b = B[i], p = B[i - 1], upM = b.high - p.high, dnM = p.low - b.low;
+    pdm[i] = upM > dnM && upM > 0 ? upM : 0; mdm[i] = dnM > upM && dnM > 0 ? dnM : 0;
+    tr[i] = Math.max(b.high - b.low, Math.abs(b.high - p.close), Math.abs(b.low - p.close));
+  }
+  const str = rma(tr, len), sp = rma(pdm, len), sm = rma(mdm, len);
+  const pdi = str.map((t, i) => (t ? (100 * sp[i]) / t : null)), mdi = str.map((t, i) => (t ? (100 * sm[i]) / t : null));
+  const dx = pdi.map((v, i) => (v == null || mdi[i] == null ? null : v + mdi[i] === 0 ? 0 : (100 * Math.abs(v - mdi[i])) / (v + mdi[i])));
+  return [rma(dx, smooth), pdi, mdi];
+}
+function cci(B, len) {
+  const tp = B.map(b => (b.high + b.low + b.close) / 3), ma = sma(tp, len), o = new Array(B.length).fill(null);
+  for (let i = len - 1; i < B.length; i++) {
+    let md = 0; for (let j = i - len + 1; j <= i; j++) md += Math.abs(tp[j] - ma[i]);
+    md /= len; o[i] = md ? (tp[i] - ma[i]) / (0.015 * md) : 0;
+  }
+  return o;
+}
+function willr(B, len) {
+  const h = rolling(highs(B), len, true), l = rolling(lows(B), len, false);
+  return B.map((b, i) => (h[i] == null ? null : h[i] === l[i] ? -50 : ((h[i] - b.close) / (h[i] - l[i])) * -100));
+}
+function stochrsi(B, rsiLen, stLen, kLen, dLen) {
+  const r = rsi(closes(B), rsiLen), st = new Array(B.length).fill(null);
+  for (let i = 0; i < r.length; i++) {
+    if (i < stLen - 1) continue;
+    let hi = -Infinity, lo = Infinity, ok = true;
+    for (let j = i - stLen + 1; j <= i; j++) { const v = r[j]; if (v == null) { ok = false; break; } if (v > hi) hi = v; if (v < lo) lo = v; }
+    if (ok) st[i] = hi === lo ? 50 : ((r[i] - lo) / (hi - lo)) * 100;
+  }
+  const k = smaN(st, kLen);
+  return [k, smaN(k, dLen)];
+}
+function roc(B, len) { return B.map((b, i) => (i >= len && B[i - len].close ? (100 * (b.close - B[i - len].close)) / B[i - len].close : null)); }
+function ao(B, fast, slow) {
+  const m = B.map(b => (b.high + b.low) / 2), f = sma(m, fast), s = sma(m, slow);
+  return m.map((_, i) => (f[i] != null && s[i] != null ? f[i] - s[i] : null));
+}
+function keltner(B, len, mult, atrLen) {
+  const basis = ema(closes(B), len), a = atr(B, atrLen);
+  return [basis.map((v, i) => (v != null && a[i] != null ? v + mult * a[i] : null)), basis, basis.map((v, i) => (v != null && a[i] != null ? v - mult * a[i] : null))];
+}
+function donchian(B, len) {
+  const h = rolling(highs(B), len, true), l = rolling(lows(B), len, false);
+  return [h, h.map((v, i) => (v != null ? (v + l[i]) / 2 : null)), l];
+}
+function obv(B) {
+  const o = new Array(B.length).fill(null); if (!hasVolume(B) || !B.length) return o;
+  let t = 0; o[0] = 0;
+  for (let i = 1; i < B.length; i++) { const c = B[i].close, p = B[i - 1].close, v = B[i].volume || 0; t += c > p ? v : c < p ? -v : 0; o[i] = t; }
+  return o;
+}
+function mfi(B, len) {
+  const n = B.length, o = new Array(n).fill(null); if (!hasVolume(B)) return o;
+  const tp = B.map(b => (b.high + b.low + b.close) / 3), pos = new Array(n).fill(0), neg = new Array(n).fill(0);
+  for (let i = 1; i < n; i++) { const f = tp[i] * (B[i].volume || 0); if (tp[i] > tp[i - 1]) pos[i] = f; else if (tp[i] < tp[i - 1]) neg[i] = f; }
+  let ps = 0, ns = 0;
+  for (let i = 1; i < n; i++) {
+    ps += pos[i]; ns += neg[i];
+    if (i > len) { ps -= pos[i - len]; ns -= neg[i - len]; }
+    if (i >= len) o[i] = ns === 0 ? (ps === 0 ? 50 : 100) : 100 - 100 / (1 + ps / ns);
+  }
+  return o;
+}
+function cmf(B, len) {
+  const n = B.length, o = new Array(n).fill(null); if (!hasVolume(B)) return o;
+  let mv = 0, vv = 0;
+  const mfv = B.map(b => (b.high === b.low ? 0 : ((b.close - b.low - (b.high - b.close)) / (b.high - b.low)) * (b.volume || 0)));
+  for (let i = 0; i < n; i++) {
+    mv += mfv[i]; vv += B[i].volume || 0;
+    if (i >= len) { mv -= mfv[i - len]; vv -= B[i - len].volume || 0; }
+    if (i >= len - 1) o[i] = vv > 0 ? mv / vv : null;
+  }
+  return o;
+}
+
+// ----- shaded areas between two lines (Bollinger, Keltner and Donchian bands, the Ichimoku cloud) -----
+// A small custom series for the chart library, so the shading sits behind the candles on any chart.
+class BandFill {
+  constructor() { this.d = null; this.o = null; const self = this; this.r = { draw: (t, toY) => self.draw(t, toY) }; }
+  renderer() { return this.r; }
+  update(data, options) { this.d = data; this.o = options; }
+  priceValueBuilder(row) { return [row.a, row.b]; }
+  isWhitespace(row) { return row.a === undefined || row.b === undefined; }
+  defaultOptions() { return { upColor: 'rgba(38,184,146,0.12)', downColor: 'rgba(240,82,104,0.12)' }; }
+  draw(target, toY) {
+    const d = this.d, o = this.o; if (!d || !d.bars.length || !d.visibleRange) return;
+    target.useBitmapCoordinateSpace(scope => {
+      const g = scope.context, hr = scope.horizontalPixelRatio, vr = scope.verticalPixelRatio;
+      const from = Math.max(0, d.visibleRange.from - 1), to = Math.min(d.bars.length, d.visibleRange.to + 2);
+      let run = [], runUp = null;
+      const flush = () => {
+        if (run.length > 1) {
+          g.beginPath(); g.moveTo(run[0][0], run[0][1]);
+          for (let i = 1; i < run.length; i++) g.lineTo(run[i][0], run[i][1]);
+          for (let i = run.length - 1; i >= 0; i--) g.lineTo(run[i][0], run[i][2]);
+          g.closePath(); g.fillStyle = runUp ? o.upColor : o.downColor; g.fill();
+        }
+        run = [];
+      };
+      let prev = null;
+      for (let i = from; i < to; i++) {
+        const bar = d.bars[i], v = bar.originalData;
+        if (!v || v.a === undefined || v.b === undefined) { flush(); prev = null; continue; }
+        const ya = toY(v.a), yb = toY(v.b); if (ya == null || yb == null) { flush(); prev = null; continue; }
+        const pt = [bar.x * hr, ya * vr, yb * vr], up = v.a >= v.b;
+        if (prev && up !== runUp) {   // the lines cross: close this shade where they meet and start the next there
+          const d0 = prev[1] - prev[2], d1 = pt[1] - pt[2], t = d0 / (d0 - d1 || 1), x = prev[0] + t * (pt[0] - prev[0]), y = prev[1] + t * (pt[1] - prev[1]);
+          run.push([x, y, y]); flush(); run.push([x, y, y]);
+        }
+        runUp = up; run.push(pt); prev = pt;
+      }
+      flush();
+    });
+  }
+}
+function fillColors(inst, f) {
+  if (f.mode === 'cloud') return { upColor: alpha(C.up, 0.13), downColor: alpha(C.down, 0.13) };
+  const c = alpha(inst.color || C.draw, 0.07); return { upColor: c, downColor: c };
+}
+function fillData(f, out, bars) {
+  const A = out[f.a] || [], Bv = out[f.b] || [], d = [];
+  for (let i = 0; i < bars.length; i++) { const a = A[i], b = Bv[i]; if (a != null && b != null && isFinite(a) && isFinite(b)) d.push({ time: bars[i].time, a, b }); }
+  return d;
+}
+function histUp(type, out, k, i) {
+  const sp = specOf(type, k), v = out[k][i];
+  if (sp && sp.rule === 'rise') { const p = out[k][i - 1]; return p == null || v >= p; }
+  return v >= 0;
+}
 
 function sma(a, n) { const o = new Array(a.length).fill(null); let s = 0; for (let i = 0; i < a.length; i++) { s += a[i]; if (i >= n) s -= a[i - n]; if (i >= n - 1) o[i] = s / n; } return o; }
 function ema(a, n) {
@@ -673,7 +984,8 @@ function normInst(inst) {
   return { id: typeof inst.id === 'string' ? inst.id.slice(0, 20) : uid(), type: inst.type, params, color: def.nocolor ? null : color, hidden: !!inst.hidden };
 }
 function seriesColor(rt, k) {
-  const c = rt.inst.color;
+  const c = rt.inst.color, sp = specOf(rt.inst.type, k);
+  if (sp) return sp.kind === 'hist' ? C.muted : sp.color ? sp.color(c) : c;
   if (rt.inst.type === 'macd') return k === 1 ? c : k === 2 ? (c === SIGNAL ? '#d8487f' : SIGNAL) : C.muted;
   if (rt.inst.type === 'stoch') return k === 0 ? c : (c === SIGNAL ? '#d8487f' : SIGNAL);
   if (rt.inst.type === 'vol') return C.muted;
@@ -732,6 +1044,24 @@ function indSeries(ch, inst, prec, paneIdx) {
       break;
     }
   }
+  const def = IND[inst.type];
+  if (def.series) {
+    const f = def.fmt, fmt = f === 'price' ? pf : f === 'fine' ? pricePF(Math.min(8, prec + 2)) : f === 'vol' ? { type: 'volume' } : f === 'fixed3' ? { type: 'price', precision: 3, minMove: 0.001 } : { type: 'price', precision: 2, minMove: 0.01 };
+    const range = def.range ? () => ({ priceRange: { minValue: def.range[0], maxValue: def.range[1] } }) : null;
+    def.series.forEach((sp, k) => {
+      const o = Object.assign({}, base, { priceFormat: fmt }, range ? { autoscaleInfoProvider: range } : {});
+      if (sp.kind === 'hist') { rt.series.push(chart.addSeries(HistogramSeries, Object.assign(o, { lastValueVisible: false }), paneIdx)); return; }
+      Object.assign(o, { color: seriesColor({ inst }, k), lineWidth: sp.width || 2, lineStyle: sp.dashed ? LineStyle.Dashed : LineStyle.Solid, lastValueVisible: sp.last !== false });
+      if (sp.kind === 'dots') Object.assign(o, { lineVisible: false, pointMarkersVisible: true, pointMarkersRadius: 2 });
+      rt.series.push(chart.addSeries(LineSeries, o, paneIdx));
+    });
+    (def.levels || []).forEach(v => rt.lines.push(rt.series[0].createPriceLine({ price: v, color: C.faint, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false })));
+  }
+  rt.fills = (def.fills || []).map(f => {
+    const s = chart.addCustomSeries(new BandFill(), Object.assign({ priceLineVisible: false, lastValueVisible: false, visible: !inst.hidden, autoscaleInfoProvider: () => null }, fillColors(inst, f)), paneIdx);
+    try { s.setSeriesOrder(0); } catch (e) { /* ordering is cosmetic */ }
+    return Object.assign({ s }, f);
+  });
   return rt;
 }
 function addRt(inst) {
@@ -745,16 +1075,18 @@ function addRt(inst) {
   return rt;
 }
 function removeRt(rt) {
-  rt.series.forEach(s => chart.removeSeries(s));
-  rt.row.remove(); if (rt.paneLg) rt.paneLg.remove();
+  rt.series.forEach(s => chart.removeSeries(s)); rt.fills.forEach(f => chart.removeSeries(f.s));
+  rt.row.remove(); if (rt.paneLg) rt.paneLg.remove(); updateFold();
   S.rts.splice(S.rts.indexOf(rt), 1);
   if (rt.inst.type === 'vol') S.main.priceScale().applyOptions({ scaleMargins: mainMargins() });
   restretch(); saveInd(); markDirty();
 }
-function restretch() { chart.panes().forEach((p, i) => { try { p.setStretchFactor(i === 0 ? 3 : 1); } catch (e) { /* older pane API */ } }); markDirty(); }
+const mainStretch = n => Math.max(3, (n - 1) * 0.8);   // the price pane keeps most of the room, even with many indicator panes
+function restretch() { const ps = chart.panes(); ps.forEach((p, i) => { try { p.setStretchFactor(i === 0 ? mainStretch(ps.length) : 1); } catch (e) { /* older pane API */ } }); markDirty(); }
 function saveInd() { S.ind = S.rts.map(r => r.inst); store.set('ind', S.ind); }
 
 function indCompute(inst, bars, tf, sym) {
+  if (IND[inst.type].compute) return IND[inst.type].compute(bars, inst.params, tf, sym);
   const p = inst.params; const cl = bars.map(b => b.close);
   switch (inst.type) {
     case 'sma': return [sma(cl, p.len)];
@@ -773,6 +1105,8 @@ function computeRt(rt) { rt.out = indCompute(rt.inst, S.bars); }
 function indPoint(type, out, k, i, bars) {
   const v = out[k][i]; const t = bars[i].time;
   if (type === 'vol') { const b = bars[i]; return { time: t, value: v, color: alpha(b.close >= b.open ? C.up : C.down, 0.42) }; }
+  const sp = specOf(type, k);
+  if (sp && sp.kind === 'hist') return { time: t, value: v, color: alpha(histUp(type, out, k, i) ? C.up : C.down, 0.75) };
   if (type === 'macd' && k === 0) {
     const pv = out[0][i - 1];
     const strong = pv == null || (v >= 0 ? v >= pv : v <= pv);
@@ -781,17 +1115,31 @@ function indPoint(type, out, k, i, bars) {
   return { time: t, value: v };
 }
 function rtPoint(rt, k, i) { return indPoint(rt.inst.type, rt.out, k, i, S.bars); }
-function setRtData(rt) {
-  computeRt(rt);
-  rt.series.forEach((s, k) => {
-    const arr = rt.out[k]; const data = [];
-    for (let i = 0; i < arr.length; i++) if (arr[i] != null && isFinite(arr[i])) data.push(rtPoint(rt, k, i));
-    s.setData(data);
-  });
+function indData(type, out, k, bars) {   // a series' points; lines that switch on and off (SuperTrend) get gaps
+  const arr = out[k] || [], gaps = (specOf(type, k) || {}).gaps, d = []; let on = false;
+  for (let i = 0; i < arr.length; i++) {
+    const v = arr[i];
+    if (v != null && isFinite(v)) { d.push(indPoint(type, out, k, i, bars)); on = true; }
+    else if (gaps && on) d.push({ time: bars[i].time });
+  }
+  return d;
 }
+function indApply(rt, out, bars) {
+  rt.series.forEach((s, k) => s.setData(indData(rt.inst.type, out, k, bars)));
+  (rt.fills || []).forEach(f => f.s.setData(fillData(f, out, bars)));
+}
+function setRtData(rt) { computeRt(rt); indApply(rt, rt.out, S.bars); }
 function updateRtLast(rt) {
-  computeRt(rt); const i = S.bars.length - 1;
-  rt.series.forEach((s, k) => { const v = rt.out[k][i]; if (v != null && isFinite(v)) s.update(rtPoint(rt, k, i)); });
+  computeRt(rt); const i = S.bars.length - 1, t = S.bars[i].time;
+  rt.series.forEach((s, k) => {
+    const arr = rt.out[k], v = arr[i], sp = specOf(rt.inst.type, k) || {};
+    try {
+      if (v != null && isFinite(v)) s.update(rtPoint(rt, k, i));
+      else if (sp.gaps) s.update({ time: t });
+      else if (sp.lag) { let j = i; while (j >= 0 && arr[j] == null) j--; if (j >= 0) s.update(rtPoint(rt, k, j)); }
+    } catch (e) { /* the chart keeps the previous point */ }
+  });
+  rt.fills.forEach(f => { const a = rt.out[f.a][i], b = rt.out[f.b][i]; if (a != null && b != null) { try { f.s.update({ time: t, a, b }); } catch (e) { /* keep the previous point */ } } });
 }
 function recolorRt(rt) {
   const t = rt.inst.type;
@@ -800,7 +1148,14 @@ function recolorRt(rt) {
   if (t === 'macd') { rt.series[1].applyOptions({ color: seriesColor(rt, 1) }); rt.series[2].applyOptions({ color: seriesColor(rt, 2) }); }
   rt.lines.forEach(l => l.applyOptions({ color: C.faint }));
   if (t === 'vol' || t === 'macd') { if (S.bars.length) setRtData(rt); }
+  recolorSpec(rt);
   rt.vals.forEach((v, k) => { v.style.color = seriesColor(rt, k); });
+}
+function recolorSpec(rt) {   // indicators drawn from a definition, on any chart
+  const sp = IND[rt.inst.type].series;
+  if (sp) sp.forEach((x, k) => { if (x.kind !== 'hist') rt.series[k].applyOptions({ color: seriesColor(rt, k) }); });
+  (rt.fills || []).forEach(f => f.s.applyOptions(fillColors(rt.inst, f)));
+  if (sp && sp.some(x => x.kind === 'hist') && S.rts.includes(rt) && S.bars.length) setRtData(rt);
 }
 function addIndicator(type) {
   const def = IND[type]; const used = S.rts.map(r => r.inst.color);
@@ -820,7 +1175,7 @@ function makeLegendRow(rt) {
   rt.vals = rt.series.map((_, k) => { const v = el('span', 'v', '—'); v.style.color = seriesColor(rt, k); vals.append(v); return v; });
   const ctl = el('span', 'lg-ctl');
   const eye = el('button'); eye.innerHTML = svg(rt.inst.hidden ? 'eyeOff' : 'eye'); eye.title = 'Show or hide'; eye.setAttribute('aria-label', `Show or hide ${def.short(rt.inst.params)}`);
-  eye.onclick = () => { rt.inst.hidden = !rt.inst.hidden; rt.series.forEach(s => s.applyOptions({ visible: !rt.inst.hidden })); row.classList.toggle('off', rt.inst.hidden); eye.innerHTML = svg(rt.inst.hidden ? 'eyeOff' : 'eye'); saveInd(); };
+  eye.onclick = () => { rt.inst.hidden = !rt.inst.hidden; rt.series.concat(rt.fills.map(f => f.s)).forEach(s => s.applyOptions({ visible: !rt.inst.hidden })); row.classList.toggle('off', rt.inst.hidden); eye.innerHTML = svg(rt.inst.hidden ? 'eyeOff' : 'eye'); saveInd(); };
   ctl.append(eye);
   if (def.params.length || !def.nocolor) {
     const gear = el('button'); gear.innerHTML = svg('gear'); gear.title = 'Settings'; gear.setAttribute('aria-label', `Settings for ${def.short(rt.inst.params)}`);
@@ -831,15 +1186,28 @@ function makeLegendRow(rt) {
   row.append(nm, vals, ctl);
   rt.row = row; rt.nm = nm;
   if (def.pane) { rt.paneLg = el('div', 'pane-lg'); rt.paneLg.append(row); wrap.append(rt.paneLg); }
-  else L.rows.append(row);
+  else { L.rows.append(row); updateFold(); }
 }
+// Lots of indicators: the legend stays inside the price pane and can be folded away, like TradingView's.
+function updateFold() {
+  const b = $('#lgFold'), n = L.rows.children.length, open = !store.get('lgFold', false);
+  b.hidden = n < 2; L.rows.classList.toggle('folded', !open || n < 1);
+  if (n < 2) L.rows.classList.remove('folded');
+  b.setAttribute('aria-expanded', String(open));
+  b.lastChild.textContent = open ? '' : `${n} indicators`;
+  b.title = open ? 'Hide the indicator list' : 'Show the indicator list';
+  b.setAttribute('aria-label', b.title);
+  markDirty();
+}
+$('#lgFold').onclick = () => { store.raw('lgFold', !store.get('lgFold', false)); updateFold(); };
 function fmtInd(rt, k, v) {
-  switch (rt.inst.type) {
-    case 'vol': return v ? fmtVol(v) : '—';
-    case 'rsi': case 'stoch': return v.toFixed(2);
-    case 'macd': return fmtP(v, Math.min(8, S.prec + 2));
-    default: return fmtP(v);
-  }
+  const t = rt.inst.type, f = indFmt(t);
+  if (t === 'vol') return v ? fmtVol(v) : '—';
+  if (f === 'vol') return fmtVol(v);
+  if (t === 'rsi' || t === 'stoch' || f === 'fixed') return v.toFixed(2);
+  if (f === 'fixed3') return v.toFixed(3);
+  if (f === 'fine') return fmtP(v, Math.min(8, S.prec + 2));
+  return fmtP(v);
 }
 function updateLegend() {
   const n = S.bars.length; if (!n) return;
@@ -856,11 +1224,13 @@ function updateLegend() {
       v.textContent = x == null || !isFinite(x) ? '—' : fmtInd(rt, k, x);
       if (rt.inst.type === 'vol') v.style.color = S.bars[i].close >= S.bars[i].open ? C.up : C.down;
       if (rt.inst.type === 'macd' && k === 0 && x != null) v.style.color = x >= 0 ? C.up : C.down;
+      if (x != null && (specOf(rt.inst.type, k) || {}).kind === 'hist') v.style.color = histUp(rt.inst.type, rt.out, k, i) ? C.up : C.down;
     });
   }
 }
 function placePaneLegends() {
   const panes = chart.panes(); const wr = wrap.getBoundingClientRect();
+  try { L.rows.style.maxHeight = Math.max(44, panes[0].getHeight() - L.rows.offsetTop - 40) + 'px'; } catch (e) { /* keep the CSS default */ }
   for (const rt of S.rts) {
     if (!rt.paneLg) continue;
     const idx = panes.findIndex(p => p.getSeries().includes(rt.series[0]));
@@ -2362,8 +2732,9 @@ async function loadChart() {
     if (R.on) rpRebase(bars);   // keep replaying from the same moment on the new symbol or timeframe
     S.main.applyOptions({ priceFormat: pricePF(S.prec) });
     for (const rt of S.rts) {
-      if (['sma', 'ema', 'bb', 'vwap', 'atr'].includes(rt.inst.type)) rt.series.forEach(s => s.applyOptions({ priceFormat: pricePF(S.prec) }));
-      if (rt.inst.type === 'macd') rt.series.forEach(s => s.applyOptions({ priceFormat: pricePF(Math.min(8, S.prec + 2)) }));
+      const f = indFmt(rt.inst.type);
+      if (f === 'price') rt.series.forEach(s => s.applyOptions({ priceFormat: pricePF(S.prec) }));
+      if (f === 'fine') rt.series.forEach(s => s.applyOptions({ priceFormat: pricePF(Math.min(8, S.prec + 2)) }));
     }
     // The chart library trips over a crosshair resting on bars that are about to be replaced, so lift it first.
     try { chart.clearCrosshairPosition(); } catch (e) { /* older library */ }
@@ -2726,18 +3097,42 @@ $('#dSym').onclick = () => openSearch('open');
 
 /* ---------- indicator dialogs ---------- */
 const iDlg = $('#indDlg');
+let indCat = 'all';
+function indMatches() {   // the indicators that fit the search box and the chosen group
+  const q = $('#indSearch').value.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean);
+  return Object.entries(IND).filter(([type, def]) => {
+    if (indCat !== 'all' && def.cat !== indCat) return false;
+    const hay = `${def.label} ${def.short(Object.fromEntries(def.params.map(p => [p.k, p.def])))} ${def.alias || ''} ${type}`.toLowerCase();
+    return words.every(w => hay.includes(w));
+  });
+}
+function renderIndTabs() {
+  const tabs = $('#indTabs'); tabs.replaceChildren();
+  for (const [v, name] of [['all', 'All']].concat(IND_CATS)) {
+    const b = el('button', 's-tab', name); b.type = 'button'; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', String(indCat === v));
+    b.onclick = () => { indCat = v; renderIndTabs(); renderIndList(); }; tabs.append(b);
+  }
+}
 function renderIndList() {
   const list = $('#indList'); list.replaceChildren();
-  for (const [type, def] of Object.entries(IND)) {
+  const found = indMatches(), grouped = !$('#indSearch').value.trim() && indCat === 'all';
+  if (!found.length) { list.append(el('li', 'i-none', 'No indicator matches. Try another name, such as RSI or moving average.')); return; }
+  const order = IND_CATS.map(c => c[0]);
+  found.sort((a, b) => order.indexOf(a[1].cat) - order.indexOf(b[1].cat));
+  let cat = null;
+  for (const [type, def] of found) {
+    if (grouped && def.cat !== cat) { cat = def.cat; list.append(el('li', 'i-grp', (IND_CATS.find(c => c[0] === cat) || [, ''])[1])); }
     const n = S.rts.filter(r => r.inst.type === type).length;
-    const b = el('button', 'i-item');
+    const b = el('button', 'i-item'); b.dataset.type = type;
     const add = el('span', 'add'); if (n) add.append(el('span', null, `${n} on chart`)); add.append(document.createTextNode('Add'));
     b.append(el('b', null, def.label), add, el('small', null, def.desc));
     b.onclick = () => { if (type === 'vol' && n) { toast('Volume is already on the chart'); return; } addIndicator(type); renderIndList(); };
     const li = el('li'); li.append(b); list.append(li);
   }
 }
-$('#indBtn').onclick = () => { renderIndList(); iDlg.showModal(); };
+$('#indSearch').oninput = () => renderIndList();
+$('#indSearch').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); const first = $('#indList .i-item'); if (first) first.click(); } };
+$('#indBtn').onclick = () => { $('#indSearch').value = ''; indCat = 'all'; renderIndTabs(); renderIndList(); iDlg.showModal(); $('#indSearch').focus(); };
 const setDlg = $('#setDlg'); let setRt = null, setColor = null;
 function openSettings(rt) {
   setRt = rt; setColor = rt.inst.color;
@@ -2766,7 +3161,7 @@ $('#setForm').addEventListener('submit', e => {
     if (!isFinite(v) || v < p.min || v > p.max) { toast(`${p.label} must be between ${p.min} and ${p.max}`); $('#set-' + p.k).focus(); return; }
     params[p.k] = p.step < 1 ? v : Math.round(v);
   }
-  if (setRt.inst.type === 'macd' && params.fast >= params.slow) { toast('Fast length must be shorter than slow length'); return; }
+  const bad = def.check ? def.check(params) : ''; if (bad) { toast(bad); return; }
   setRt.inst.params = params; if (!def.nocolor) setRt.inst.color = setColor;
   setRt.nm.textContent = def.short(params);
   recolorRt(setRt); if (S.bars.length) setRtData(setRt);
@@ -4118,7 +4513,7 @@ function ideaChartOpen(box, it) {
   const vol = c.ind.some(x => x.type === 'vol');
   IV.main.priceScale().applyOptions({ autoScale: true, scaleMargins: vol ? { top: 0.08, bottom: 0.2 } : { top: 0.08, bottom: 0.06 } });
   IV.rts = c.ind.map(inst => Object.assign({ inst }, indSeries(IV.ch, inst, c.prec, IND[inst.type].pane ? IV.ch.panes().length : 0)));
-  IV.ch.panes().forEach((p, i) => { try { p.setStretchFactor(i === 0 ? 3 : 1); } catch (e) { /* older pane API */ } });
+  { const ps = IV.ch.panes(); ps.forEach((p, i) => { try { p.setStretchFactor(i === 0 ? mainStretch(ps.length) : 1); } catch (e) { /* older pane API */ } }); }
   ideaChartData();
   IV.ch.timeScale().setVisibleLogicalRange({ from: c.r[0], to: c.r[1] });
   IV.ch.subscribeCrosshairMove(p => ideaLegend(p && p.time != null ? p.time : null));
@@ -4131,8 +4526,7 @@ function ideaChartData() {
   try { IV.ch.clearCrosshairPosition(); } catch (e) { /* older library */ }
   IV.main.setData(pts);
   for (const rt of IV.rts) {
-    const out = indCompute(rt.inst, B, IV.it.tf, IV.it.symbol);
-    rt.series.forEach((s, k) => { const arr = out[k] || [], data = []; for (let i = 0; i < arr.length; i++) if (arr[i] != null && isFinite(arr[i])) data.push(indPoint(rt.inst.type, out, k, i, B)); s.setData(data); });
+    indApply(rt, indCompute(rt.inst, B, IV.it.tf, IV.it.symbol), B);
   }
   IV.dirty = true;
 }
@@ -4342,7 +4736,7 @@ function ideasRetheme() {
       rightPriceScale: { borderColor: C.line }, timeScale: { borderColor: C.line },
     });
     IV.main.applyOptions(seriesStyle(IV.it.chart.type, IV.it.chart.prec)[1]);
-    IV.rts.forEach(rt => rt.lines.forEach(l => l.applyOptions({ color: C.faint })));
+    IV.rts.forEach(rt => { rt.lines.forEach(l => l.applyOptions({ color: C.faint })); recolorSpec(rt); });
     ideaChartData();
   }
 }
