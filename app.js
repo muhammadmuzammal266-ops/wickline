@@ -1469,6 +1469,7 @@ function drawOverlay(m) {
   if (S.draft && S.draft.type !== 'measure') drawShape(S.draft, m, W, H, false, true);
   const meas = S.draft && S.draft.type === 'measure' ? S.draft : S.measure;
   if (meas) drawMeasure(meas, m);
+  Paper.draw(m, W, H);
   if (R.picking && R.hoverX != null && R.hoverX >= 0 && R.hoverX <= W) {
     const i = rpPickIndex(R.hoverX), x = i == null ? R.hoverX : m.x(S.bars[i].time) + m.sp / 2;
     octx.fillStyle = alpha(C.panel, 0.62); octx.fillRect(x, 0, W - x, H);
@@ -1674,6 +1675,7 @@ wrap.addEventListener('pointerdown', e => {
   if (e.target.closest('.lg-row, .float, .latest, .veil')) return;
   const r = wrap.getBoundingClientRect(); const x = e.clientX - r.left, y = e.clientY - r.top;
   press = { x, y, id: e.pointerId };
+  if (Paper.pointerDown(e, x, y)) { press = null; return; }   // paper trading lines on the chart
   if (S.tool !== 'cursor' || S.draft || R.picking) return;
   const h = hitTest(x, y);
   if (!h) { if (S.selected) select(null); return; }
@@ -1897,9 +1899,9 @@ function onTicker(t) {
   S.tickers[t.sym] = t;
   updateWatchRow(t.sym, prev);
   if (t.sym === S.symbol) renderDetails();
-  if (!t.stand) checkAlerts(t.sym, t.last);   // a saved stand-in price never sets off an alert
+  if (!t.stand) { checkAlerts(t.sym, t.last); Paper.onPrice(t.sym); }   // a saved stand-in price never sets off an alert or fills an order
 }
-function tickerSet() { const set = new Set(S.watch); set.add(S.symbol); S.alerts.forEach(a => { if (!a.hit) set.add(a.sym); }); return Array.from(set); }
+function tickerSet() { const set = new Set(S.watch); set.add(S.symbol); S.alerts.forEach(a => { if (!a.hit) set.add(a.sym); }); Paper.symbols().forEach(id => set.add(id)); return Array.from(set); }
 
 /* ---------- network helpers ---------- */
 function fetchT(url, ms, opts) {
@@ -3409,6 +3411,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.key === '?') { e.preventDefault(); openHelp(); return; }
+  if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && (e.code === 'KeyB' || e.code === 'KeyS')) { e.preventDefault(); Paper.hotkey(e.code === 'KeyB' ? 'buy' : 'sell'); return; }
   if (!e.ctrlKey && !e.metaKey && /^[a-z0-9]$/i.test(e.key)) { e.preventDefault(); openSearch('open', e.key); }
 });
 
@@ -3441,7 +3444,7 @@ if (mq.addEventListener) mq.addEventListener('change', applyTheme);
 /* ---------- accounts: sign in with Google, profile, and syncing the setup across devices ----------
    Supabase keeps the accounts. The browser only ever holds the public "publishable" key; the database rules
    (row level security) let each person read and change only their own profile and saved setup. */
-const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset'];
+const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset', 'paper'];
 function cleanState(d) {   // saved data is checked before it's used, whatever is in the database
   const o = {}; if (!d || typeof d !== 'object' || Array.isArray(d)) return o;
   const isId = v => typeof v === 'string' && v.length <= 40 && /^[A-Z0-9.:/_-]+$/.test(v);
@@ -3459,6 +3462,7 @@ function cleanState(d) {   // saved data is checked before it's used, whatever i
   if (typeof d.rpSpeed === 'number' && d.rpSpeed > 0 && d.rpSpeed <= 50) o.rpSpeed = d.rpSpeed;
   if (d.theme === 'light' || d.theme === 'dark') o.theme = d.theme;
   if (isObj(d.jset) && typeof d.jset.ccy === 'string' && /^[A-Z]{3}$/.test(d.jset.ccy)) o.jset = { ccy: d.jset.ccy };
+  if (isObj(d.paper)) o.paper = ptClean(d.paper);
   return o;
 }
 const safeAvatar = u => (typeof u === 'string' && /^https:\/\/[a-z0-9.-]+\.googleusercontent\.com\/[^\s"'<>]*$/i.test(u) ? u : '');
@@ -4183,8 +4187,11 @@ function syncTradeMarks() {
   if (!R.on && T.length) {
     const first = T[0].time, step = tfOf(S.tf).sec, lastT = T[T.length - 1].time + step;
     const at = s => (s < first || s > lastT ? null : T[Math.max(0, rpIndexFor(T, s))].time);
+    const paperMarks = Paper.marks();
+    for (const x of paperMarks) { const a = at(x.at); if (a != null) m.push({ time: a, position: x.buy ? 'belowBar' : 'aboveBar', shape: x.buy ? 'arrowUp' : 'arrowDown', color: x.buy ? C.up : C.down, text: x.text }); }
     for (const t of JR.trades) {
       if (t.symbol !== S.symbol) continue;
+      if (PT.a.set.exec && t.tags.includes('Paper')) continue;   // paper trades show as executions instead
       const long = t.side === 'long', a = at(Date.parse(t.opened_at) / 1000);
       if (a != null) m.push({ time: a, position: long ? 'belowBar' : 'aboveBar', shape: long ? 'arrowUp' : 'arrowDown', color: C.draw, text: (long ? 'Buy ' : 'Sell ') + fmtP(t.entry, S.prec) });
       if (t.exit != null) { const b = at(Date.parse(t.closed_at) / 1000), c = jCalc(t); if (b != null) m.push({ time: b, position: long ? 'aboveBar' : 'belowBar', shape: 'circle', color: c.net >= 0 ? C.up : C.down, text: money(c.net, true) }); }
@@ -5173,6 +5180,1018 @@ $('#iModBtn').onclick = () => { ID.mod = true; ID.open = null; setView('ideas', 
 }
 new ResizeObserver(() => { if (curView() === 'ideas' && !ID.open) Ideas.paintThumbs(); }).observe($('#iGrid'));
 
+/* ---------- paper trading ----------
+   Practise trading with virtual money on live prices. Each symbol has one position: buys and sells net out,
+   the way TradingView's paper account works. Orders fill from the same live prices the chart shows, while the
+   page is open. When it's opened again, orders and stops that would have filled in the meantime are filled
+   from the price history. Kept in this browser, and in the person's account when signed in. */
+const PT_LEV_DEF = { crypto: 2, stock: 4, fund: 4, forex: 50, index: 20, futures: 20, bond: 10 };
+const PT_MKTS = [['crypto', 'Crypto'], ['stock', 'US stocks'], ['fund', 'Funds (ETFs)'], ['forex', 'Forex and metals'], ['index', 'Indices'], ['futures', 'Commodities'], ['bond', 'Bonds']];
+const PT_LEVS = [1, 2, 3, 4, 5, 10, 20, 30, 50, 100, 200, 500];
+const PT_TYPES = { market: 'Market', limit: 'Limit', stop: 'Stop', stoplimit: 'Stop limit' };
+const PT_WHY = { tp: 'Take profit', sl: 'Stop loss', trail: 'Trailing stop', close: 'Closed by you', stopout: 'Margin call', reverse: 'Reversed', order: 'Order' };
+const PT_FIX = { HKD: 0.1286, SGD: 0.775, BRL: 0.18 };   // rough rates for the few currencies with no live pair here
+const PT_KEEP = { done: 150, hist: 300, log: 150 };
+const ptNum = v => { if (v == null || v === '') return null; const n = Number(String(v).replace(/[,\s]/g, '').replace('−', '-')); return isFinite(n) ? n : null; };
+const ptSetDefaults = () => ({ lev: Object.assign({}, PT_LEV_DEF), comm: 0, one: false, sound: true, lines: true, exec: true, journal: true, qt: true });
+function ptFresh(start) { const s = start || 100000; return { v: 1, start: s, bal: s, pos: [], ord: [], hist: [], log: [], set: ptSetDefaults() }; }
+
+function ptClean(d) {   // a paper account from anywhere (this browser, the account, another tab) is checked before it's used
+  const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+  const num = (v, lo, hi) => (typeof v === 'number' && isFinite(v) && v >= lo && v <= hi ? v : null);
+  const pos = v => num(v, 1e-12, 1e12);
+  const sym = v => (typeof v === 'string' && v.length <= 40 && /^(BINANCE|US|FX):[A-Z0-9./_-]+$/.test(v) ? v : null);
+  const id = v => (typeof v === 'string' && /^[a-z0-9]{1,16}$/.test(v) ? v : uid());
+  const ms = v => num(v, 1e12, 9e12);
+  const txt = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const o = ptFresh(); if (!isObj(d)) return o;
+  o.start = num(d.start, 100, 1e9) || 100000;
+  o.bal = num(d.bal, -1e13, 1e13); if (o.bal == null) o.bal = o.start;
+  const seen = new Set();
+  if (Array.isArray(d.pos)) o.pos = d.pos.filter(isObj).map(p => ({ id: id(p.id), sym: sym(p.sym), qty: num(p.qty, -1e12, 1e12), avg: pos(p.avg), at: ms(p.at) || Date.now(), tp: pos(p.tp), sl: pos(p.sl), trail: pos(p.trail), fees: num(p.fees, 0, 1e12) || 0 }))
+    .filter(p => p.sym && p.qty && p.avg && !seen.has(p.sym) && seen.add(p.sym)).slice(0, 200);
+  if (Array.isArray(d.ord)) o.ord = d.ord.filter(isObj).map(x => ({
+    id: id(x.id), sym: sym(x.sym), side: x.side === 'buy' || x.side === 'sell' ? x.side : null, type: PT_TYPES[x.type] ? x.type : null,
+    qty: pos(x.qty), lim: pos(x.lim), stp: pos(x.stp), tp: pos(x.tp), sl: pos(x.sl), trail: pos(x.trail), tif: x.tif === 'day' ? 'day' : 'gtc', exp: ms(x.exp),
+    st: ['working', 'filled', 'cancelled', 'rejected'].includes(x.st) ? x.st : null, at: ms(x.at) || Date.now(), upd: ms(x.upd) || ms(x.at) || Date.now(),
+    fill: pos(x.fill), fillAt: ms(x.fillAt), why: txt(x.why, 120), trig: x.trig === true, tag: PT_WHY[x.tag] ? x.tag : null,
+  })).filter(x => x.sym && x.side && x.type && x.qty && x.st && (!['limit', 'stoplimit'].includes(x.type) || x.lim) && (!['stop', 'stoplimit'].includes(x.type) || x.stp)).slice(-600);
+  if (Array.isArray(d.hist)) o.hist = d.hist.filter(isObj).map(h => ({ id: id(h.id), sym: sym(h.sym), side: h.side === 'long' || h.side === 'short' ? h.side : null, qty: pos(h.qty), entry: pos(h.entry), exit: pos(h.exit),
+    at: ms(h.at), end: ms(h.end), pnl: num(h.pnl, -1e13, 1e13), fees: num(h.fees, 0, 1e12) || 0, why: PT_WHY[h.why] ? h.why : 'order' })).filter(h => h.sym && h.side && h.qty && h.entry && h.exit && h.at && h.end && h.pnl != null).slice(-PT_KEEP.hist);
+  if (Array.isArray(d.log)) o.log = d.log.filter(isObj).map(l => ({ t: ms(l.t), m: txt(l.m, 200), k: ['fill', 'info', 'warn', 'reject', 'cancel'].includes(l.k) ? l.k : 'info' })).filter(l => l.t && l.m).slice(-PT_KEEP.log);
+  if (isObj(d.set)) {
+    const s = d.set;
+    if (isObj(s.lev)) PT_MKTS.forEach(([k]) => { if (PT_LEVS.includes(s.lev[k])) o.set.lev[k] = s.lev[k]; });
+    const c = num(s.comm, 0, 5); if (c != null) o.set.comm = c;
+    ['one', 'sound', 'lines', 'exec', 'journal', 'qt'].forEach(k => { if (typeof s[k] === 'boolean') o.set[k] = s[k]; });
+  }
+  return o;
+}
+
+const PT = { a: ptClean(store.get('paper', null)), leader: false, catching: new Set(), relevant: new Set(), hits: [], drag: null, uiT: 0, tab: store.get('ptTab', 'pos'), ordView: 'working', histView: 'trades',
+  open: !!store.get('ptOpen', false), trailMoved: 0, sig: '', t: null };
+if (!['pos', 'ord', 'hist', 'acct'].includes(PT.tab)) PT.tab = 'pos';
+
+// ----- prices, money and sizes -----
+function ptQuote(id) {
+  const t = S.tickers[id]; let last = t && t.last > 0 ? t.last : null;
+  if (last == null && id === S.symbol && !R.on && S.bars.length) last = S.bars[S.bars.length - 1].close;
+  if (!(last > 0)) return null;
+  const spread = t && t.bid > 0 && t.ask > 0 && t.bid <= t.ask && Math.abs(t.ask - t.bid) / last < 0.05;
+  return { last, bid: spread ? t.bid : last, ask: spread ? t.ask : last };
+}
+const ptLive = id => S.ready && srcOf(id) !== 'demo' && !!S.tickers[id] && !S.tickers[id].stand && S.tickers[id].src !== 'demo';
+const ptCanFill = id => ptLive(id) && openNow(id);
+function ptConvSym(ccy) {
+  if (!ccy || ccy === 'USD') return null;
+  if (['BTC', 'ETH', 'BNB'].includes(ccy)) return { id: 'BINANCE:' + ccy + 'USDT', inv: false };
+  if (FX.some(f => f[0] === ccy + '/USD')) return { id: 'FX:' + ccy + '/USD', inv: false };
+  if (FX.some(f => f[0] === 'USD/' + ccy)) return { id: 'FX:USD/' + ccy, inv: true };
+  return null;
+}
+function ptConv(sym) {   // US dollars per 1 unit of the symbol's quote currency
+  const c = quoteCcy(sym); if (c === 'USD') return 1;
+  const cs = ptConvSym(c);
+  if (cs) { const q = ptQuote(cs.id), px = q ? q.last : DEMO[cs.id] && DEMO[cs.id][0]; if (px > 0) return cs.inv ? 1 / px : px; }
+  return PT_FIX[c] || 1;
+}
+const ptLev = sym => PT.a.set.lev[catOf(sym)] || 1;
+function ptStep(id) {
+  const c = catOf(id);
+  if (c === 'forex' || c === 'stock' || c === 'fund') return 1;
+  if (c === 'crypto') { const q = ptQuote(id), p = q ? q.last : (DEMO[id] && DEMO[id][0]) || 1; return p >= 10000 ? 1e-5 : p >= 100 ? 1e-4 : p >= 1 ? 1e-2 : 1; }
+  return 0.1;
+}
+const ptDec = step => (step >= 1 ? 0 : Math.round(-Math.log10(step)));
+const ptRoundQty = (id, q) => { const s = ptStep(id), d = ptDec(s); return Number((Math.floor(q / s + 1e-7) * s).toFixed(d)); };
+const ptFix = (id, q) => Number(q.toFixed(Math.max(ptDec(ptStep(id)), 8)));
+function ptFmtQty(id, q) {
+  const d = Math.max(ptDec(ptStep(id)), 0);
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: Math.min(8, d + 2) }).format(Math.abs(q));
+}
+const USDF = {};
+function usd(v, signed, compact) {
+  if (v == null || !isFinite(v)) return '—';
+  const k = (signed ? 's' : '') + (compact ? 'c' : '');
+  if (!USDF[k]) USDF[k] = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', signDisplay: signed ? 'exceptZero' : 'auto', notation: compact ? 'compact' : 'standard', maximumFractionDigits: compact ? 1 : 2, minimumFractionDigits: compact ? 0 : 2 });
+  return USDF[k].format(v).replace('-', '−');
+}
+const ptPx = (id, p) => (p == null ? '—' : fmtP(p, precFor(id, p)));
+const ptPip = id => (classOf(id) === 'forex' && !CFD[id] ? (/JPY$/.test(rawOf(id)) ? 0.01 : /^X(AU|AG)\//.test(rawOf(id)) ? 0.01 : 0.0001) : Math.pow(10, -precFor(id, (ptQuote(id) || { last: 1 }).last)));
+const ptPipName = id => (classOf(id) === 'forex' && !CFD[id] ? 'pips' : 'ticks');
+function ptDefQty(id) {
+  const saved = store.get('ptQty', {}); if (saved && saved[id] > 0) return saved[id];
+  const c = catOf(id), q = ptQuote(id), p = q ? q.last : (DEMO[id] && DEMO[id][0]) || 1;
+  if (c === 'forex' && !/^X(AU|AG)\//.test(rawOf(id))) return 10000;
+  return Math.max(ptStep(id), ptRoundQty(id, 1000 / (p * ptConv(id))));   // about $1,000 worth
+}
+function ptRememberQty(id, q) { const s = store.get('ptQty', {}) || {}; s[id] = q; const keys = Object.keys(s); if (keys.length > 80) delete s[keys[0]]; store.raw('ptQty', s); }
+const ptSideWord = s => (s === 'buy' ? 'Buy' : 'Sell');
+function ptDesc(o) {
+  const q = ptFmtQty(o.sym, o.qty), base = `${ptSideWord(o.side)} ${q} ${label(o.sym)}`;
+  if (o.type === 'market') return `${base} at market`;
+  if (o.type === 'limit') return `${base} limit at ${ptPx(o.sym, o.lim)}`;
+  if (o.type === 'stop') return `${base} stop at ${ptPx(o.sym, o.stp)}`;
+  return `${base} stop ${ptPx(o.sym, o.stp)}, limit ${ptPx(o.sym, o.lim)}`;
+}
+function ptMetrics() {
+  const a = PT.a; let upl = 0, margin = 0;
+  const rows = a.pos.map(p => {
+    const q = ptQuote(p.sym), conv = ptConv(p.sym), mark = q ? (p.qty > 0 ? q.bid : q.ask) : p.avg;
+    const pl = (mark - p.avg) * p.qty * conv, value = Math.abs(p.qty) * mark * conv, m = value / ptLev(p.sym);
+    upl += pl; margin += m;
+    return { p, q, mark, pl, pct: ((mark - p.avg) / p.avg) * 100 * Math.sign(p.qty), value, margin: m };
+  });
+  const equity = a.bal + upl;
+  return { rows, upl, margin, equity, avail: equity - margin, realized: a.bal - a.start };
+}
+function ptLog(m, k) { PT.a.log.push({ t: Date.now(), m, k: k || 'info' }); }
+function ptNotice(msg, kind) {
+  toast(msg, kind === 'warn' ? 'alert' : null);
+  if (PT.a.set.sound) beep();
+  notify('Paper trading', msg);
+}
+
+// ----- the engine: orders, fills, positions -----
+function ptExec(o, px, when, tag) {   // fill an order at a price. Returns false if it was rejected.
+  const a = PT.a, sym = o.sym, conv = ptConv(sym), lev = ptLev(sym);
+  const dq = o.side === 'buy' ? o.qty : -o.qty;
+  const p = a.pos.find(x => x.sym === sym), old = p ? p.qty : 0, nw = ptFix(sym, old + dq);
+  const added = !old || Math.sign(old) === Math.sign(dq) ? Math.abs(dq) : Math.sign(nw) !== Math.sign(old) ? Math.abs(nw) : 0;
+  const comm = Math.abs(dq) * px * conv * (a.set.comm / 100);
+  if (added > 0) {   // there must be enough margin for what this adds
+    const m = ptMetrics(), cur = p ? Math.abs(old) * px * conv / lev : 0, after = m.margin - cur + Math.abs(nw) * px * conv / lev;
+    if (after > m.equity - comm + 1e-9) {
+      o.st = 'rejected'; o.upd = when; o.why = `Not enough margin: needs ${usd(Math.abs(nw) * px * conv / lev)}, ${usd(Math.max(0, m.equity - m.margin + cur))} available`;
+      ptLog(`Rejected: ${ptDesc(o)}. ${o.why}.`, 'reject'); ptNotice(`Order rejected: not enough margin for ${ptFmtQty(sym, o.qty)} ${label(sym)}.`, 'warn');
+      return false;
+    }
+  }
+  let closedTrade = null;
+  if (old && Math.sign(old) !== Math.sign(dq)) {   // the part that closes the position books its profit or loss
+    const closed = Math.min(Math.abs(old), Math.abs(dq));
+    const gross = (px - p.avg) * closed * Math.sign(old) * conv;
+    const feeOpen = p.fees * (closed / Math.abs(old)), feeClose = comm * (closed / Math.abs(dq));
+    a.bal += gross - feeClose; p.fees = Math.max(0, p.fees - feeOpen);
+    closedTrade = { id: uid(), sym, side: old > 0 ? 'long' : 'short', qty: ptFix(sym, closed), entry: p.avg, exit: px, at: p.at, end: when, pnl: gross - feeOpen - feeClose, fees: feeOpen + feeClose, why: tag || 'order' };
+    a.hist.push(closedTrade); ptJournal(closedTrade, p);
+  }
+  if (!nw) a.pos = a.pos.filter(x => x !== p);
+  else if (!old || Math.sign(nw) !== Math.sign(old)) {   // a new position, or the order flipped it to the other side
+    const fee = comm * (Math.abs(nw) / Math.abs(dq)); a.bal -= fee;
+    const np = { id: uid(), sym, qty: nw, avg: px, at: when, tp: o.tp || null, sl: o.sl || null, trail: o.trail || null, fees: fee };
+    if (p) a.pos = a.pos.map(x => (x === p ? np : x)); else a.pos.push(np);
+  } else if (Math.abs(nw) > Math.abs(old)) {   // adding to it
+    p.avg = (p.avg * Math.abs(old) + px * Math.abs(dq)) / Math.abs(nw); p.qty = nw; p.fees += comm; a.bal -= comm;
+    if (o.tp) p.tp = o.tp; if (o.sl) p.sl = o.sl; if (o.trail) p.trail = o.trail;
+  } else p.qty = nw;   // a partial close
+  o.st = 'filled'; o.fill = px; o.fillAt = when; o.upd = when; if (tag) o.tag = tag;
+  const q = ptFmtQty(sym, o.qty), at = ptPx(sym, px);
+  ptLog(`Filled: ${ptSideWord(o.side)} ${q} ${label(sym)} at ${at}${closedTrade ? ` · ${usd(closedTrade.pnl, true)}` : ''}${tag && tag !== 'order' ? ` (${PT_WHY[tag]})` : ''}`, 'fill');
+  if (tag === 'tp' || tag === 'sl' || tag === 'trail') ptNotice(`${PT_WHY[tag]} hit: ${label(sym)} closed at ${at}, ${usd(closedTrade.pnl, true)}`);
+  else if (tag === 'stopout') ptNotice(`Margin call: your ${label(sym)} position was closed at ${at}, ${usd(closedTrade.pnl, true)}`, 'warn');
+  else ptNotice(`Filled: ${ptSideWord(o.side)} ${q} ${label(sym)} at ${at}${closedTrade ? `, ${usd(closedTrade.pnl, true)}` : ''}`);
+  return true;
+}
+function ptNewOrder(spec, now) {
+  return { id: uid(), sym: spec.sym, side: spec.side, type: spec.type, qty: spec.qty, lim: spec.lim || null, stp: spec.stp || null, tp: spec.tp || null, sl: spec.sl || null, trail: spec.trail || null,
+    tif: spec.tif === 'day' && spec.type !== 'market' ? 'day' : 'gtc', exp: spec.tif === 'day' && spec.type !== 'market' ? ptDayEnd(spec.sym, now) : null,
+    st: 'working', at: now, upd: now, fill: null, fillAt: null, why: '', trig: false, tag: spec.tag || null };
+}
+// Check working orders and the position's stops for one symbol at a price. `path` means the price moved there
+// smoothly from the last check (price history), so orders fill exactly at their price instead of at the market.
+function ptEval(sym, q, when, path) {
+  const a = PT.a; let changed = false;
+  for (const o of a.ord.slice()) {
+    if (o.sym !== sym || o.st !== 'working' || o.at > when) continue;
+    const buy = o.side === 'buy', mk = buy ? q.ask : q.bid;
+    const limitFill = lim => (buy ? mk <= lim : mk >= lim) ? (path ? lim : buy ? Math.min(lim, mk) : Math.max(lim, mk)) : null;
+    let px = null;
+    if (o.type === 'market') px = mk;
+    else if (o.type === 'limit' || (o.type === 'stoplimit' && o.trig)) px = limitFill(o.lim);
+    else if (o.type === 'stop') { if (buy ? mk >= o.stp : mk <= o.stp) px = path ? o.stp : mk; }
+    else if (o.type === 'stoplimit' && (buy ? mk >= o.stp : mk <= o.stp)) {
+      o.trig = true; o.upd = when; changed = true; ptLog(`Triggered: ${ptDesc(o)}. It's now a limit order.`, 'info');
+      px = limitFill(o.lim);
+    }
+    if (px != null) { ptExec(o, px, when, o.tag); changed = true; }
+  }
+  const p = a.pos.find(x => x.sym === sym);
+  if (p && p.at <= when) {
+    const long = p.qty > 0, mk = long ? q.bid : q.ask;
+    if (p.trail) { const ns = long ? mk - p.trail : mk + p.trail; if (p.sl == null || (long ? ns > p.sl : ns < p.sl)) { p.sl = ns; PT.trailMoved = PT.trailMoved || Date.now(); } }
+    let hit = null, px = null;
+    if (p.sl != null && (long ? mk <= p.sl : mk >= p.sl)) { hit = p.trail ? 'trail' : 'sl'; px = path ? p.sl : mk; }
+    else if (p.tp != null && (long ? mk >= p.tp : mk <= p.tp)) { hit = 'tp'; px = path ? p.tp : long ? Math.max(p.tp, mk) : Math.min(p.tp, mk); }
+    if (hit) { ptClosePos(p, px, when, hit); changed = true; }
+  }
+  return changed;
+}
+function ptClosePos(p, px, when, tag, qty) {
+  const o = ptNewOrder({ sym: p.sym, side: p.qty > 0 ? 'sell' : 'buy', type: 'market', qty: qty || Math.abs(p.qty), tag }, when);
+  PT.a.ord.push(o); ptExec(o, px, when, tag); return o;
+}
+function ptMarginCheck(when) {   // below half the margin in use, the biggest losers are closed (a margin call)
+  for (let guard = 0; guard < 50; guard++) {
+    const m = ptMetrics(); if (!(m.margin > 0) || m.equity >= m.margin * 0.5) return false;
+    const r = m.rows.filter(x => x.q && ptCanFill(x.p.sym)).sort((x, y) => x.pl - y.pl)[0]; if (!r) return false;
+    ptLog(`Margin call: equity ${usd(m.equity)} fell below half the margin in use (${usd(m.margin)}).`, 'warn');
+    ptClosePos(r.p, r.p.qty > 0 ? r.q.bid : r.q.ask, when, 'stopout');
+  }
+  return true;
+}
+function ptDayEnd(id, now) {   // when a Day order expires: the end of today's session
+  const cls = classOf(id);
+  if (cls === 'crypto') { const d = new Date(now); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1); }
+  const p = ny(now / 1000);
+  if (cls === 'stock') {
+    let y = p.y, m = p.m, d = p.d;
+    const close = () => nyTime(y, m, d, 16, 0) * 1000;
+    let guard = 0;
+    while ((isWeekendYMD(y, m, d) || close() <= now) && guard++ < 10) { const x = new Date(Date.UTC(y, m - 1, d + 1)); y = x.getUTCFullYear(); m = x.getUTCMonth() + 1; d = x.getUTCDate(); }
+    return close();
+  }
+  let t = nyTime(p.y, p.m, p.d, 17, 0) * 1000; if (t <= now) t += 864e5; return t;
+}
+function ptExpire(now) {
+  let n = 0;
+  for (const o of PT.a.ord) if (o.st === 'working' && o.exp && o.exp <= now) { o.st = 'cancelled'; o.upd = now; o.why = 'Expired at the end of the day'; n++; ptLog(`Expired: ${ptDesc(o)} (Day order).`, 'cancel'); }
+  return n;
+}
+function ptJournal(h, p) {
+  if (!PT.a.set.journal || !PT.leader) return;   // only the tab that runs the account writes to the journal
+  const t = jClean({ symbol: h.sym, side: h.side, opened_at: new Date(h.at).toISOString(), closed_at: new Date(h.end).toISOString(), entry: h.entry, exit: h.exit, qty: h.qty, fees: Math.round(h.fees * 100) / 100,
+    stop: p.sl || null, target: p.tp || null, pnl: Math.round(h.pnl * 100) / 100, strategy: 'Paper trading', tags: ['Paper'], notes: `Paper trade. ${PT_WHY[h.why] || 'Closed'}.` });
+  if (!t) return;
+  const go = (tries) => { if (!JR.loaded) { if (tries < 20) setTimeout(() => go(tries + 1), 1500); return; } jInsert([t]).then(() => Journal.changed()).catch(() => {}); };
+  go(0);
+}
+function ptTrim() {
+  const a = PT.a, working = a.ord.filter(o => o.st === 'working'), done = a.ord.filter(o => o.st !== 'working').sort((x, y) => x.upd - y.upd).slice(-PT_KEEP.done);
+  a.ord = working.concat(done).sort((x, y) => x.at - y.at);
+  a.hist = a.hist.slice(-PT_KEEP.hist); a.log = a.log.slice(-PT_KEEP.log);
+}
+function ptStats() {
+  const h = PT.a.hist; let w = 0, l = 0, gw = 0, gl = 0;
+  h.forEach(x => { if (x.pnl > 0) { w++; gw += x.pnl; } else if (x.pnl < 0) { l++; gl += x.pnl; } });
+  return { n: h.length, win: h.length ? w / h.length : null, pf: gl < 0 ? gw / -gl : gw > 0 ? Infinity : null, net: h.reduce((s, x) => s + x.pnl, 0) };
+}
+
+// ----- placing, changing and cancelling -----
+function ptCheckOrder(spec) {   // returns a reason the order can't be placed, or ''
+  const id = spec.sym, q = ptQuote(id);
+  if (R.on) return 'Trading is paused during bar replay. Go back to live prices to trade.';
+  if (!ptLive(id)) return srcOf(id) === 'demo' ? `${label(id)} isn't live on RealChart right now, so it can't be traded.` : `Waiting for a live price for ${label(id)}…`;
+  if (!q) return `Waiting for a live price for ${label(id)}…`;
+  if (!(spec.qty > 0)) return 'Enter a quantity.';
+  if (spec.qty < ptStep(id) - 1e-12) return `The smallest quantity for ${label(id)} is ${ptFmtQty(id, ptStep(id))}.`;
+  const buy = spec.side === 'buy', mk = buy ? q.ask : q.bid;
+  if (['limit', 'stoplimit'].includes(spec.type) && !(spec.lim > 0)) return 'Enter a limit price.';
+  if (['stop', 'stoplimit'].includes(spec.type) && !(spec.stp > 0)) return 'Enter a stop price.';
+  if (spec.type === 'stop' || spec.type === 'stoplimit') { if (buy ? spec.stp <= mk : spec.stp >= mk) return `A ${buy ? 'buy' : 'sell'} stop must be ${buy ? 'above' : 'below'} the current price (${ptPx(id, mk)}).`; }
+  const ref = spec.type === 'market' ? mk : spec.type === 'stop' ? spec.stp : spec.lim;
+  if (spec.tp != null && (buy ? spec.tp <= ref : spec.tp >= ref)) return `Take profit must be ${buy ? 'above' : 'below'} the entry price (${ptPx(id, ref)}).`;
+  if (spec.sl != null && (buy ? spec.sl >= ref : spec.sl <= ref)) return `Stop loss must be ${buy ? 'below' : 'above'} the entry price (${ptPx(id, ref)}).`;
+  return '';
+}
+function ptPlace(spec) {
+  const err = ptCheckOrder(spec); if (err) { toast(err); return null; }
+  const now = Date.now(), o = ptNewOrder(spec, now);
+  PT.a.ord.push(o); ptLog(`Placed: ${ptDesc(o)}${o.tif === 'day' ? ' (Day)' : ''}.`, 'info'); ptRememberQty(o.sym, o.qty);
+  if (PT.leader && ptCanFill(o.sym)) { const q = ptQuote(o.sym); if (q) ptEval(o.sym, q, now, false); }
+  if (o.st === 'working') toast(o.type === 'market' ? (openNow(o.sym) ? `Order sent: ${ptDesc(o)}` : `${label(o.sym)}'s market is closed. Your order fills when it opens.`) : `Order placed: ${ptDesc(o)}`);
+  Paper.changed(); return o;
+}
+function ptCancel(o, why) {
+  if (!o || o.st !== 'working') return;
+  o.st = 'cancelled'; o.upd = Date.now(); o.why = why || 'Cancelled by you'; ptLog(`Cancelled: ${ptDesc(o)}.`, 'cancel');
+}
+function ptCloseNow(p, qty, tag) {   // close all or part of a position at the market
+  if (!ptLive(p.sym)) { toast(`${label(p.sym)} isn't live right now, so the position can't be closed.`); return; }
+  if (PT.a.ord.some(o => o.st === 'working' && o.sym === p.sym && o.type === 'market' && (o.tag === 'close' || o.tag === 'reverse'))) { toast(`A closing order for ${label(p.sym)} is already waiting for the market to open.`); return; }
+  const now = Date.now();
+  const o = ptNewOrder({ sym: p.sym, side: p.qty > 0 ? 'sell' : 'buy', type: 'market', qty: qty || Math.abs(p.qty), tag: tag || 'close' }, now);
+  PT.a.ord.push(o);
+  if (ptCanFill(p.sym)) { const q = ptQuote(p.sym); ptExec(o, p.qty > 0 ? q.bid : q.ask, now, o.tag); }
+  else toast(`${label(p.sym)}'s market is closed. The position closes when it opens.`);
+  Paper.changed();
+}
+function ptReverse(p) {
+  if (!ptCanFill(p.sym)) { toast(`${label(p.sym)} can't be traded right now${ptLive(p.sym) ? ': its market is closed' : ''}.`); return; }
+  const now = Date.now(), q = ptQuote(p.sym), side = p.qty > 0 ? 'sell' : 'buy', qty = ptFix(p.sym, Math.abs(p.qty) * 2);
+  const o = ptNewOrder({ sym: p.sym, side, type: 'market', qty, tag: 'reverse' }, now);
+  PT.a.ord.push(o); ptExec(o, side === 'buy' ? q.ask : q.bid, now, 'reverse'); Paper.changed();
+}
+function ptMark(p) { const q = ptQuote(p.sym); return q ? (p.qty > 0 ? q.bid : q.ask) : p.avg; }
+function ptBracketErr(p, kind, v) {   // a position's take profit and stop loss must sit on the right side of the price
+  if (v == null) return '';
+  const long = p.qty > 0, mk = ptMark(p);
+  if (kind === 'tp' && (long ? v <= mk : v >= mk)) return `Take profit must be ${long ? 'above' : 'below'} the current price (${ptPx(p.sym, mk)}).`;
+  if (kind === 'sl' && (long ? v >= mk : v <= mk)) return `Stop loss must be ${long ? 'below' : 'above'} the current price (${ptPx(p.sym, mk)}).`;
+  return '';
+}
+// trailOn: the stop follows the price at its current distance from it
+function ptSetBrackets(p, tp, sl, trailOn) {
+  const err = ptBracketErr(p, 'tp', tp) || ptBracketErr(p, 'sl', sl); if (err) return err;
+  p.tp = tp || null; p.sl = sl || null; p.trail = trailOn && sl ? Math.abs(ptMark(p) - sl) : null;
+  ptLog(`${label(p.sym)} position: take profit ${p.tp ? ptPx(p.sym, p.tp) : 'none'}, stop loss ${p.sl ? ptPx(p.sym, p.sl) + (p.trail ? ' (trailing)' : '') : 'none'}.`, 'info');
+  return '';
+}
+
+// ----- the account object the rest of the page talks to -----
+const Paper = {
+  boot() {
+    window.addEventListener('storage', e => {   // another tab changed the account
+      if (e.key !== NS + 'paper') return;
+      PT.a = ptClean(store.get('paper', null));
+      if (this.relevantSet()) ensureTickerSubs();
+      let changed = false;
+      if (PT.leader) for (const s of PT.relevant) if (ptCanFill(s) && !PT.catching.has(s)) { const q = ptQuote(s); if (q && ptEval(s, q, Date.now(), false)) changed = true; }
+      if (changed) this.changed(); else { this.refresh(); syncTradeMarks(); }
+    });
+    // Only one tab runs the account (fills orders), so two open tabs never fill the same order twice.
+    try {
+      if (navigator.locks && navigator.locks.request) navigator.locks.request('realchart-paper', () => new Promise(() => { PT.leader = true; if (S.ready) this.catchUp(); }));
+      else PT.leader = true;
+    } catch (e) { PT.leader = true; }
+    setInterval(() => this.tick(), 1000);
+    ptUiInit(); this.refresh();
+  },
+  ready() { this.relevantSet(); if (PT.leader) this.catchUp(); ptQtSync(); },
+  relevantSet() {
+    const s = new Set(); PT.a.pos.forEach(p => { s.add(p.sym); const cs = ptConvSym(quoteCcy(p.sym)); if (cs) s.add(cs.id); });
+    PT.a.ord.forEach(o => { if (o.st === 'working') s.add(o.sym); });
+    const before = [...PT.relevant].sort().join(); PT.relevant = s;
+    return before !== [...s].sort().join();
+  },
+  symbols() { return [...PT.relevant]; },
+  onPrice(sym) {
+    if (sym === S.symbol) ptQtSync();
+    if (!PT.relevant.has(sym)) return;
+    if (PT.leader && !PT.catching.has(sym) && ptCanFill(sym)) { const q = ptQuote(sym); if (q && ptEval(sym, q, Date.now(), false)) { this.changed(); return; } }
+    if (sym === S.symbol && PT.a.pos.some(p => p.sym === sym)) markDirty();
+    this.ui();
+  },
+  tick() {
+    const now = Date.now();
+    if (PT.leader && S.ready) {
+      let changed = ptExpire(now) > 0;
+      if (ptMarginCheck(now)) changed = true;
+      if (changed) this.changed();
+      else if (PT.trailMoved && now - PT.trailMoved > 8000) { PT.trailMoved = 0; this.save(); }
+      if (!PT.catching.size && (!this.seenAt || now - this.seenAt > 10000)) { this.seenAt = now; store.raw('ptSeen', now); }
+    }
+    ptQtSync();
+  },
+  async catchUp() {   // orders and stops that would have filled while the page was closed
+    if (this.caught) return; this.caught = true;
+    const seen = +store.get('ptSeen', 0), now = Date.now();
+    if (!(seen > 0) || now - seen < 60000) return;
+    const syms = new Set();
+    PT.a.ord.forEach(o => { if (o.st === 'working' && o.type !== 'market' && o.at < now) syms.add(o.sym); });
+    PT.a.pos.forEach(p => { if (p.tp || p.sl || p.trail) syms.add(p.sym); });
+    const done0 = PT.a.ord.filter(o => o.st === 'filled').length;
+    for (const sym of syms) {
+      if (srcOf(sym) === 'demo') continue;
+      PT.catching.add(sym);
+      try {
+        const gap = (now - seen) / 1000, tf = gap <= 15 * 3600 ? '1m' : gap <= 9 * DAY ? '15m' : '1h', step = tfOf(tf).sec;
+        const bars = await feedFor(sym).klines(sym, tf);
+        for (const b of bars) {
+          const t0 = b.time * 1000;
+          if (t0 < seen || t0 + step * 1000 > now) continue;   // only bars that started after the page was last open and have finished
+          const pts = b.close >= b.open ? [b.open, b.low, b.high, b.close] : [b.open, b.high, b.low, b.close];
+          pts.forEach((px, i) => ptEval(sym, { bid: px, ask: px, last: px }, t0 + i * step * 250, i > 0));
+        }
+      } catch (e) { /* that market's history isn't available; its live prices take over */ }
+      PT.catching.delete(sym);
+    }
+    const n = PT.a.ord.filter(o => o.st === 'filled').length - done0;
+    if (n) { ptLog(`While RealChart was closed, ${n} order${n === 1 ? '' : 's'} filled from the price history.`, 'info'); toast(`While you were away, ${n} paper order${n === 1 ? '' : 's'} filled. See the Orders tab.`); this.changed(); }
+    store.raw('ptSeen', Date.now());
+  },
+  save() { ptTrim(); store.set('paper', PT.a); },
+  changed() {   // after anything in the account changed
+    this.save();
+    if (this.relevantSet()) ensureTickerSubs();
+    this.refresh(); syncTradeMarks();
+  },
+  refresh() { this.relevantSet(); ptRenderPanel(true); ptQtSync(); ptTicketLive(); markDirty(); },
+  ui() { if (!PT.uiT) PT.uiT = setTimeout(() => { PT.uiT = 0; ptRenderPanel(false); ptTicketLive(); }, 250); },
+  draw(m, W, H) { ptDraw(m, W, H); },
+  pointerDown(e, x, y) { return ptPointerDown(e, x, y); },
+  marks() {   // executions on the chart
+    if (!PT.a.set.exec || R.on) return [];
+    return PT.a.ord.filter(o => o.st === 'filled' && o.sym === S.symbol && o.fillAt).map(o => ({ at: o.fillAt / 1000, buy: o.side === 'buy', text: `${ptSideWord(o.side)} ${ptFmtQty(o.sym, o.qty)}` }));
+  },
+  hotkey(side) { ptTicket({ sym: S.symbol, side }); },
+};
+
+// ----- quick trade buttons on the chart -----
+function ptQtSync() {
+  const box = $('#qt'); if (!box) return;
+  const id = S.symbol, show = S.ready && PT.a.set.qt && !R.on && curView() === 'chart';
+  box.hidden = !show; wrap.classList.toggle('qt-on', show);
+  if (!show) return;
+  const live = ptLive(id), q = ptQuote(id);
+  box.classList.toggle('off', !live);
+  box.title = live ? (PT.a.set.one ? 'One-click trading is on: Buy and Sell place market orders straight away' : 'Paper trading: click Buy or Sell to open an order') : `${label(id)} isn't live right now, so it can't be traded`;
+  $('#qtBid').textContent = q ? ptPx(id, q.bid) : '—'; $('#qtAsk').textContent = q ? ptPx(id, q.ask) : '—';
+  const sp = q ? q.ask - q.bid : 0;
+  $('#qtSpread').textContent = q && sp > 0 ? (sp / ptPip(id)).toFixed(classOf(id) === 'forex' && !CFD[id] ? 1 : 0) : '';
+  const qi = $('#qtQty');
+  if (qi.dataset.sym !== id) { qi.dataset.sym = id; qi.value = ptFmtQty(id, ptDefQty(id)).replace(/,/g, ''); }
+  try { const w = chart.priceScale('right').width(); if (w && box.dataset.w !== String(w)) { box.dataset.w = String(w); box.style.right = (w + 10) + 'px'; } } catch (e) { /* keep the CSS default */ }
+}
+function ptQtQty() { const v = ptNum($('#qtQty').value); return v > 0 ? ptRoundQty(S.symbol, v) : ptDefQty(S.symbol); }
+function ptQuick(side) {
+  const id = S.symbol, qty = ptQtQty();
+  if (PT.a.set.one && ptLive(id)) ptPlace({ sym: id, side, type: 'market', qty });
+  else ptTicket({ sym: id, side, qty });
+}
+
+// ----- the order ticket -----
+function ptTicket(opts) {
+  const id = opts.sym || S.symbol;
+  const t = PT.t = { mode: opts.mode || 'new', sym: id, side: opts.side || 'buy', type: opts.type || 'market', oid: opts.oid || null, pid: opts.pid || null };
+  const dlg = $('#ordDlg'), o = t.oid ? PT.a.ord.find(x => x.id === t.oid) : null, p = t.pid ? PT.a.pos.find(x => x.id === t.pid) : null;
+  if (t.mode === 'modify' && !o) return; if (t.mode === 'pos' && !p) return;
+  dlg.dataset.mode = t.mode;
+  $('#oTitle').textContent = t.mode === 'modify' ? `Modify order · ${label(id)}` : t.mode === 'pos' ? `${label(id)} position` : label(id);
+  $('#oName').textContent = nameOf(id);
+  const q = ptQuote(id), px = q ? q.last : null, prec = px ? precFor(id, px) : 2;
+  const setPx = (sel, v) => { $(sel).value = v != null ? Number(v).toFixed(prec) : ''; };
+  if (o) { t.side = o.side; t.type = o.type; setPx('#oLim', o.lim); setPx('#oStop', o.stp); $('#oQty').value = String(o.qty); $('#oTif').value = o.tif; }
+  else if (p) { t.side = p.qty > 0 ? 'buy' : 'sell'; $('#oQty').value = String(Math.abs(p.qty)); $('#oPartQty').value = String(ptRoundQty(id, Math.abs(p.qty) / 2) || Math.abs(p.qty)); }
+  else {
+    $('#oQty').value = String(opts.qty || ptDefQty(id)); $('#oTif').value = 'gtc';
+    const base = opts.price || px;
+    if (base) { const gap = opts.price ? 0 : base * 0.005, buy = t.side === 'buy';
+      setPx('#oLim', opts.price || (t.type === 'stoplimit' ? base + (buy ? 2 : -2) * gap : base + (buy ? -gap : gap)));
+      setPx('#oStop', opts.price || base + (buy ? gap : -gap)); }
+  }
+  const tp = o ? o.tp : p ? p.tp : null, sl = o ? o.sl : p ? p.sl : null, trail = o ? o.trail : p ? p.trail : null;
+  $('#oTpOn').checked = tp != null; $('#oSlOn').checked = sl != null; $('#oTrail').checked = !!trail;
+  ['#oTpMode', '#oSlMode'].forEach(x => { $(x).value = 'price'; $(x).dataset.prev = 'price'; }); setPx('#oTp', tp); setPx('#oSl', sl);
+  $('#oRiskOn').checked = false;
+  {   // ready-made take profit and stop loss where there's none yet: 2:1, sized to how much the market usually moves
+    const ref = p ? ptMark(p) : ptTicketRef(), c = catOf(id), r = (c === 'forex' && !/^X(AU|AG)\//.test(rawOf(id)) ? 0.25 : c === 'bond' ? 0.2 : c === 'crypto' ? 1 : 0.5) / 100, b = t.side === 'buy' ? 1 : -1;
+    if (ref) { if (tp == null) setPx('#oTp', ref * (1 + 2 * r * b)); if (sl == null) setPx('#oSl', ref * (1 - r * b)); }
+  }
+  $('#oUnit').textContent = { forex: CFD[id] ? 'units' : 'units', stock: 'shares', fund: 'shares', crypto: splitSym(rawOf(id))[0] || 'coins' }[catOf(id)] || 'units';
+  t.touched = { tp: !!tp, sl: !!sl }; t.ref = ptTicketRef();
+  ptTicketRender();
+  if (!dlg.open) {
+    if (matchMedia('(max-width: 880px)').matches) { dlg.style.left = dlg.style.top = ''; dlg.showModal(); }
+    else { const at = store.get('ptDlgAt', null); dlg.show(); if (at && at.l >= 0 && at.t >= 0 && at.l < innerWidth - 120 && at.t < innerHeight - 120) { dlg.style.left = at.l + 'px'; dlg.style.top = at.t + 'px'; } }
+  }
+  setTimeout(() => { const f = t.mode === 'pos' ? $('#oTp') : ['limit', 'stoplimit'].includes(t.type) ? $('#oLim') : t.type === 'stop' ? $('#oStop') : $('#oQty'); if (f && !f.disabled) f.focus({ preventScroll: true }); }, 30);
+}
+function ptTicketRef() {   // the entry price the brackets are measured from
+  const t = PT.t; if (!t) return null;
+  if (t.mode === 'pos') { const p = PT.a.pos.find(x => x.id === t.pid); return p ? p.avg : null; }
+  const q = ptQuote(t.sym);
+  if (t.type === 'market') return q ? (t.side === 'buy' ? q.ask : q.bid) : null;
+  if (t.type === 'stop') return ptNum($('#oStop').value);
+  return ptNum($('#oLim').value);
+}
+function ptFollowRef() {   // the take profit and stop loss move with the entry price until you set them yourself
+  const t = PT.t; if (!t || t.mode === 'pos') return;
+  const ref = ptTicketRef(); if (!(ref > 0)) return;
+  if (t.ref > 0 && ref !== t.ref) ['tp', 'sl'].forEach(w => {
+    if (t.touched[w] || $(w === 'tp' ? '#oTpMode' : '#oSlMode').value !== 'price') return;
+    const inp = $(w === 'tp' ? '#oTp' : '#oSl'), v = ptNum(inp.value); if (v > 0) inp.value = (v + ref - t.ref).toFixed(precFor(t.sym, ref));
+  });
+  t.ref = ref;
+}
+function ptBracketPrice(which) {   // the take-profit or stop-loss price from what's typed, in whichever unit
+  const t = PT.t, on = $(which === 'tp' ? '#oTpOn' : '#oSlOn').checked; if (!on) return null;
+  const v = ptNum($(which === 'tp' ? '#oTp' : '#oSl').value), mode = $(which === 'tp' ? '#oTpMode' : '#oSlMode').value, ref = ptTicketRef();
+  if (v == null || !(v > 0)) return NaN;
+  if (mode === 'price') return v;
+  if (!ref) return NaN;
+  const dir = (t.side === 'buy' ? 1 : -1) * (which === 'tp' ? 1 : -1);
+  if (mode === 'pips') return ref + dir * v * ptPip(t.sym);
+  if (mode === 'pct') return ref * (1 + dir * v / 100);
+  if (which === 'sl' && t.mode === 'new' && $('#oRiskOn').checked) return NaN;   // sizing by risk needs the stop as a price, pips or %, not dollars
+  const qty = ptTicketQty(true); if (!(qty > 0)) return NaN;
+  return ref + dir * v / (qty * ptConv(t.sym));
+}
+function ptTicketQty(raw) {
+  const t = PT.t; if (!t) return null;
+  if (t.mode === 'new' && $('#oRiskOn').checked) {
+    const sl = ptBracketPrice('sl'), ref = ptTicketRef(), r = ptNum($('#oRisk').value);
+    if (!(sl > 0) || !ref || !(r > 0) || sl === ref) return null;
+    const risk = $('#oRiskMode').value === 'pct' ? ptMetrics().equity * r / 100 : r;
+    return ptRoundQty(t.sym, risk / (Math.abs(ref - sl) * ptConv(t.sym)));
+  }
+  const v = ptNum($('#oQty').value); if (!(v > 0)) return null;
+  return raw ? v : ptRoundQty(t.sym, v);
+}
+function ptTicketSpec() {
+  const t = PT.t, spec = { sym: t.sym, side: t.side, type: t.type, qty: ptTicketQty(), tif: $('#oTif').value };
+  if (['limit', 'stoplimit'].includes(t.type)) spec.lim = ptNum($('#oLim').value);
+  if (['stop', 'stoplimit'].includes(t.type)) spec.stp = ptNum($('#oStop').value);
+  const tp = ptBracketPrice('tp'), sl = ptBracketPrice('sl'), ref = ptTicketRef();
+  if (tp != null) spec.tp = tp; if (sl != null) spec.sl = sl;
+  if (sl != null && $('#oTrail').checked && ref && sl > 0) spec.trail = Math.abs(ref - sl);
+  return spec;
+}
+function ptTicketRender() {
+  const t = PT.t; if (!t) return;
+  const dlg = $('#ordDlg'), pos = t.mode === 'pos', mod = t.mode === 'modify';
+  dlg.querySelectorAll('#oSide .o-sb').forEach(b => { const on = b.dataset.side === t.side; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); b.disabled = mod || pos; });
+  dlg.querySelectorAll('#oType .btn').forEach(b => { const on = b.dataset.type === t.type; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); b.disabled = mod && !on; });
+  $('#oType').hidden = pos; $('#oSide').hidden = pos;
+  $('#oLimRow').hidden = pos || !['limit', 'stoplimit'].includes(t.type);
+  $('#oStopRow').hidden = pos || !['stop', 'stoplimit'].includes(t.type);
+  $('#oTifRow').hidden = pos || t.type === 'market';
+  $('#oQtyRow').hidden = pos; $('#oRiskWrap').hidden = pos || mod;
+  $('#oPart').hidden = !pos; $('#oBe').hidden = !pos;
+  const risk = !pos && !mod && $('#oRiskOn').checked; $('#oRiskRow').hidden = !risk; $('#oQty').disabled = risk;
+  if (risk && !$('#oSlOn').checked) { $('#oSlOn').checked = true; }
+  $('#oTpRow').hidden = !$('#oTpOn').checked; $('#oSlRow').hidden = !$('#oSlOn').checked;
+  const pn = ptPipName(t.sym); dlg.querySelectorAll('option[value="pips"]').forEach(op => { op.textContent = pn === 'pips' ? 'Pips' : 'Ticks'; });
+  ptTicketLive();
+}
+function ptTicketLive() {   // prices, estimates and the summary; runs as prices move
+  const t = PT.t, dlg = $('#ordDlg'); if (!t || !dlg.open) return;
+  const id = t.sym, q = ptQuote(id), conv = ptConv(id), m = ptMetrics();
+  $('#oBid').textContent = q ? ptPx(id, q.bid) : '—'; $('#oAsk').textContent = q ? ptPx(id, q.ask) : '—';
+  const sp = q ? q.ask - q.bid : 0; $('#oSpread').textContent = q && sp > 0 ? `${(sp / ptPip(id)).toFixed(1)} ${ptPipName(id)}` : '';
+  const ref = ptTicketRef(), qty = t.mode === 'pos' ? Math.abs((PT.a.pos.find(x => x.id === t.pid) || { qty: 0 }).qty) : ptTicketQty();
+  if (t.mode === 'new' && $('#oRiskOn').checked) { $('#oQty').value = qty ? String(qty) : ''; $('#oRiskInfo').textContent = qty ? `${ptFmtQty(id, qty)} ${$('#oUnit').textContent}` : 'Set a stop loss to size by risk'; }
+  const est = (which, el) => {
+    const pr = ptBracketPrice(which); el.textContent = '';
+    if (pr == null) return;
+    if (!(pr > 0) || !ref || !qty) { el.textContent = '—'; return; }
+    const dir = t.side === 'buy' ? 1 : -1, pnl = (pr - ref) * qty * dir * conv;
+    el.textContent = `${$(which === 'tp' ? '#oTpMode' : '#oSlMode').value === 'price' ? '' : 'at ' + ptPx(id, pr) + ' · '}${usd(pnl, true)} · ${fmtPct(((pr - ref) / ref) * 100 * dir)}`;
+    el.className = 'o-est ' + (pnl >= 0 ? 'up-t' : 'dn-t');
+  };
+  est('tp', $('#oTpEst')); est('sl', $('#oSlEst'));
+  const sum = $('#oSum'); sum.replaceChildren();
+  const row = (k, v, cls) => { const d = el('div'); d.append(el('dt', null, k), el('dd', cls || null, v)); sum.append(d); };
+  let err = '';
+  if (t.mode === 'pos') {
+    const p = PT.a.pos.find(x => x.id === t.pid); if (!p) { dlg.close(); return; }
+    const r = m.rows.find(x => x.p === p);
+    row('Entry price', ptPx(id, p.avg)); row('Open P&L', usd(r.pl, true), r.pl >= 0 ? 'up-t' : 'dn-t');
+    const tp = ptBracketPrice('tp'), sl = ptBracketPrice('sl');
+    if (tp > 0 && sl > 0) row('Reward to risk', (Math.abs(tp - p.avg) / Math.abs(p.avg - sl)).toFixed(2));
+    err = Number.isNaN(tp) ? 'Enter a take profit, or untick it.' : Number.isNaN(sl) ? 'Enter a stop loss, or untick it.' : ptBracketErr(p, 'tp', tp) || ptBracketErr(p, 'sl', sl);
+    $('#oGo').textContent = 'Save'; $('#oGo').className = 'primary o-go';
+  } else {
+    const spec = ptTicketSpec(), value = qty && ref ? qty * ref * conv : null, lev = ptLev(id);
+    row('Order value', value ? usd(value) : '—'); row('Margin needed', value ? `${usd(value / lev)} (1:${lev})` : '—'); row('Available', usd(m.avail));
+    if (PT.a.set.comm) row('Commission', value ? usd(value * PT.a.set.comm / 100) : '—');
+    if (spec.tp > 0 && spec.sl > 0 && ref) row('Reward to risk', (Math.abs(spec.tp - ref) / Math.abs(ref - spec.sl)).toFixed(2));
+    const riskUsd = t.mode === 'new' && $('#oRiskOn').checked && $('#oSlMode').value === 'usd';
+    err = riskUsd ? 'When sizing by risk, set the stop loss as a price, pips or %.'
+      : Number.isNaN(spec.tp) ? 'Enter a take profit, or untick it.' : Number.isNaN(spec.sl) ? 'Enter a stop loss, or untick it.'
+      : t.mode === 'modify' ? ptCheckModify(spec) : ptCheckOrder(spec);
+    if (!err && t.mode === 'new' && value) {
+      const p = PT.a.pos.find(x => x.sym === id), dq = t.side === 'buy' ? qty : -qty, old = p ? p.qty : 0;
+      const adds = !old || Math.sign(old) === Math.sign(dq) || Math.abs(dq) > Math.abs(old);
+      if (adds && value / lev > m.avail + (p && Math.sign(old) !== Math.sign(dq) ? Math.abs(old) * ref * conv / lev : 0)) err = `Not enough margin: this needs ${usd(value / lev)} and ${usd(Math.max(0, m.avail))} is available. Lower the quantity, or raise leverage in the Account tab.`;
+    }
+    const word = t.mode === 'modify' ? 'Modify order' : `${ptSideWord(t.side)} ${qty ? ptFmtQty(id, qty) : ''} ${t.type === 'market' ? 'at market' : PT_TYPES[t.type].toLowerCase()}`;
+    $('#oGo').textContent = word.replace(/\s+/g, ' ').trim(); $('#oGo').className = 'o-go ' + t.side;
+  }
+  const w = $('#oWarn'); w.hidden = !err; w.textContent = err; $('#oGo').disabled = !!err;
+}
+function ptCheckModify(spec) {
+  const o = PT.a.ord.find(x => x.id === PT.t.oid); if (!o || o.st !== 'working') return 'This order is no longer working.';
+  return ptCheckOrder(o.trig ? Object.assign({}, spec, { type: 'limit' }) : spec);   // a triggered stop limit is a limit order now
+}
+function ptTicketSubmit() {
+  const t = PT.t; if (!t) return;
+  if (t.mode === 'pos') {
+    const p = PT.a.pos.find(x => x.id === t.pid); if (!p) return;
+    const tp = ptBracketPrice('tp'), sl = ptBracketPrice('sl');
+    if (Number.isNaN(tp) || Number.isNaN(sl)) { toast('Check the take profit and stop loss.'); return; }
+    const err = ptSetBrackets(p, tp, sl, sl > 0 && $('#oTrail').checked); if (err) { toast(err); return; }
+    $('#ordDlg').close(); Paper.changed(); toast(`${label(p.sym)} position updated.`); return;
+  }
+  const spec = ptTicketSpec();
+  if (Number.isNaN(spec.tp) || Number.isNaN(spec.sl)) { toast('Check the take profit and stop loss.'); return; }
+  if (t.mode === 'modify') {
+    const o = PT.a.ord.find(x => x.id === t.oid), err = ptCheckModify(spec); if (err) { toast(err); return; }
+    Object.assign(o, { qty: spec.qty, lim: spec.lim || null, stp: spec.stp || null, tp: spec.tp || null, sl: spec.sl || null, trail: spec.trail || null, tif: spec.type === 'market' ? 'gtc' : spec.tif, upd: Date.now() });
+    o.exp = o.tif === 'day' ? (o.exp || ptDayEnd(o.sym, Date.now())) : null;
+    ptLog(`Modified: ${ptDesc(o)}.`, 'info'); $('#ordDlg').close();
+    if (PT.leader && ptCanFill(o.sym)) { const q = ptQuote(o.sym); if (q) ptEval(o.sym, q, Date.now(), false); }
+    Paper.changed(); toast(`Order modified: ${ptDesc(o)}`); return;
+  }
+  if (ptPlace(spec)) $('#ordDlg').close();
+}
+function ptBracketMode(which) {   // switching between price, pips, % and $ keeps the same price
+  const inp = $(which === 'tp' ? '#oTp' : '#oSl'), sel = $(which === 'tp' ? '#oTpMode' : '#oSlMode');
+  const prev = sel.dataset.prev || 'price'; sel.dataset.prev = sel.value;
+  const now = sel.value; sel.value = prev; const pr = ptBracketPrice(which); sel.value = now;
+  const t = PT.t, ref = ptTicketRef(), id = t.sym;
+  if (!(pr > 0) || !ref) { inp.value = ''; ptTicketLive(); return; }
+  const dist = Math.abs(pr - ref), qty = ptTicketQty(true) || 0;
+  inp.value = now === 'price' ? pr.toFixed(precFor(id, pr)) : now === 'pips' ? (dist / ptPip(id)).toFixed(1) : now === 'pct' ? ((dist / ref) * 100).toFixed(2) : (dist * qty * ptConv(id)).toFixed(2);
+  ptTicketLive();
+}
+function ptUiInit() {
+  const dlg = $('#ordDlg');
+  dlg.querySelectorAll('#oSide .o-sb').forEach(b => { b.onclick = () => { if (PT.t.side === b.dataset.side) return; PT.t.side = b.dataset.side; ptFlipBrackets(); PT.t.ref = ptTicketRef(); ptTicketRender(); }; });
+  dlg.querySelectorAll('#oType .btn').forEach(b => { b.onclick = () => { PT.t.type = b.dataset.type; const q = ptQuote(PT.t.sym); if (q) { const prec = precFor(PT.t.sym, q.last), g = q.last * 0.005, buy = PT.t.side === 'buy';
+    if (!ptNum($('#oLim').value)) $('#oLim').value = (q.last + (buy ? -g : g)).toFixed(prec); if (!ptNum($('#oStop').value)) $('#oStop').value = (q.last + (buy ? g : -g)).toFixed(prec); } ptFollowRef(); ptTicketRender(); }; });
+  ['#oLim', '#oStop'].forEach(s => $(s).addEventListener('input', () => { ptFollowRef(); ptTicketLive(); }));
+  ['#oTp', '#oSl'].forEach(s => $(s).addEventListener('input', () => { if (PT.t) PT.t.touched[s === '#oTp' ? 'tp' : 'sl'] = true; ptTicketLive(); }));
+  ['#oQty', '#oRisk', '#oPartQty'].forEach(s => $(s).addEventListener('input', () => ptTicketLive()));
+  { // drag the ticket by its title
+    const head = dlg.querySelector('.dlg-h'); let dr = null;
+    head.addEventListener('pointerdown', e => { if (dlg.matches(':modal') || e.target.closest('button')) return; const r = dlg.getBoundingClientRect(); dr = { x: e.clientX - r.left, y: e.clientY - r.top }; head.setPointerCapture(e.pointerId); e.preventDefault(); });
+    head.addEventListener('pointermove', e => { if (!dr) return; dlg.style.left = clamp(e.clientX - dr.x, 0, innerWidth - dlg.offsetWidth) + 'px'; dlg.style.top = clamp(e.clientY - dr.y, 0, innerHeight - 80) + 'px'; });
+    head.addEventListener('pointerup', () => { if (!dr) return; dr = null; store.raw('ptDlgAt', { l: parseInt(dlg.style.left, 10) || 0, t: parseInt(dlg.style.top, 10) || 0 }); });
+  }
+  ['#oTpOn', '#oSlOn', '#oRiskOn', '#oTrail', '#oTif', '#oRiskMode'].forEach(s => $(s).addEventListener('change', () => ptTicketRender()));
+  $('#oTpMode').addEventListener('change', () => ptBracketMode('tp')); $('#oSlMode').addEventListener('change', () => ptBracketMode('sl'));
+  $('#oForm').addEventListener('submit', e => { e.preventDefault(); ptTicketSubmit(); });
+  $('#oBe').onclick = () => { const p = PT.t && PT.a.pos.find(x => x.id === PT.t.pid); if (!p) return; $('#oSlOn').checked = true; $('#oSlMode').value = 'price'; $('#oSlMode').dataset.prev = 'price'; $('#oSl').value = p.avg.toFixed(precFor(p.sym, p.avg)); ptTicketRender(); };
+  $('#oPartGo').onclick = () => { const p = PT.a.pos.find(x => x.id === PT.t.pid), v = ptNum($('#oPartQty').value); if (!p) return; const qn = v > 0 ? ptRoundQty(p.sym, Math.min(v, Math.abs(p.qty))) : 0; if (!qn) { toast('Enter how much to close.'); return; } dlg.close(); ptCloseNow(p, qn); };
+  $('#oPartBtns').querySelectorAll('button').forEach(b => { b.onclick = () => { const p = PT.a.pos.find(x => x.id === PT.t.pid); if (p) { $('#oPartQty').value = String(ptRoundQty(p.sym, Math.abs(p.qty) * (+b.dataset.f)) || Math.abs(p.qty)); } }; });
+  dlg.addEventListener('keydown', e => { if (e.key === 'Escape' && !dlg.matches(':modal')) { e.preventDefault(); dlg.close(); } });
+  dlg.addEventListener('close', () => { PT.t = null; });
+  $('#qtBuy').onclick = () => ptQuick('buy'); $('#qtSell').onclick = () => ptQuick('sell');
+  $('#qtQty').addEventListener('change', () => { const v = ptNum($('#qtQty').value); if (v > 0) { const r = ptRoundQty(S.symbol, v) || ptStep(S.symbol); ptRememberQty(S.symbol, r); $('#qtQty').value = String(r); } });
+  $('#qtQty').addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); });
+  $('#tradeBtn').onclick = () => ptTicket({ sym: S.symbol, side: 'buy' });
+  $('#tpTrade').onclick = () => ptTicket({ sym: S.symbol, side: 'buy' });
+  $('#tpFold').onclick = () => ptSetOpen(!PT.open);
+  $('#tp').querySelectorAll('.tp-tab').forEach(b => { b.onclick = () => { PT.tab = b.dataset.tab; store.raw('ptTab', PT.tab); ptSetOpen(true); ptRenderPanel(true); }; });
+  ptGripInit();
+  $('#ptConfirm').addEventListener('close', () => { PT.confirm = null; });
+  $('#pcGo').onclick = () => { const fn = PT.confirm; $('#ptConfirm').close(); if (fn) fn(); };
+  document.addEventListener('pointerdown', e => { const m = $('#ctxMenu'); if (!m.hidden && !m.contains(e.target)) m.hidden = true; }, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#ctxMenu').hidden = true; });
+  window.addEventListener('blur', () => { $('#ctxMenu').hidden = true; });
+  wrap.addEventListener('contextmenu', e => ptMenuAt(e));
+  wrap.addEventListener('pointermove', e => { if (PT.drag || e.buttons) return; const r = wrap.getBoundingClientRect(), h = ptHit(e.clientX - r.left, e.clientY - r.top); wrap.classList.toggle('pt-ns', !!h && h.part !== 'close'); wrap.classList.toggle('pt-hand', !!h && h.part === 'close'); });
+  wrap.addEventListener('pointerleave', () => wrap.classList.remove('pt-ns', 'pt-hand'));
+  ['mousedown', 'touchstart'].forEach(ev => wrap.addEventListener(ev, e => { if (PT.drag) e.stopPropagation(); }, { capture: true, passive: true }));
+  window.addEventListener('touchmove', e => { if (PT.drag) e.preventDefault(); }, { passive: false });
+  window.addEventListener('pointermove', ptPointerMove);
+  window.addEventListener('pointerup', ptPointerUp);
+  window.addEventListener('pointercancel', () => { if (PT.drag) { PT.drag = null; markDirty(); } });
+}
+function ptFlipBrackets() {   // switching buy and sell mirrors the take profit and stop loss around the entry
+  const ref = ptTicketRef(); if (!ref) return;
+  ['tp', 'sl'].forEach(w => { const sel = $(w === 'tp' ? '#oTpMode' : '#oSlMode'), inp = $(w === 'tp' ? '#oTp' : '#oSl'); if (sel.value !== 'price') return; const v = ptNum(inp.value); if (v > 0) inp.value = (2 * ref - v).toFixed(precFor(PT.t.sym, ref)); });
+}
+function ptConfirm(title, text, go, fn, bal) {
+  $('#pcTitle').textContent = title; $('#pcText').textContent = text; $('#pcGo').textContent = go;
+  $('#pcBalWrap').hidden = !bal; if (bal) $('#pcBal').value = String(PT.a.start);
+  PT.confirm = fn; $('#ptConfirm').showModal();
+}
+
+// ----- the trading panel under the chart -----
+function ptSetOpen(on) {
+  PT.open = on; store.raw('ptOpen', on);
+  const tp = $('#tp'); tp.classList.toggle('open', on); $('#tpBody').hidden = !on; $('#tpFold').setAttribute('aria-expanded', String(on));
+  const h = +store.get('ptH', 0); if (h) tp.style.setProperty('--tp-h', h + 'px');
+  ptRenderPanel(true); requestAnimationFrame(() => { sizeOverlay(); markDirty(); });
+}
+function ptGripInit() {
+  const grip = $('#tpGrip'), tp = $('#tp'); let st = null;
+  grip.addEventListener('pointerdown', e => { st = { y: e.clientY, h: tp.getBoundingClientRect().height }; grip.setPointerCapture(e.pointerId); e.preventDefault(); });
+  grip.addEventListener('pointermove', e => { if (!st) return; const max = Math.max(160, $('.stage').getBoundingClientRect().height - 180), h = clamp(st.h + (st.y - e.clientY), 120, max); tp.style.setProperty('--tp-h', h + 'px'); });
+  grip.addEventListener('pointerup', () => { if (!st) return; st = null; store.raw('ptH', Math.round(tp.getBoundingClientRect().height)); sizeOverlay(); markDirty(); });
+}
+function ptBtn(text, cls, fn, title) { const b = el('button', cls || null, text); b.type = 'button'; if (title) { b.title = title; b.setAttribute('aria-label', title); } b.onclick = e => { e.stopPropagation(); fn(); }; return b; }
+function ptXBtn(fn, title) { const b = ptBtn('', 'x', fn, title); b.innerHTML = svg('x'); return b; }
+const ptWhen = ms => { const d = new Date(ms), today = new Date(); const same = d.toDateString() === today.toDateString(); return (same ? '' : `${d.getDate()} ${MON[d.getMonth()]} `) + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+function ptCell(tr, text, cls, f) { const td = el('td', cls || null, text); if (f) td.dataset.f = f; tr.append(td); return td; }
+function ptSymCell(tr, id) { const td = el('td', 'sym'); const b = ptBtn(label(id), null, () => { if (id !== S.symbol) setSymbol(id); }, `Show ${label(id)} on the chart`); td.append(b); tr.append(td); }
+function ptSidePill(tr, side) { const td = el('td'); td.append(el('span', 'side-pill ' + side, side === 'long' || side === 'buy' ? (side === 'buy' ? 'Buy' : 'Long') : (side === 'sell' ? 'Sell' : 'Short'))); tr.append(td); }
+function ptTable(heads) {
+  const box = el('div', 'tp-scroll'), t = el('table', 'tp-t'), thead = el('thead'), tr = el('tr');
+  heads.forEach(h => { const [txt, cls] = Array.isArray(h) ? h : [h]; tr.append(el('th', cls || null, txt)); });
+  thead.append(tr); t.append(thead, el('tbody')); box.append(t); return { box, body: t.tBodies[0] };
+}
+function ptRenderSummary(m) {
+  const sum = $('#tpSum'); sum.replaceChildren();
+  const item = (k, v, cls, lvl) => { const d = el('div', lvl ? 'l' + lvl : null); d.append(el('dt', null, k), el('dd', cls || null, v)); sum.append(d); };   // l2 and l1 make way on smaller screens
+  item('Balance', usd(PT.a.bal), null, 2); item('Equity', usd(m.equity));
+  item('Open P&L', usd(m.upl, true), m.upl > 0 ? 'up-t' : m.upl < 0 ? 'dn-t' : null);
+  item('Margin', usd(m.margin), null, 2); item('Available', usd(m.avail), m.avail < 0 ? 'dn-t' : null, 1);
+  const np = PT.a.pos.length, no = PT.a.ord.filter(o => o.st === 'working').length;
+  $('#tpNPos').textContent = np ? String(np) : ''; $('#tpNOrd').textContent = no ? String(no) : '';
+}
+function ptRenderPanel(full) {
+  const box = $('#tpBody'); if (!box) return;
+  const m = ptMetrics(); ptRenderSummary(m);
+  $('#tp').querySelectorAll('.tp-tab').forEach(b => b.setAttribute('aria-selected', String(PT.open && b.dataset.tab === PT.tab)));
+  if (!PT.open) return;
+  const a = PT.a;
+  const sig = PT.tab + '|' + PT.ordView + '|' + PT.histView + '|' + a.pos.map(p => [p.id, p.qty, p.tp, p.sl, !!p.trail].join()).join(';') + '|' + a.ord.map(o => o.id + o.st + o.trig + o.qty + o.lim + o.stp + o.tp + o.sl).join(';') + '|' + a.hist.length + '|' + a.log.length + '|' + JSON.stringify(a.set) + '|' + a.start;
+  if (!full && sig === PT.sig) { ptLiveCells(m); return; }
+  PT.sig = sig; box.replaceChildren();
+  if (PT.tab === 'pos') ptRenderPositions(box, m);
+  else if (PT.tab === 'ord') ptRenderOrders(box);
+  else if (PT.tab === 'hist') ptRenderHistory(box);
+  else ptRenderAccount(box, m);
+}
+function ptLiveCells(m) {
+  $('#tpBody').querySelectorAll('tr[data-pid]').forEach(tr => {
+    const r = m.rows.find(x => x.p.id === tr.dataset.pid); if (!r) return;
+    const set = (f, v, cls) => { const td = tr.querySelector(`[data-f="${f}"]`); if (td) { td.textContent = v; if (cls != null) td.className = 'num ' + cls; } };
+    set('last', ptPx(r.p.sym, r.mark)); set('pl', usd(r.pl, true), r.pl > 0 ? 'up-t' : r.pl < 0 ? 'dn-t' : ''); set('pct', fmtPct(r.pct), r.pct > 0 ? 'up-t' : r.pct < 0 ? 'dn-t' : ''); set('val', usd(r.value));
+  });
+  const tot = $('#tpBody [data-f="tot"]'); if (tot) { tot.textContent = usd(m.upl, true); tot.className = m.upl > 0 ? 'up-t' : m.upl < 0 ? 'dn-t' : ''; }
+}
+function ptEmpty(box, text, action) { const d = el('div', 'tp-empty'); d.append(el('p', null, text)); if (action) d.append(action); box.append(d); }
+function ptRenderPositions(box, m) {
+  if (!PT.a.pos.length) { ptEmpty(box, 'No open positions. Use Buy or Sell on the chart, or the Trade button, to open one with virtual money.', ptBtn('Place an order', 'primary', () => ptTicket({ sym: S.symbol, side: 'buy' }))); return; }
+  const bar = el('div', 'tp-bar'); const tot = el('span'); tot.append(document.createTextNode(`${PT.a.pos.length} position${PT.a.pos.length === 1 ? '' : 's'} · open P&L `)); const tv = el('b', null, ''); tv.dataset.f = 'tot'; tot.append(tv);
+  bar.append(tot, el('span', 'spacer'), ptBtn('Close all', 'ghost sm', () => ptConfirm('Close all positions?', `This closes all ${PT.a.pos.length} positions at the market price.`, 'Close all', () => { PT.a.pos.slice().forEach(p => { if (ptCanFill(p.sym)) { const q = ptQuote(p.sym); ptClosePos(p, p.qty > 0 ? q.bid : q.ask, Date.now(), 'close'); } else toast(`${label(p.sym)}: market closed, not closed.`); }); Paper.changed(); })));
+  box.append(bar);
+  const { box: tb, body } = ptTable(['Symbol', 'Side', ['Qty', 'num'], ['Avg price', 'num'], ['Last', 'num'], ['Open P&L', 'num'], ['P&L %', 'num'], ['Take profit', 'num'], ['Stop loss', 'num'], ['Value', 'num'], ['', 'act']]);
+  for (const r of m.rows) {
+    const p = r.p, tr = el('tr'); tr.dataset.pid = p.id;
+    ptSymCell(tr, p.sym); ptSidePill(tr, p.qty > 0 ? 'long' : 'short');
+    ptCell(tr, ptFmtQty(p.sym, p.qty), 'num'); ptCell(tr, ptPx(p.sym, p.avg), 'num'); ptCell(tr, '', 'num', 'last'); ptCell(tr, '', 'num', 'pl'); ptCell(tr, '', 'num', 'pct');
+    ptCell(tr, p.tp ? ptPx(p.sym, p.tp) : '—', 'num'); ptCell(tr, p.sl ? ptPx(p.sym, p.sl) + (p.trail ? ' ↗' : '') : '—', 'num').title = p.trail ? 'Trailing stop' : ''; ptCell(tr, '', 'num', 'val');
+    const acts = el('td', 'act'); const g = el('div', 'tp-acts');
+    g.append(ptBtn('TP/SL', null, () => ptTicket({ sym: p.sym, mode: 'pos', pid: p.id }), `Take profit, stop loss or close part of ${label(p.sym)}`),
+      ptBtn('Reverse', null, () => ptReverse(p), `Reverse: turn this ${p.qty > 0 ? 'long into a short' : 'short into a long'} of the same size`),
+      ptXBtn(() => ptCloseNow(p), `Close the ${label(p.sym)} position`));
+    acts.append(g); tr.append(acts); body.append(tr);
+  }
+  box.append(tb); ptLiveCells(m);
+}
+function ptStatus(o) { return o.st === 'working' ? (o.trig ? 'Triggered' : 'Working') : o.st === 'cancelled' && /^Expired/.test(o.why) ? 'Expired' : { filled: 'Filled', cancelled: 'Cancelled', rejected: 'Rejected' }[o.st]; }
+function ptRenderOrders(box) {
+  const bar = el('div', 'tp-bar'), seg = el('div', 'seg tp-seg');
+  [['working', 'Working'], ['filled', 'Filled'], ['cancelled', 'Cancelled'], ['all', 'All']].forEach(([k, t]) => { const b = ptBtn(t, 'btn' + (PT.ordView === k ? ' on' : ''), () => { PT.ordView = k; ptRenderPanel(true); }); seg.append(b); });
+  bar.append(seg, el('span', 'spacer'));
+  const working = PT.a.ord.filter(o => o.st === 'working');
+  if (working.length) bar.append(ptBtn('Cancel all', 'ghost sm', () => ptConfirm('Cancel all orders?', `This cancels ${working.length} working order${working.length === 1 ? '' : 's'}.`, 'Cancel all', () => { working.forEach(o => ptCancel(o)); Paper.changed(); })));
+  box.append(bar);
+  const list = PT.a.ord.filter(o => PT.ordView === 'all' || (PT.ordView === 'cancelled' ? o.st === 'cancelled' || o.st === 'rejected' : o.st === PT.ordView)).slice().sort((x, y) => (PT.ordView === 'working' ? x.at - y.at : y.upd - x.upd));
+  if (!list.length) { ptEmpty(box, PT.ordView === 'working' ? 'No working orders. Limit and stop orders wait here until the price reaches them.' : 'Nothing here yet.'); return; }
+  const { box: tb, body } = ptTable(['Placed', 'Symbol', 'Side', 'Type', ['Qty', 'num'], ['Limit', 'num'], ['Stop', 'num'], ['TP', 'num'], ['SL', 'num'], 'Duration', 'Status', ['Fill price', 'num'], ['', 'act']]);
+  for (const o of list) {
+    const tr = el('tr'); tr.dataset.oid = o.id;
+    ptCell(tr, ptWhen(o.at), 'muted'); ptSymCell(tr, o.sym); ptSidePill(tr, o.side);
+    ptCell(tr, o.tag && o.tag !== 'order' ? `${PT_TYPES[o.type]} · ${PT_WHY[o.tag]}` : PT_TYPES[o.type]);
+    ptCell(tr, ptFmtQty(o.sym, o.qty), 'num'); ptCell(tr, o.lim ? ptPx(o.sym, o.lim) : '—', 'num'); ptCell(tr, o.stp ? ptPx(o.sym, o.stp) : '—', 'num');
+    ptCell(tr, o.tp ? ptPx(o.sym, o.tp) : '—', 'num'); ptCell(tr, o.sl ? ptPx(o.sym, o.sl) + (o.trail ? ' ↗' : '') : '—', 'num');
+    ptCell(tr, o.type === 'market' ? '—' : o.tif === 'day' ? 'Day' : 'Until cancelled');
+    const st = ptCell(tr, ptStatus(o), 'st st-' + o.st); if (o.why) st.title = o.why;
+    ptCell(tr, o.fill ? ptPx(o.sym, o.fill) : '—', 'num');
+    const acts = el('td', 'act'); const g = el('div', 'tp-acts');
+    if (o.st === 'working') g.append(ptBtn('Modify', null, () => ptTicket({ sym: o.sym, mode: 'modify', oid: o.id }), 'Change this order'), ptXBtn(() => { ptCancel(o); Paper.changed(); }, 'Cancel this order'));
+    acts.append(g); tr.append(acts); body.append(tr);
+  }
+  box.append(tb);
+}
+function ptRenderHistory(box) {
+  const bar = el('div', 'tp-bar'), seg = el('div', 'seg tp-seg');
+  [['trades', 'Closed trades'], ['log', 'Account log']].forEach(([k, t]) => seg.append(ptBtn(t, 'btn' + (PT.histView === k ? ' on' : ''), () => { PT.histView = k; ptRenderPanel(true); })));
+  bar.append(seg, el('span', 'spacer'));
+  const st = ptStats();
+  if (PT.histView === 'trades' && st.n) bar.append(el('span', 'muted', `${st.n} trade${st.n === 1 ? '' : 's'} · ${Math.round(st.win * 100)}% won · `), (() => { const b = el('b', st.net >= 0 ? 'up-t' : 'dn-t', usd(st.net, true)); return b; })());
+  if (PT.histView === 'trades' && PT.a.set.journal && st.n) bar.append(ptBtn('Statistics in the Journal', 'ghost sm', () => { JR.f.strategy = 'Paper trading'; setView('journal', true); }));
+  box.append(bar);
+  if (PT.histView === 'log') {
+    if (!PT.a.log.length) { ptEmpty(box, 'Your account activity shows here.'); return; }
+    const ul = el('ul', 'tp-log');
+    PT.a.log.slice().reverse().forEach(l => { const li = el('li', 'k-' + l.k); li.append(el('time', null, ptWhen(l.t)), el('span', null, l.m)); ul.append(li); });
+    box.append(ul); return;
+  }
+  if (!PT.a.hist.length) { ptEmpty(box, 'Trades you close show here with their profit or loss.'); return; }
+  const { box: tb, body } = ptTable(['Closed', 'Symbol', 'Side', ['Qty', 'num'], ['Entry', 'num'], ['Exit', 'num'], ['P&L', 'num'], ['Fees', 'num'], ['Held', 'num'], 'Reason']);
+  PT.a.hist.slice().reverse().forEach(h => {
+    const tr = el('tr'); ptCell(tr, ptWhen(h.end), 'muted'); ptSymCell(tr, h.sym); ptSidePill(tr, h.side);
+    ptCell(tr, ptFmtQty(h.sym, h.qty), 'num'); ptCell(tr, ptPx(h.sym, h.entry), 'num'); ptCell(tr, ptPx(h.sym, h.exit), 'num');
+    ptCell(tr, usd(h.pnl, true), 'num ' + (h.pnl > 0 ? 'up-t' : h.pnl < 0 ? 'dn-t' : '')); ptCell(tr, h.fees ? usd(h.fees) : '—', 'num'); ptCell(tr, fmtHeld((h.end - h.at) / 1000), 'num'); ptCell(tr, PT_WHY[h.why] || '');
+    body.append(tr);
+  });
+  box.append(tb);
+}
+function ptRenderAccount(box, m) {
+  const a = PT.a, st = ptStats(), k = el('div', 'tp-kpis');
+  const tile = (key, v, cls, sub) => { const d = el('div', 'tp-tile'); d.append(el('p', 'k', key), el('p', 'v ' + (cls || ''), v)); if (sub) d.append(el('p', 's', sub)); k.append(d); };
+  tile('Equity', usd(m.equity), null, `Started with ${usd(a.start)}`);
+  tile('Balance', usd(a.bal), null, 'Cash, with closed trades');
+  tile('Realised P&L', usd(m.realized, true), m.realized > 0 ? 'up-t' : m.realized < 0 ? 'dn-t' : '', fmtPct((m.realized / a.start) * 100) + ' since the start');
+  tile('Open P&L', usd(m.upl, true), m.upl > 0 ? 'up-t' : m.upl < 0 ? 'dn-t' : '', `${a.pos.length} open position${a.pos.length === 1 ? '' : 's'}`);
+  tile('Margin in use', usd(m.margin), null, `${usd(m.avail)} available`);
+  tile('Win rate', st.win == null ? '—' : Math.round(st.win * 100) + '%', null, `${st.n} closed trade${st.n === 1 ? '' : 's'}`);
+  tile('Profit factor', st.pf == null ? '—' : st.pf === Infinity ? '∞' : st.pf.toFixed(2), null, 'Gross profit ÷ gross loss');
+  box.append(k);
+  const set = el('div', 'tp-set');
+  const lev = el('fieldset', 'tp-lev'); lev.append(el('legend', null, 'Leverage'));
+  PT_MKTS.forEach(([key, name]) => {
+    const lab = el('label'); lab.append(el('span', null, name)); const w = el('span', 'selwrap'), sel = el('select');
+    PT_LEVS.forEach(v => { const o = el('option', null, '1:' + v); o.value = String(v); sel.append(o); }); sel.value = String(a.set.lev[key]);
+    sel.onchange = () => { a.set.lev[key] = +sel.value; ptLog(`Leverage for ${name.toLowerCase()} set to 1:${sel.value}.`, 'info'); Paper.changed(); };
+    w.append(sel); lab.append(w); lev.append(lab);
+  });
+  const opts = el('fieldset', 'tp-opts'); opts.append(el('legend', null, 'Trading'));
+  const cl = el('label', 'tp-comm'); cl.append(el('span', null, 'Commission (% of each trade)'));
+  const ci = el('input', 'field'); ci.inputMode = 'decimal'; ci.value = String(a.set.comm); ci.setAttribute('aria-label', 'Commission percent');
+  ci.onchange = () => { const v = ptNum(ci.value); if (v == null || v < 0 || v > 5) { toast('Commission must be between 0 and 5%.'); ci.value = String(a.set.comm); return; } a.set.comm = v; Paper.changed(); };
+  cl.append(ci); opts.append(cl);
+  [['qt', 'Show Buy and Sell buttons on the chart'], ['one', 'One-click trading (the chart buttons place market orders straight away)'], ['lines', 'Show positions and orders on the chart'], ['exec', 'Show executions on the chart'], ['sound', 'Sound when an order fills'], ['journal', 'Add closed trades to the Journal (tagged Paper)']].forEach(([key, text]) => {
+    const lab = el('label', 'tp-chk'), cb = el('input'); cb.type = 'checkbox'; cb.checked = !!a.set[key];
+    cb.onchange = () => { a.set[key] = cb.checked; Paper.changed(); };
+    lab.append(cb, el('span', null, text)); opts.append(lab);
+  });
+  const reset = el('div', 'tp-reset');
+  reset.append(el('p', 'fine', 'Paper trading uses virtual money on live prices. Orders fill while RealChart is open; when you come back, orders and stops that would have filled while it was closed are filled from the price history. Real trading can fill differently (slippage, spreads, partial fills).'),
+    ptBtn('Reset account…', 'danger', () => ptConfirm('Reset paper account', 'This closes all positions, cancels all orders and clears the history, then starts again with the balance below. Trades already added to your Journal stay there.', 'Reset account', () => {
+      const v = ptNum($('#pcBal').value), start = v >= 100 && v <= 1e9 ? Math.round(v * 100) / 100 : 100000;
+      const keep = a.set; PT.a = ptFresh(start); PT.a.set = keep; ptLog(`Account reset with ${usd(start)}.`, 'info'); Paper.changed(); toast(`Paper account reset to ${usd(start)}.`);
+    }, true)));
+  set.append(lev, opts, reset); box.append(set);
+}
+
+// ----- positions and orders on the chart -----
+function ptLabelBox(x, y, parts, col) {   // a label made of segments; returns each segment's box
+  octx.font = `600 11px ${FONT_DATA}`;
+  const h = 20, pad = 7, out = [];
+  let cx = x;
+  const widths = parts.map(p => (p.x ? 20 : octx.measureText(p.t).width + pad * 2));
+  const w = widths.reduce((s, v) => s + v, 0);
+  octx.fillStyle = C.panel; rr(x, y - h / 2, w, h, 4); octx.fill();
+  parts.forEach((p, i) => {
+    const pw = widths[i];
+    if (p.fill) { octx.fillStyle = col; octx.save(); rr(x, y - h / 2, w, h, 4); octx.clip(); octx.fillRect(cx, y - h / 2, pw, h); octx.restore(); }
+    if (i) { octx.strokeStyle = alpha(col, 0.5); octx.lineWidth = 1; seg(cx + 0.5, y - h / 2 + 3, cx + 0.5, y + h / 2 - 3); }
+    octx.fillStyle = p.fill ? inkOn(col) : p.color || C.fg; octx.textBaseline = 'middle'; octx.textAlign = 'left';
+    if (p.x) { octx.strokeStyle = C.muted; octx.lineWidth = 1.5; const c = cx + pw / 2; seg(c - 3.5, y - 3.5, c + 3.5, y + 3.5); seg(c + 3.5, y - 3.5, c - 3.5, y + 3.5); }
+    else octx.fillText(p.t, cx + pad, y + 0.5);
+    out.push({ x: cx, y: y - h / 2, w: pw, h, part: p.part });
+    cx += pw;
+  });
+  octx.strokeStyle = col; octx.lineWidth = 1; rr(x + 0.5, y - h / 2 + 0.5, w - 1, h - 1, 4); octx.stroke();
+  return { boxes: out, w };
+}
+function ptDraw(m, W, H) {
+  PT.hits = [];
+  if (!PT.a.set.lines || R.on || !S.bars.length) { ptHitsOut(); return; }
+  const id = S.symbol, a = PT.a, p = a.pos.find(x => x.sym === id), ords = a.ord.filter(o => o.sym === id && o.st === 'working');
+  if (!p && !ords.length) { ptHitsOut(); return; }
+  const d = PT.drag, q = ptQuote(id), conv = ptConv(id), prec = S.prec;
+  const lines = [];
+  const pnlAt = (price, qty, entry) => (price - entry) * qty * conv;
+  if (p) {
+    const long = p.qty > 0, mark = q ? (long ? q.bid : q.ask) : p.avg, pl = pnlAt(mark, p.qty, p.avg);
+    lines.push({ price: p.avg, col: C.draw, dash: [], kind: 'pos', ref: p, parts: [{ t: `${long ? 'Long' : 'Short'} ${ptFmtQty(id, p.qty)}`, fill: true, part: 'body' }, { t: usd(pl, true), color: pl >= 0 ? C.up : C.down, part: 'body' }, { x: true, part: 'close' }], z: 3 });
+    const br = (kind, price) => {
+      if (price == null) return;
+      const v = pnlAt(price, p.qty, p.avg), c = kind === 'tp' ? C.up : C.down;
+      lines.push({ price, col: c, dash: [5, 4], kind, ref: p, parts: [{ t: kind === 'tp' ? 'TP' : p.trail ? 'Trailing SL' : 'SL', fill: true, part: 'body' }, { t: `${usd(v, true)} · ${fmtPct(((price - p.avg) / p.avg) * 100 * Math.sign(p.qty))}`, color: v >= 0 ? C.up : C.down, part: 'body' }, { x: true, part: 'close' }], z: 2 });
+    };
+    const tp = d && d.kind === 'tp' && d.ref === p && d.moved ? d.price : p.tp, sl = d && d.kind === 'sl' && d.ref === p && d.moved ? d.price : p.sl;
+    br('tp', tp); br('sl', sl);
+    if (d && d.kind === 'pos' && d.ref === p && d.moved && d.price != null) {   // dragging out a new take profit or stop loss from the position
+      const isTp = long ? d.price > p.avg : d.price < p.avg; br(isTp ? 'tp' : 'sl', d.price);
+    }
+  }
+  for (const o of ords) {
+    const buy = o.side === 'buy', col = buy ? C.up : C.down, mv = d && d.kind === 'ord' && d.ref === o && d.moved;
+    const pr = o.type === 'stop' || (o.type === 'stoplimit' && !o.trig) ? o.stp : o.lim;
+    const price = mv ? d.price : pr;
+    const tName = o.type === 'stoplimit' ? (o.trig ? 'Limit' : 'Stop limit') : PT_TYPES[o.type];
+    lines.push({ price, col, dash: [2, 3], kind: 'ord', ref: o, parts: [{ t: `${ptSideWord(o.side)} ${tName} ${ptFmtQty(id, o.qty)}`, fill: true, part: 'body' }, { t: fmtP(price, prec), color: C.fg, part: 'body' }, { x: true, part: 'close' }], z: 1 });
+    if (o.type === 'stoplimit' && !o.trig && o.lim) lines.push({ price: mv ? o.lim + (d.price - o.stp) : o.lim, col: alpha(col, 0.6), dash: [1, 4], kind: 'none', parts: null, z: 0 });
+    const ob = (kind, bp) => { if (bp == null) return; const mvb = d && d.kind === 'o' + kind && d.ref === o && d.moved; lines.push({ price: mvb ? d.price : bp, col: alpha(kind === 'tp' ? C.up : C.down, 0.7), dash: [1, 3], kind: 'o' + kind, ref: o, parts: [{ t: kind === 'tp' ? 'TP' : 'SL', fill: true, part: 'body' }, { t: fmtP(mvb ? d.price : bp, prec), color: C.muted, part: 'body' }, { x: true, part: 'close' }], z: 0 }); };
+    ob('tp', o.tp); ob('sl', o.sl);
+  }
+  // lines, then labels on top (nudged apart when they would overlap), then the price tags on the scale
+  const placed = [];
+  for (const L of lines) { L.y = m.y(L.price); }
+  const vis = lines.filter(L => L.y != null && isFinite(L.y));
+  for (const L of vis) {
+    if (L.y < -20 || L.y > H + 20) continue;
+    octx.strokeStyle = L.col; octx.lineWidth = L.kind === 'pos' ? 1.5 : 1; octx.setLineDash(L.dash); seg(0, Math.round(L.y) + 0.5, W, Math.round(L.y) + 0.5); octx.setLineDash([]);
+  }
+  // labels line up in one column, left of the price tags, and step around the chart's Buy/Sell buttons
+  octx.font = `600 11px ${FONT_DATA}`;
+  const widthOf = parts => parts.reduce((s, pt) => s + (pt.x ? 20 : octx.measureText(pt.t).width + 14), 0);
+  const maxW = Math.max(0, ...vis.filter(L => L.parts).map(L => widthOf(L.parts)));
+  const lx0 = Math.max(8, W - 92 - maxW), qb = ptQtBox();
+  vis.slice().sort((x, y) => x.y - y.y).forEach(L => {
+    if (!L.parts) return;
+    let ly = clamp(L.y, 12, H - 12);
+    for (const pY of placed) if (Math.abs(pY - ly) < 22) ly = pY + 22;
+    placed.push(ly);
+    const w = widthOf(L.parts); let lx = lx0;
+    if (qb && ly - 10 < qb.y + qb.h + 4 && lx + w > qb.x - 6) lx = Math.max(8, qb.x - 8 - w);
+    const lab = ptLabelBox(lx, ly, L.parts, L.kind === 'pos' ? C.draw : L.col);
+    lab.boxes.forEach(b => PT.hits.push(Object.assign(b, { kind: L.kind, ref: L.ref, lineY: L.y })));
+    PT.hits.push({ x: 0, y: L.y - 4, w: W, h: 8, part: 'line', kind: L.kind, ref: L.ref, lineY: L.y });
+  });
+  for (const L of vis) if (L.y >= 0 && L.y <= H && L.parts) priceTag(W, L.y, L.price, L.kind === 'pos' ? C.draw : L.col);
+  ptHitsOut();
+}
+function ptQtBox() {
+  const b = $('#qt'); if (!b || b.hidden || !b.offsetWidth) return null;
+  const r = b.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+  return { x: r.left - w.left, y: r.top - w.top, w: r.width, h: r.height };
+}
+function ptHitsOut() {   // where the lines and labels are, for the automated tests
+  const v = PT.hits.map(h => [h.kind, h.part, Math.round(h.x), Math.round(h.y), Math.round(h.w), Math.round(h.h)].join(',')).join(';');
+  if (ov.dataset.pt !== v) ov.dataset.pt = v;
+}
+function ptHit(x, y) {
+  if (!PT.hits.length || S.tool !== 'cursor' || S.draft || R.picking || R.on) return null;
+  let best = null;
+  for (const h of PT.hits) {
+    if (x < h.x || x > h.x + h.w || y < h.y || y > h.y + h.h) continue;
+    if (h.part === 'close' || h.part === 'body') return h;   // labels win over lines
+    if (!best || Math.abs(h.lineY - y) < Math.abs(best.lineY - y)) best = h;
+  }
+  return best;
+}
+function ptPointerDown(e, x, y) {
+  const h = ptHit(x, y); if (!h) return false;
+  e.stopPropagation(); e.preventDefault();
+  if (h.part === 'close') { ptLineClose(h); return true; }
+  PT.drag = { kind: h.kind, ref: h.ref, sx: x, sy: y, moved: false, price: null, click: h.part === 'body' };
+  return true;
+}
+function ptPointerMove(e) {
+  const d = PT.drag; if (!d) return;
+  const r = wrap.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  if (!d.moved && Math.hypot(x - d.sx, y - d.sy) < 4) return;
+  const m = mapper(); if (!m) return;
+  const p = m.p(y); if (p == null || !(p > 0)) return;
+  d.moved = true; d.price = Number(p.toFixed(S.prec)); markDirty();
+}
+function ptPointerUp() {
+  const d = PT.drag; if (!d) return; PT.drag = null;
+  if (!d.moved) { if (d.click) ptLineOpen(d); markDirty(); return; }
+  const v = d.price, a = PT.a; let err = '';
+  if (d.kind === 'pos' || d.kind === 'tp' || d.kind === 'sl') {
+    const p = a.pos.find(x => x === d.ref); if (!p) { markDirty(); return; }
+    const long = p.qty > 0;
+    const kind = d.kind === 'pos' ? ((long ? v > p.avg : v < p.avg) ? 'tp' : 'sl') : d.kind;
+    err = ptBracketErr(p, kind, v);
+    if (!err) {
+      if (kind === 'tp') p.tp = v; else { p.sl = v; if (p.trail) p.trail = Math.abs(ptMark(p) - v); }
+      ptLog(`${label(p.sym)} position: ${kind === 'tp' ? 'take profit' : p.trail ? 'trailing stop' : 'stop loss'} moved to ${ptPx(p.sym, v)}.`, 'info');
+    }
+  } else if (d.kind === 'ord' || d.kind === 'otp' || d.kind === 'osl') {
+    const o = a.ord.find(x => x === d.ref && x.st === 'working'); if (!o) { markDirty(); return; }
+    const spec = { sym: o.sym, side: o.side, type: o.type, qty: o.qty, lim: o.lim, stp: o.stp, tp: o.tp, sl: o.sl };
+    if (d.kind === 'ord') { if (o.type === 'stop') spec.stp = v; else if (o.type === 'limit' || o.trig) spec.lim = v; else { spec.lim = Number((o.lim + (v - o.stp)).toFixed(S.prec)); spec.stp = v; } }
+    else if (d.kind === 'otp') spec.tp = v; else spec.sl = v;
+    if (o.trig) spec.type = 'limit';
+    err = ptCheckOrder(spec);
+    if (!err) { o.lim = spec.lim; o.stp = spec.stp; o.tp = spec.tp; o.sl = spec.sl; if (o.trail && spec.sl) o.trail = Math.abs((o.type === 'stop' ? o.stp : o.lim) - spec.sl); o.upd = Date.now(); ptLog(`Modified: ${ptDesc(o)}.`, 'info');
+      if (PT.leader && ptCanFill(o.sym)) { const q = ptQuote(o.sym); if (q) ptEval(o.sym, q, Date.now(), false); } }
+  }
+  if (err) toast(err);
+  Paper.changed();
+}
+function ptLineClose(h) {
+  const a = PT.a;
+  if (h.kind === 'pos') { const p = a.pos.find(x => x === h.ref); if (p) ptCloseNow(p); return; }
+  if (h.kind === 'tp' || h.kind === 'sl') { const p = a.pos.find(x => x === h.ref); if (!p) return; if (h.kind === 'tp') p.tp = null; else { p.sl = null; p.trail = null; } ptLog(`${label(p.sym)} position: ${h.kind === 'tp' ? 'take profit' : 'stop loss'} removed.`, 'info'); Paper.changed(); return; }
+  if (h.kind === 'ord') { ptCancel(h.ref); Paper.changed(); return; }
+  if (h.kind === 'otp' || h.kind === 'osl') { const o = h.ref; if (h.kind === 'otp') o.tp = null; else { o.sl = null; o.trail = null; } o.upd = Date.now(); Paper.changed(); }
+}
+function ptLineOpen(d) {
+  if (d.kind === 'pos' || d.kind === 'tp' || d.kind === 'sl') { const p = PT.a.pos.find(x => x === d.ref); if (p) ptTicket({ sym: p.sym, mode: 'pos', pid: p.id }); }
+  else if (d.kind === 'ord' || d.kind === 'otp' || d.kind === 'osl') { const o = d.ref; if (o && o.st === 'working') ptTicket({ sym: o.sym, mode: 'modify', oid: o.id }); }
+}
+
+// ----- right-click menu on the chart -----
+function ptMenuAt(e) {
+  if (curView() !== 'chart' || R.on || R.picking || S.tool !== 'cursor') return;
+  const r = wrap.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  let ps; try { ps = chart.paneSize(0); } catch (er) { return; }
+  if (x < 0 || y < 0 || x > ps.width || y > ps.height) return;
+  const m = mapper(); if (!m) return;
+  const raw = m.p(y); if (raw == null || !(raw > 0)) return;
+  e.preventDefault();
+  const id = S.symbol, price = Number(raw.toFixed(S.prec)), q = ptQuote(id), live = ptLive(id), qty = ptQtQty(), menu = $('#ctxMenu');
+  menu.replaceChildren();
+  const item = (text, fn, cls, dis) => { const b = el('button', 'ctx-i' + (cls ? ' ' + cls : ''), text); b.type = 'button'; b.setAttribute('role', 'menuitem'); b.disabled = !!dis; b.onclick = () => { menu.hidden = true; fn(); }; menu.append(b); };
+  menu.append(el('div', 'ctx-h', `${label(id)} at ${fmtP(price, S.prec)}`));
+  if (!live) menu.append(el('div', 'ctx-note', `${label(id)} isn't live right now, so it can't be traded.`));
+  else if (q) {
+    const below = price < q.last, qs = ptFmtQty(id, qty);
+    if (below) { item(`Buy ${qs} limit at ${fmtP(price, S.prec)}`, () => ptPlace({ sym: id, side: 'buy', type: 'limit', qty, lim: price }), 'buy'); item(`Sell ${qs} stop at ${fmtP(price, S.prec)}`, () => ptPlace({ sym: id, side: 'sell', type: 'stop', qty, stp: price }), 'sell'); }
+    else { item(`Sell ${qs} limit at ${fmtP(price, S.prec)}`, () => ptPlace({ sym: id, side: 'sell', type: 'limit', qty, lim: price }), 'sell'); item(`Buy ${qs} stop at ${fmtP(price, S.prec)}`, () => ptPlace({ sym: id, side: 'buy', type: 'stop', qty, stp: price }), 'buy'); }
+    item('New order at this price…', () => ptTicket({ sym: id, side: below ? 'buy' : 'sell', type: 'limit', price, qty }));
+  }
+  menu.append(el('div', 'ctx-sep'));
+  item(`Add alert at ${fmtP(price, S.prec)}`, () => createAlert(id, price));
+  menu.hidden = false;
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = clamp(e.clientX, 8, innerWidth - w - 8) + 'px'; menu.style.top = clamp(e.clientY, 8, innerHeight - h - 8) + 'px';
+  const first = menu.querySelector('button:not(:disabled)'); if (first) first.focus({ preventScroll: true });
+}
+
 /* ---------- boot ---------- */
 async function probeTD() {
   if (TD.key === 'site') { try { return (await fetchT(API + '/', 4500)).ok; } catch (e) { return false; } }
@@ -5188,6 +6207,7 @@ async function boot() {
   saveInd(); applyTheme(); sizeOverlay(); requestAnimationFrame(frame);
   renderWatch(); renderDetails(); renderFeed(); veil('Connecting to market data…');
   Journal.init();
+  Paper.boot();
   Auth.init().catch(() => { /* the site works without accounts */ });
   Ideas.boot();
   { const v = readViewFromUrl(); if (v !== 'chart') setView(v); }
@@ -5205,6 +6225,7 @@ async function boot() {
   if (tdLive()) TDWS.connect();
   const first = loadChart();   // queue the chart request before the watchlist quotes
   ensureTickerSubs();
+  Paper.ready();
   await first;
 }
 boot();

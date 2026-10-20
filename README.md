@@ -58,6 +58,16 @@ The **Journal** tab (top left) is a trading journal. People log each trade (symb
 
 Signed-in people's journals are kept in their account (the `trades` table in Supabase, private to each person). Without signing in, the journal is kept in the browser and moves into the account at the next sign-in.
 
+## Paper trading
+
+Practise trading with virtual money on live prices, like TradingView's paper trading. Everything is in the page; nothing goes to a broker.
+
+- **Placing orders:** the **Buy** and **Sell** buttons at the top right of the chart (with a quantity box), the **Trade** button in the top bar, **Shift B** / **Shift S**, or a right-click on a price for a limit or stop order there. The order ticket has market, limit, stop and stop-limit orders, a take profit and stop loss in price, pips (or ticks), % or $, a trailing stop, "size by risk" (works out the quantity from what you'd lose at the stop), Day or Until-cancelled duration, and shows the order value, margin and reward to risk. One-click trading can be turned on in the Account tab.
+- **On the chart:** the position, its take profit and stop loss, and working orders are drawn as lines with their profit or loss. Drag a line to change it, drag the position line up or down to add a take profit or stop loss, click × to close or cancel, click a label to edit. Fills show as arrows.
+- **The trading panel** under the chart: Positions (with live P&L, TP/SL, partial close, break-even, reverse and close), Orders (working, filled, cancelled, with modify and cancel), History (closed trades and an account log) and Account (equity, balance, realised and open P&L, margin, win rate, profit factor, leverage for each market, commission, display options, and Reset with any starting balance).
+- **How it works:** one position per symbol (buys and sells net out). Buys fill at the ask and sells at the bid where the data has them. Positions are valued in US dollars (other currencies are converted with live rates). If equity falls below half the margin in use, the biggest losers are closed (a margin call). Orders fill while RealChart is open; when it's opened again, orders and stops the price reached in the meantime are filled from the price history, at the time they happened. Markets that aren't live on the site can't be traded, and stock orders placed while the market is shut fill when it opens. Only one browser tab runs the account, so two tabs never fill the same order twice.
+- **Saving:** kept in the browser, and in the person's account when signed in (inside `user_state`). Closed trades are also added to the Journal with the tag "Paper" and the strategy "Paper trading" (this can be turned off), so the Journal's statistics cover them.
+
 ## Ideas
 
 The **Ideas** tab is where people share how they read a chart, like TradingView's ideas. On the chart, someone sets up the symbol, timeframe, drawings and indicators, presses **Publish idea**, and adds a title, a long / short / neutral call and their analysis. Everyone can browse ideas (filtered by market, direction, symbol or author, newest or most liked), open one to see the author's chart with their drawings, press **What happened next** to add the prices since it was published, or open it on the live chart. Signed-in people can like ideas and comment.
