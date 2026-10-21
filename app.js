@@ -4269,8 +4269,8 @@ const ID = { who: null, open: null, cur: null, list: [], page: 0, done: false, l
   liked: new Set(), admin: false, mod: false, comments: [], editing: null, reportFor: null };
 S.idea = null;   // an idea shown on top of the live chart
 const IDEA_PAGE = 24;
-const IDEA_LIST = 'id,user_id,symbol,market,tf,direction,title,excerpt,thumb,likes,comments,hidden,created_at,author:profiles(display_name,avatar_url)';
-const IDEA_FULL = 'id,user_id,symbol,market,tf,direction,title,body,price,chart,likes,comments,hidden,created_at,updated_at,author:profiles(display_name,avatar_url)';
+const IDEA_LIST = 'id,user_id,symbol,market,tf,direction,title,excerpt,thumb,likes,comments,hidden,created_at,author:profiles!ideas_user_id_fkey(display_name,avatar_url)';
+const IDEA_FULL = 'id,user_id,symbol,market,tf,direction,title,body,price,chart,likes,comments,hidden,created_at,updated_at,author:profiles!ideas_user_id_fkey(display_name,avatar_url)';
 const COMMENT_COLS = 'id,idea_id,user_id,body,hidden,created_at,author:profiles(display_name,avatar_url)';
 const MARKETS = [['all', 'All'], ['crypto', 'Crypto'], ['stock', 'Stocks'], ['fund', 'Funds'], ['forex', 'Forex'], ['index', 'Indices'], ['futures', 'Futures'], ['bond', 'Bonds']];
 const MARKET_NAME = { crypto: 'Crypto', stock: 'US stock', fund: 'Fund', forex: 'Forex', index: 'Index', futures: 'Commodity', bond: 'Bond' };
@@ -5047,7 +5047,7 @@ const Ideas = {
     const box = $('#iMoreBox'); if (!box) return;
     let rows = [];
     try {
-      const { data } = await Auth.sb.from('ideas').select('id,user_id,symbol,title,direction,likes,created_at,author:profiles(display_name)').eq('symbol', it.symbol).eq('hidden', false).neq('id', it.id).order('created_at', { ascending: false }).limit(5);
+      const { data } = await Auth.sb.from('ideas').select('id,user_id,symbol,title,direction,likes,created_at,author:profiles!ideas_user_id_fkey(display_name)').eq('symbol', it.symbol).eq('hidden', false).neq('id', it.id).order('created_at', { ascending: false }).limit(5);
       rows = (data || []).filter(r => isUuid(r.id));
     } catch (e) { /* leave it empty */ }
     if (!box.isConnected || !ID.cur || ID.cur.id !== it.id) return;
