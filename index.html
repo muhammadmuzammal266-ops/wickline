@@ -719,7 +719,6 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
 .tp-fold:hover{background:var(--panel-2);color:var(--fg)}
 .tp-fold svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .15s}
 .tp-fold[aria-expanded="true"] svg{transform:rotate(180deg)}
-.tp-name{display:flex;align-items:center;gap:7px;font-weight:600;font-size:12.5px;white-space:nowrap}
 .tp-tabs{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
 .tp-tabs::-webkit-scrollbar{display:none}
 .tp-tab{height:28px;padding:0 10px;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--muted);white-space:nowrap}
@@ -781,6 +780,45 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
 .tp-chk input{accent-color:var(--accent);width:15px;height:15px;margin:1px 0 0;flex:none}
 .tp-reset{grid-column:1/-1;display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap}
 .tp-reset .fine{flex:1;min-width:240px;max-width:90ch}
+/* paper accounts */
+.tp-acct{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 6px 0 4px;border-radius:7px;max-width:260px;min-width:0}
+.tp-acct:hover{background:var(--panel-2)}
+.tp-acct .k{flex:none;font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:2px 6px;border-radius:999px;background:var(--panel-2);color:var(--muted)}
+.tp-acct b{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tp-acct svg{width:14px;height:14px;flex:none;fill:none;stroke:var(--muted);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.tp-acct.replay .k{background:var(--accent-soft);color:var(--accent)}
+.tp.replay{box-shadow:inset 0 2px 0 var(--accent)}
+.tp-menu{min-width:260px}
+.tp-menu-h{padding:5px 9px 4px;font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.tp-menu-i{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:0 14px;padding:7px 9px 7px 24px;border-radius:6px;text-align:left;position:relative}
+.tp-menu-i:hover,.tp-menu-i:focus-visible{background:var(--panel-2);outline:none}
+.tp-menu-i.on::before{content:"✓";position:absolute;left:8px;top:7px;color:var(--accent);font-weight:700;font-size:12px}
+.tp-menu-i .nm{font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tp-menu-i .eq{font-family:var(--font-data);font-size:12px;font-weight:600;text-align:right}
+.tp-menu-i .st{grid-column:1/-1;font-size:11px;color:var(--faint)}
+.tp-menu-i.act{display:block;font-size:12.5px;padding-left:24px}
+.tp-menu-note{padding:4px 9px;font-size:11px;color:var(--faint);max-width:280px}
+.tp-ahead{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;padding:10px 10px 0}
+.tp-aname{flex:0 1 220px;height:30px;font-family:var(--font-body);font-weight:600;font-size:13px}
+.tp-ahead .muted{font-size:12px;color:var(--muted)}
+.tp-accts{margin:0 10px 10px;border:1px solid var(--line);border-radius:8px;width:auto}
+.tp-accts .tp-t td,.tp-accts .tp-t th{padding:6px 10px}
+.tp-accts tr.cur td{background:color-mix(in srgb,var(--accent-soft) 45%,transparent)}
+.tp-accts .nm b{font-weight:600;margin-right:6px}
+.tp-jr{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;font-size:12.5px}
+.tp-jr .muted{font-size:11.5px;color:var(--faint)}
+.pn-sizes{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.pn-size{height:28px;padding:0 11px;border-radius:999px;border:1px solid var(--line);font-family:var(--font-data);font-size:12px;font-weight:600;color:var(--fg)}
+.pn-size:hover{background:var(--panel-2)}
+.pn-size.on{background:var(--fg);border-color:var(--fg);color:var(--panel)}
+.pn-kind{background:var(--panel-2);border-radius:6px;padding:2px}
+.pn-kind .btn{flex:1;justify-content:center;height:28px;font-family:var(--font-body);font-size:12.5px}
+.t-q{padding:0;margin-bottom:4px;font-size:11.5px;font-weight:600;color:var(--muted)}
+#ptNewDlg{width:min(460px,calc(100vw - 32px))}
+#ptJDlg{width:min(440px,calc(100vw - 32px))}
+.qt.replay{border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+.qt.replay .qt-sp{color:var(--accent);font-family:var(--font-body);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.ord-dlg.replay .dlg-h{box-shadow:inset 0 3px 0 var(--accent)}
 /* order ticket */
 .ord-dlg{width:min(390px,calc(100vw - 24px))}
 .ord-dlg:not(:modal){position:fixed;inset:auto;left:76px;top:100px;margin:0;z-index:40;max-height:calc(100vh - 120px)}
@@ -850,7 +888,8 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
   .ord-dlg:modal{margin:auto auto 0;width:100%;max-width:none;max-height:92vh;border-radius:14px 14px 0 0;border-bottom:0}
 }
 @media (max-width: 520px){
-  .tp-name .chip,.tp-trade{display:none}
+  .tp-trade{display:none}
+  .tp-acct{max-width:170px}
   .tp-sum{gap:2px 12px}
 }
 </style>
@@ -956,7 +995,7 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
       <div class="tp-grip" id="tpGrip" aria-hidden="true" title="Drag to resize"></div>
       <div class="tp-h">
         <button class="tp-fold" id="tpFold" type="button" aria-expanded="false" aria-controls="tpBody" title="Show or hide the trading panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
-        <span class="tp-name">Paper trading <span class="chip" title="Practice with virtual money on live prices">Virtual money</span></span>
+        <button class="tp-acct" id="tpAcct" type="button" aria-haspopup="menu"><span class="k" id="tpAcctKind">Paper</span><b id="tpAcctName">Main account</b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg></button>
         <div class="tp-tabs" role="tablist" aria-label="Trading panel">
           <button class="tp-tab" type="button" role="tab" data-tab="pos">Positions<span class="n" id="tpNPos"></span></button>
           <button class="tp-tab" type="button" role="tab" data-tab="ord">Orders<span class="n" id="tpNOrd"></span></button>
@@ -1158,7 +1197,7 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
       <dt>Drag a scale</dt><dd>Stretch the price or time axis</dd>
       <dt>Drag a drawing</dt><dd>Move it. Drag its round handles to reshape it.</dd>
       <dt>Hover an indicator</dt><dd>Hide it, change its settings or remove it</dd>
-      <dt>Paper trading</dt><dd>Practise with virtual money on live prices. Use Buy and Sell on the chart, or right-click a price for limit and stop orders. Drag position and order lines to change them, or drag a position line to add a take profit or stop loss.</dd>
+      <dt>Paper trading</dt><dd>Practise with virtual money on live prices. Use Buy and Sell on the chart, or right-click a price for limit and stop orders. Drag position and order lines to change them, or drag a position line to add a take profit or stop loss. Keep several accounts with different balances, and trade inside a bar replay with a replay account.</dd>
       <dt>Replay</dt><dd>Click it, then click a past bar. The chart hides everything after it, and you play the market forward bar by bar to practise.</dd>
     </dl>
   </div>
@@ -1242,11 +1281,35 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
   </div>
 </dialog>
 
+<dialog id="ptNewDlg" aria-labelledby="pnTitle">
+  <div class="dlg-h"><h2 id="pnTitle">New paper account</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <form class="dlg-body" id="pnForm" novalidate>
+    <label class="t-f"><span>Name</span><input class="field" id="pnName" maxlength="30" autocomplete="off" spellcheck="false"></label>
+    <div class="t-f"><span>Starting balance (US dollars)</span><div class="pn-sizes" id="pnSizes"></div><input class="field" id="pnBal" inputmode="decimal" autocomplete="off" aria-label="Starting balance"></div>
+    <div class="t-f"><span>Trades on</span><div class="seg pn-kind" id="pnKind" role="radiogroup" aria-label="Trades on"><button type="button" class="btn" role="radio" data-kind="live">Live prices</button><button type="button" class="btn" role="radio" data-kind="replay">Bar replay</button></div><p class="fine" id="pnKindNote"></p></div>
+    <fieldset class="r-list"><legend class="t-q">Add this account's closed trades to your Journal?</legend>
+      <label><input type="radio" name="pnj" value="yes"> Yes, add them (tagged Paper)</label>
+      <label><input type="radio" name="pnj" value="no"> No, keep them separate</label>
+    </fieldset>
+    <p class="p-err" id="pnErr" hidden></p>
+    <div class="t-actions"><span class="spacer"></span><button type="button" class="ghost" data-close>Cancel</button><button type="submit" class="primary" id="pnGo">Create account</button></div>
+  </form>
+</dialog>
+
+<dialog id="ptJDlg" aria-labelledby="pjTitle">
+  <div class="dlg-h"><h2 id="pjTitle">Add paper trades to your Journal?</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="dlg-body">
+    <p id="pjText"></p>
+    <p class="fine">You can change this any time in the Account tab of the trading panel.</p>
+    <div class="t-actions"><span class="spacer"></span><button type="button" class="ghost" id="pjNo">No, keep separate</button><button type="button" class="primary" id="pjYes">Yes, add them</button></div>
+  </div>
+</dialog>
+
 <dialog id="signInDlg" aria-label="Sign in">
   <div class="dlg-h"><h2>Sign in</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="dlg-body">
     <p>Sign in to keep your setup in your account and use it on any device:</p>
-    <ul class="signin-list"><li>Watchlist and sections</li><li>Drawings and indicators</li><li>Price alerts and your trade journal</li><li>Your paper trading account</li><li>Chart settings and theme</li></ul>
+    <ul class="signin-list"><li>Watchlist and sections</li><li>Drawings and indicators</li><li>Price alerts and your trade journal</li><li>Your paper trading accounts</li><li>Chart settings and theme</li></ul>
     <p>Signing in also lets you publish ideas, like them and comment.</p>
     <button class="gbtn" id="googleBtn" type="button"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>Continue with Google</button>
     <p class="fine" style="margin-top:12px">We only get your name, email address and profile photo from Google. No password is stored here. <a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a></p>
@@ -1256,7 +1319,7 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
 <dialog id="delDlg" aria-label="Delete your account">
   <div class="dlg-h"><h2>Delete your account</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="dlg-body">
-    <p>This permanently deletes your account, your profile and everything saved to it: watchlist, drawings, indicators, alerts, settings, trade journal, paper trading account, and the ideas, comments and likes you've posted. It can't be undone.</p>
+    <p>This permanently deletes your account, your profile and everything saved to it: watchlist, drawings, indicators, alerts, settings, trade journal, paper trading accounts, and the ideas, comments and likes you've posted. It can't be undone.</p>
     <label class="fine" for="delConfirm">Type DELETE to confirm</label>
     <div class="key-row"><input class="field" id="delConfirm" autocomplete="off" spellcheck="false" placeholder="DELETE"></div>
     <div class="key-row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" type="button" data-close>Cancel</button><button class="danger-solid" id="delGo" type="button" disabled>Delete my account</button></div>
@@ -1296,6 +1359,7 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
 </dialog>
 
 <div class="ctx-menu" id="ctxMenu" hidden role="menu" aria-label="Chart menu"></div>
+<div class="ctx-menu tp-menu" id="tpMenu" hidden role="menu" aria-label="Paper trading accounts"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
 <script src="vendor/lightweight-charts-5.1.0.js"></script>

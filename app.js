@@ -2816,10 +2816,12 @@ function rpStartPick() {
 function rpCancelPick() { R.picking = false; R.hoverX = null; renderReplay(); markDirty(); }
 function rpPickAt(x) {
   const i = rpPickIndex(x); if (i == null) return;
+  if (R.on) Paper.replayClose('Jumped to another bar');   // replay positions can't carry over to a different moment
   if (!R.on) { R.full = S.bars; R.on = true; }
   R.picking = false; R.hoverX = null;
   R.idx = i; R.time = R.full[i].time;
   S.bars = R.full.slice(0, i + 1);
+  Paper.replayStart();
   rpRedraw(); renderReplay();
 }
 function rpRebase(bars) {   // a new symbol or timeframe loaded during a replay
@@ -2828,6 +2830,7 @@ function rpRebase(bars) {   // a new symbol or timeframe loaded during a replay
   if (i < 1) { i = Math.min(bars.length - 1, 1); toast(`${label(S.symbol)}'s history here starts later, so the replay starts at its first bars.`); }
   R.idx = i; R.time = bars[i].time;
   S.bars = bars.slice(0, i + 1);
+  Paper.replayClose(`Switched to ${label(S.symbol)}`, true); Paper.replayStart();
   renderReplay();
 }
 function rpRedraw() {
@@ -2847,10 +2850,12 @@ function rpStep() {
   for (const rt of S.rts) updateRtLast(rt);
   if (!S.cross) updateLegend();
   renderReplayInfo(); markDirty();
+  Paper.replayBar(b);   // replay trading fills from the new bar
   return true;
 }
 function rpBack() {
   if (!R.on || R.idx <= 1) return;
+  Paper.replayClose('Stepped back');
   R.idx--; S.bars.pop(); R.time = S.bars[S.bars.length - 1].time;
   setMainData(); S.rts.forEach(setRtData);
   if (!S.cross) updateLegend();
@@ -2868,8 +2873,8 @@ function rpTick() {
 function rpPause() { R.playing = false; clearTimeout(R.timer); renderReplayInfo(); }
 function rpExit() {
   rpPause(); R.picking = false; R.hoverX = null;
-  if (R.on) { S.bars = R.full; R.full = null; R.on = false; rpRedraw(); }
-  renderReplay();
+  if (R.on) { Paper.replayClose('Replay ended'); S.bars = R.full; R.full = null; R.on = false; rpRedraw(); }
+  renderReplay(); Paper.refresh();
 }
 function rpMerge(b) {   // a live update while replaying: store it; show it only if the replay sits on that very bar
   const F = R.full, n = F.length; if (!n) return;
@@ -4184,14 +4189,17 @@ function syncTradeMarks() {
   if (!S.main || !LWC.createSeriesMarkers) return;
   if (tMarksOn !== S.main) { tMarks = null; tMarksOn = S.main; }
   const T = S.bars, m = [];
+  if (T.length) {   // paper trading executions, on live prices or in a replay
+    const first = T[0].time, lastT = T[T.length - 1].time + tfOf(S.tf).sec;
+    for (const x of Paper.marks()) { if (x.at < first || x.at > lastT) continue; m.push({ time: T[Math.max(0, rpIndexFor(T, x.at))].time, position: x.buy ? 'belowBar' : 'aboveBar', shape: x.buy ? 'arrowUp' : 'arrowDown', color: x.buy ? C.up : C.down, text: x.text }); }
+    m.sort((x, y) => x.time - y.time);
+  }
   if (!R.on && T.length) {
     const first = T[0].time, step = tfOf(S.tf).sec, lastT = T[T.length - 1].time + step;
     const at = s => (s < first || s > lastT ? null : T[Math.max(0, rpIndexFor(T, s))].time);
-    const paperMarks = Paper.marks();
-    for (const x of paperMarks) { const a = at(x.at); if (a != null) m.push({ time: a, position: x.buy ? 'belowBar' : 'aboveBar', shape: x.buy ? 'arrowUp' : 'arrowDown', color: x.buy ? C.up : C.down, text: x.text }); }
     for (const t of JR.trades) {
       if (t.symbol !== S.symbol) continue;
-      if (PT.a.set.exec && t.tags.includes('Paper')) continue;   // paper trades show as executions instead
+      if (PT.s.ui.exec && t.tags.includes('Paper')) continue;   // paper trades show as executions instead
       const long = t.side === 'long', a = at(Date.parse(t.opened_at) / 1000);
       if (a != null) m.push({ time: a, position: long ? 'belowBar' : 'aboveBar', shape: long ? 'arrowUp' : 'arrowDown', color: C.draw, text: (long ? 'Buy ' : 'Sell ') + fmtP(t.entry, S.prec) });
       if (t.exit != null) { const b = at(Date.parse(t.closed_at) / 1000), c = jCalc(t); if (b != null) m.push({ time: b, position: long ? 'aboveBar' : 'belowBar', shape: 'circle', color: c.net >= 0 ? C.up : C.down, text: money(c.net, true) }); }
@@ -5181,32 +5189,43 @@ $('#iModBtn').onclick = () => { ID.mod = true; ID.open = null; setView('ideas', 
 new ResizeObserver(() => { if (curView() === 'ideas' && !ID.open) Ideas.paintThumbs(); }).observe($('#iGrid'));
 
 /* ---------- paper trading ----------
-   Practise trading with virtual money on live prices. Each symbol has one position: buys and sells net out,
-   the way TradingView's paper account works. Orders fill from the same live prices the chart shows, while the
-   page is open. When it's opened again, orders and stops that would have filled in the meantime are filled
-   from the price history. Kept in this browser, and in the person's account when signed in. */
+   Practise trading with virtual money. People can keep several paper accounts, each with its own starting
+   balance. "Live" accounts trade on live prices: orders fill from the same prices the chart shows while the page
+   is open, and when it's opened again, orders and stops that would have filled in the meantime are filled from
+   the price history. "Replay" accounts trade inside a bar replay, filling from the bars as they play.
+   Each symbol has one position: buys and sells net out, the way TradingView's paper account works.
+   Kept in this browser, and in the person's account when signed in. */
 const PT_LEV_DEF = { crypto: 2, stock: 4, fund: 4, forex: 50, index: 20, futures: 20, bond: 10 };
 const PT_MKTS = [['crypto', 'Crypto'], ['stock', 'US stocks'], ['fund', 'Funds (ETFs)'], ['forex', 'Forex and metals'], ['index', 'Indices'], ['futures', 'Commodities'], ['bond', 'Bonds']];
 const PT_LEVS = [1, 2, 3, 4, 5, 10, 20, 30, 50, 100, 200, 500];
 const PT_TYPES = { market: 'Market', limit: 'Limit', stop: 'Stop', stoplimit: 'Stop limit' };
-const PT_WHY = { tp: 'Take profit', sl: 'Stop loss', trail: 'Trailing stop', close: 'Closed by you', stopout: 'Margin call', reverse: 'Reversed', order: 'Order' };
+const PT_WHY = { tp: 'Take profit', sl: 'Stop loss', trail: 'Trailing stop', close: 'Closed by you', stopout: 'Margin call', reverse: 'Reversed', order: 'Order', replay: 'Replay ended' };
 const PT_FIX = { HKD: 0.1286, SGD: 0.775, BRL: 0.18 };   // rough rates for the few currencies with no live pair here
-const PT_KEEP = { done: 150, hist: 300, log: 150 };
-const ptNum = v => { if (v == null || v === '') return null; const n = Number(String(v).replace(/[,\s]/g, '').replace('−', '-')); return isFinite(n) ? n : null; };
-const ptSetDefaults = () => ({ lev: Object.assign({}, PT_LEV_DEF), comm: 0, one: false, sound: true, lines: true, exec: true, journal: true, qt: true });
-function ptFresh(start) { const s = start || 100000; return { v: 1, start: s, bal: s, pos: [], ord: [], hist: [], log: [], set: ptSetDefaults() }; }
+const PT_SIZES = [1000, 5000, 10000, 25000, 50000, 100000, 250000, 1000000];
+const PT_MAX_ACCTS = 8;
+const ptNum = v => { if (v == null || v === '') return null; const n = Number(String(v).replace(/[,\s$]/g, '').replace('−', '-')); return isFinite(n) ? n : null; };
+const ptUiDefaults = () => ({ qt: true, one: false, lines: true, exec: true, sound: true });
+const ptSetDefaults = () => ({ lev: Object.assign({}, PT_LEV_DEF), comm: 0, journal: null });   // journal: null until the person chooses
+function ptNewAcct(name, start, kind, journal) {
+  const a = { id: uid(), name, kind: kind === 'replay' ? 'replay' : 'live', start, bal: start, pos: [], ord: [], hist: [], log: [], set: ptSetDefaults(), at: Date.now() };
+  a.set.journal = journal === true || journal === false ? journal : null;
+  return a;
+}
 
-function ptClean(d) {   // a paper account from anywhere (this browser, the account, another tab) is checked before it's used
+function ptCleanAcct(d, fallback) {   // one account, checked before it's used
   const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
   const num = (v, lo, hi) => (typeof v === 'number' && isFinite(v) && v >= lo && v <= hi ? v : null);
   const pos = v => num(v, 1e-12, 1e12);
   const sym = v => (typeof v === 'string' && v.length <= 40 && /^(BINANCE|US|FX):[A-Z0-9./_-]+$/.test(v) ? v : null);
   const id = v => (typeof v === 'string' && /^[a-z0-9]{1,16}$/.test(v) ? v : uid());
-  const ms = v => num(v, 1e12, 9e12);
-  const txt = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
-  const o = ptFresh(); if (!isObj(d)) return o;
-  o.start = num(d.start, 100, 1e9) || 100000;
-  o.bal = num(d.bal, -1e13, 1e13); if (o.bal == null) o.bal = o.start;
+  const ms = v => num(v, 1e11, 9e12);
+  const txt = (v, n) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, ' ').slice(0, n) : '');
+  const f = fallback || {};
+  const start = num(d.start, 100, 1e9) || f.start || 100000;
+  const o = ptNewAcct(txt(d.name, 30).trim() || f.name || 'Paper account', start, d.kind || f.kind, null);
+  o.id = typeof d.id === 'string' && /^[a-z0-9]{1,16}$/.test(d.id) ? d.id : f.id || o.id;
+  o.at = ms(d.at) || o.at;
+  o.bal = num(d.bal, -1e13, 1e13); if (o.bal == null) o.bal = start;
   const seen = new Set();
   if (Array.isArray(d.pos)) o.pos = d.pos.filter(isObj).map(p => ({ id: id(p.id), sym: sym(p.sym), qty: num(p.qty, -1e12, 1e12), avg: pos(p.avg), at: ms(p.at) || Date.now(), tp: pos(p.tp), sl: pos(p.sl), trail: pos(p.trail), fees: num(p.fees, 0, 1e12) || 0 }))
     .filter(p => p.sym && p.qty && p.avg && !seen.has(p.sym) && seen.add(p.sym)).slice(0, 200);
@@ -5217,31 +5236,69 @@ function ptClean(d) {   // a paper account from anywhere (this browser, the acco
     fill: pos(x.fill), fillAt: ms(x.fillAt), why: txt(x.why, 120), trig: x.trig === true, tag: PT_WHY[x.tag] ? x.tag : null,
   })).filter(x => x.sym && x.side && x.type && x.qty && x.st && (!['limit', 'stoplimit'].includes(x.type) || x.lim) && (!['stop', 'stoplimit'].includes(x.type) || x.stp)).slice(-600);
   if (Array.isArray(d.hist)) o.hist = d.hist.filter(isObj).map(h => ({ id: id(h.id), sym: sym(h.sym), side: h.side === 'long' || h.side === 'short' ? h.side : null, qty: pos(h.qty), entry: pos(h.entry), exit: pos(h.exit),
-    at: ms(h.at), end: ms(h.end), pnl: num(h.pnl, -1e13, 1e13), fees: num(h.fees, 0, 1e12) || 0, why: PT_WHY[h.why] ? h.why : 'order' })).filter(h => h.sym && h.side && h.qty && h.entry && h.exit && h.at && h.end && h.pnl != null).slice(-PT_KEEP.hist);
-  if (Array.isArray(d.log)) o.log = d.log.filter(isObj).map(l => ({ t: ms(l.t), m: txt(l.m, 200), k: ['fill', 'info', 'warn', 'reject', 'cancel'].includes(l.k) ? l.k : 'info' })).filter(l => l.t && l.m).slice(-PT_KEEP.log);
+    at: ms(h.at), end: ms(h.end), pnl: num(h.pnl, -1e13, 1e13), fees: num(h.fees, 0, 1e12) || 0, why: PT_WHY[h.why] ? h.why : 'order' })).filter(h => h.sym && h.side && h.qty && h.entry && h.exit && h.at && h.end && h.pnl != null).slice(-300);
+  if (Array.isArray(d.log)) o.log = d.log.filter(isObj).map(l => ({ t: ms(l.t), m: txt(l.m, 200), k: ['fill', 'info', 'warn', 'reject', 'cancel'].includes(l.k) ? l.k : 'info' })).filter(l => l.t && l.m).slice(-150);
   if (isObj(d.set)) {
     const s = d.set;
     if (isObj(s.lev)) PT_MKTS.forEach(([k]) => { if (PT_LEVS.includes(s.lev[k])) o.set.lev[k] = s.lev[k]; });
     const c = num(s.comm, 0, 5); if (c != null) o.set.comm = c;
-    ['one', 'sound', 'lines', 'exec', 'journal', 'qt'].forEach(k => { if (typeof s[k] === 'boolean') o.set[k] = s[k]; });
+    if (typeof s.journal === 'boolean' && f.keepJournal !== false) o.set.journal = s.journal;
   }
   return o;
 }
+function ptClean(d) {   // the whole paper trading store, from anywhere (this browser, the account, another tab)
+  const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+  const out = { v: 2, cur: '', rcur: '', accts: [], ui: ptUiDefaults() };
+  if (isObj(d) && Array.isArray(d.accts)) {
+    const ids = new Set();
+    out.accts = d.accts.filter(isObj).slice(0, PT_MAX_ACCTS).map(a => ptCleanAcct(a)).filter(a => !ids.has(a.id) && ids.add(a.id));
+    if (typeof d.cur === 'string') out.cur = d.cur;
+    if (typeof d.rcur === 'string') out.rcur = d.rcur;
+    if (isObj(d.ui)) Object.keys(out.ui).forEach(k => { if (typeof d.ui[k] === 'boolean') out.ui[k] = d.ui[k]; });
+  } else if (isObj(d) && (Array.isArray(d.pos) || typeof d.bal === 'number')) {   // the first version kept one account; it becomes "Main account"
+    out.accts = [ptCleanAcct(d, { id: 'main', name: 'Main account', kind: 'live', keepJournal: false })];
+    if (isObj(d.set)) Object.keys(out.ui).forEach(k => { if (typeof d.set[k] === 'boolean') out.ui[k] = d.set[k]; });
+  }
+  if (!out.accts.some(a => a.kind === 'live')) { const m = ptNewAcct('Main account', 100000, 'live', null); m.id = 'main'; out.accts.unshift(m); out.accts = out.accts.slice(0, PT_MAX_ACCTS); }
+  if (!out.accts.some(a => a.id === out.cur && a.kind === 'live')) out.cur = out.accts.find(a => a.kind === 'live').id;
+  if (!out.accts.some(a => a.id === out.rcur && a.kind === 'replay')) out.rcur = (out.accts.find(a => a.kind === 'replay') || { id: '' }).id;
+  return out;
+}
 
-const PT = { a: ptClean(store.get('paper', null)), leader: false, catching: new Set(), relevant: new Set(), hits: [], drag: null, uiT: 0, tab: store.get('ptTab', 'pos'), ordView: 'working', histView: 'trades',
-  open: !!store.get('ptOpen', false), trailMoved: 0, sig: '', t: null };
+const PT = { s: ptClean(store.get('paper', null)), leader: false, catching: new Set(), relevant: new Set(), hits: [], drag: null, uiT: 0, tab: store.get('ptTab', 'pos'), ordView: 'working', histView: 'trades',
+  open: !!store.get('ptOpen', false), trailMoved: 0, sig: '', t: null, rlast: {}, confirm: null, jAsk: null };
 if (!['pos', 'ord', 'hist', 'acct'].includes(PT.tab)) PT.tab = 'pos';
+const ptLiveAccts = () => PT.s.accts.filter(a => a.kind === 'live');
+const ptLiveAcct = () => PT.s.accts.find(a => a.id === PT.s.cur && a.kind === 'live') || ptLiveAccts()[0];
+function ptReplayAcct(create) {
+  let a = PT.s.accts.find(x => x.id === PT.s.rcur && x.kind === 'replay') || PT.s.accts.find(x => x.kind === 'replay');
+  if (!a && create) {
+    if (PT.s.accts.length >= PT_MAX_ACCTS) return null;
+    a = ptNewAcct('Replay account', 100000, 'replay', null); PT.s.accts.push(a); PT.s.rcur = a.id;
+  }
+  return a || null;
+}
+const ptA = () => (R.on ? ptReplayAcct(true) || ptLiveAcct() : ptLiveAcct());   // the account on screen
+const ptAcctById = id => PT.s.accts.find(a => a.id === id) || null;
 
 // ----- prices, money and sizes -----
-function ptQuote(id) {
+function ptQuoteLive(id) {
   const t = S.tickers[id]; let last = t && t.last > 0 ? t.last : null;
   if (last == null && id === S.symbol && !R.on && S.bars.length) last = S.bars[S.bars.length - 1].close;
   if (!(last > 0)) return null;
   const spread = t && t.bid > 0 && t.ask > 0 && t.bid <= t.ask && Math.abs(t.ask - t.bid) / last < 0.05;
   return { last, bid: spread ? t.bid : last, ask: spread ? t.ask : last };
 }
+function ptQuoteFor(a, id) {   // a replay account sees the replayed bar, not today's price
+  if (a.kind !== 'replay') return ptQuoteLive(id);
+  if (R.on && !R.picking && id === S.symbol && S.bars.length) { const c = S.bars[S.bars.length - 1].close; return { last: c, bid: c, ask: c }; }
+  const r = PT.rlast[id]; return r > 0 ? { last: r, bid: r, ask: r } : null;
+}
+const ptQ = id => ptQuoteFor(ptA(), id);
 const ptLive = id => S.ready && srcOf(id) !== 'demo' && !!S.tickers[id] && !S.tickers[id].stand && S.tickers[id].src !== 'demo';
-const ptCanFill = id => ptLive(id) && openNow(id);
+const ptTradable = (a, id) => (a.kind === 'replay' ? R.on && !R.picking && id === S.symbol && S.bars.length > 0 : ptLive(id));
+const ptCanFill = (a, id) => (a.kind === 'replay' ? ptTradable(a, id) : ptLive(id) && openNow(id));
+const ptNow = a => (a.kind === 'replay' && R.on && S.bars.length ? (S.bars[S.bars.length - 1].time + tfOf(S.tf).sec) * 1000 - 1000 : Date.now());   // replay time: the end of the last bar shown
 function ptConvSym(ccy) {
   if (!ccy || ccy === 'USD') return null;
   if (['BTC', 'ETH', 'BNB'].includes(ccy)) return { id: 'BINANCE:' + ccy + 'USDT', inv: false };
@@ -5252,23 +5309,20 @@ function ptConvSym(ccy) {
 function ptConv(sym) {   // US dollars per 1 unit of the symbol's quote currency
   const c = quoteCcy(sym); if (c === 'USD') return 1;
   const cs = ptConvSym(c);
-  if (cs) { const q = ptQuote(cs.id), px = q ? q.last : DEMO[cs.id] && DEMO[cs.id][0]; if (px > 0) return cs.inv ? 1 / px : px; }
+  if (cs) { const q = ptQuoteLive(cs.id), px = q ? q.last : DEMO[cs.id] && DEMO[cs.id][0]; if (px > 0) return cs.inv ? 1 / px : px; }
   return PT_FIX[c] || 1;
 }
-const ptLev = sym => PT.a.set.lev[catOf(sym)] || 1;
+const ptLev = (a, sym) => a.set.lev[catOf(sym)] || 1;
 function ptStep(id) {
   const c = catOf(id);
   if (c === 'forex' || c === 'stock' || c === 'fund') return 1;
-  if (c === 'crypto') { const q = ptQuote(id), p = q ? q.last : (DEMO[id] && DEMO[id][0]) || 1; return p >= 10000 ? 1e-5 : p >= 100 ? 1e-4 : p >= 1 ? 1e-2 : 1; }
+  if (c === 'crypto') { const q = ptQ(id), p = q ? q.last : (DEMO[id] && DEMO[id][0]) || 1; return p >= 10000 ? 1e-5 : p >= 100 ? 1e-4 : p >= 1 ? 1e-2 : 1; }
   return 0.1;
 }
 const ptDec = step => (step >= 1 ? 0 : Math.round(-Math.log10(step)));
 const ptRoundQty = (id, q) => { const s = ptStep(id), d = ptDec(s); return Number((Math.floor(q / s + 1e-7) * s).toFixed(d)); };
 const ptFix = (id, q) => Number(q.toFixed(Math.max(ptDec(ptStep(id)), 8)));
-function ptFmtQty(id, q) {
-  const d = Math.max(ptDec(ptStep(id)), 0);
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: Math.min(8, d + 2) }).format(Math.abs(q));
-}
+function ptFmtQty(id, q) { const d = ptDec(ptStep(id)); return new Intl.NumberFormat('en-US', { maximumFractionDigits: Math.min(8, d + 2) }).format(Math.abs(q)); }
 const USDF = {};
 function usd(v, signed, compact) {
   if (v == null || !isFinite(v)) return '—';
@@ -5277,11 +5331,11 @@ function usd(v, signed, compact) {
   return USDF[k].format(v).replace('-', '−');
 }
 const ptPx = (id, p) => (p == null ? '—' : fmtP(p, precFor(id, p)));
-const ptPip = id => (classOf(id) === 'forex' && !CFD[id] ? (/JPY$/.test(rawOf(id)) ? 0.01 : /^X(AU|AG)\//.test(rawOf(id)) ? 0.01 : 0.0001) : Math.pow(10, -precFor(id, (ptQuote(id) || { last: 1 }).last)));
+const ptPip = id => (classOf(id) === 'forex' && !CFD[id] ? (/JPY$/.test(rawOf(id)) || /^X(AU|AG)\//.test(rawOf(id)) ? 0.01 : 0.0001) : Math.pow(10, -precFor(id, (ptQ(id) || { last: 1 }).last)));
 const ptPipName = id => (classOf(id) === 'forex' && !CFD[id] ? 'pips' : 'ticks');
 function ptDefQty(id) {
   const saved = store.get('ptQty', {}); if (saved && saved[id] > 0) return saved[id];
-  const c = catOf(id), q = ptQuote(id), p = q ? q.last : (DEMO[id] && DEMO[id][0]) || 1;
+  const c = catOf(id), q = ptQ(id), p = q ? q.last : (DEMO[id] && DEMO[id][0]) || 1;
   if (c === 'forex' && !/^X(AU|AG)\//.test(rawOf(id))) return 10000;
   return Math.max(ptStep(id), ptRoundQty(id, 1000 / (p * ptConv(id))));   // about $1,000 worth
 }
@@ -5294,36 +5348,36 @@ function ptDesc(o) {
   if (o.type === 'stop') return `${base} stop at ${ptPx(o.sym, o.stp)}`;
   return `${base} stop ${ptPx(o.sym, o.stp)}, limit ${ptPx(o.sym, o.lim)}`;
 }
-function ptMetrics() {
-  const a = PT.a; let upl = 0, margin = 0;
+function ptMetrics(a) {
+  let upl = 0, margin = 0;
   const rows = a.pos.map(p => {
-    const q = ptQuote(p.sym), conv = ptConv(p.sym), mark = q ? (p.qty > 0 ? q.bid : q.ask) : p.avg;
-    const pl = (mark - p.avg) * p.qty * conv, value = Math.abs(p.qty) * mark * conv, m = value / ptLev(p.sym);
+    const q = ptQuoteFor(a, p.sym), conv = ptConv(p.sym), mark = q ? (p.qty > 0 ? q.bid : q.ask) : p.avg;
+    const pl = (mark - p.avg) * p.qty * conv, value = Math.abs(p.qty) * mark * conv, m = value / ptLev(a, p.sym);
     upl += pl; margin += m;
     return { p, q, mark, pl, pct: ((mark - p.avg) / p.avg) * 100 * Math.sign(p.qty), value, margin: m };
   });
   const equity = a.bal + upl;
   return { rows, upl, margin, equity, avail: equity - margin, realized: a.bal - a.start };
 }
-function ptLog(m, k) { PT.a.log.push({ t: Date.now(), m, k: k || 'info' }); }
-function ptNotice(msg, kind) {
+function ptLog(a, m, k) { a.log.push({ t: Date.now(), m, k: k || 'info' }); }
+function ptNotice(a, msg, kind) {
   toast(msg, kind === 'warn' ? 'alert' : null);
-  if (PT.a.set.sound) beep();
-  notify('Paper trading', msg);
+  if (PT.s.ui.sound) beep();
+  if (a.kind === 'live') notify('Paper trading', msg);
 }
 
-// ----- the engine: orders, fills, positions -----
-function ptExec(o, px, when, tag) {   // fill an order at a price. Returns false if it was rejected.
-  const a = PT.a, sym = o.sym, conv = ptConv(sym), lev = ptLev(sym);
+// ----- the engine: orders, fills, positions (for one account) -----
+function ptExec(a, o, px, when, tag) {   // fill an order at a price. Returns false if it was rejected.
+  const sym = o.sym, conv = ptConv(sym), lev = ptLev(a, sym);
   const dq = o.side === 'buy' ? o.qty : -o.qty;
   const p = a.pos.find(x => x.sym === sym), old = p ? p.qty : 0, nw = ptFix(sym, old + dq);
   const added = !old || Math.sign(old) === Math.sign(dq) ? Math.abs(dq) : Math.sign(nw) !== Math.sign(old) ? Math.abs(nw) : 0;
   const comm = Math.abs(dq) * px * conv * (a.set.comm / 100);
   if (added > 0) {   // there must be enough margin for what this adds
-    const m = ptMetrics(), cur = p ? Math.abs(old) * px * conv / lev : 0, after = m.margin - cur + Math.abs(nw) * px * conv / lev;
+    const m = ptMetrics(a), cur = p ? Math.abs(old) * px * conv / lev : 0, after = m.margin - cur + Math.abs(nw) * px * conv / lev;
     if (after > m.equity - comm + 1e-9) {
       o.st = 'rejected'; o.upd = when; o.why = `Not enough margin: needs ${usd(Math.abs(nw) * px * conv / lev)}, ${usd(Math.max(0, m.equity - m.margin + cur))} available`;
-      ptLog(`Rejected: ${ptDesc(o)}. ${o.why}.`, 'reject'); ptNotice(`Order rejected: not enough margin for ${ptFmtQty(sym, o.qty)} ${label(sym)}.`, 'warn');
+      ptLog(a, `Rejected: ${ptDesc(o)}. ${o.why}.`, 'reject'); ptNotice(a, `Order rejected: not enough margin for ${ptFmtQty(sym, o.qty)} ${label(sym)} (${a.name}).`, 'warn');
       return false;
     }
   }
@@ -5334,7 +5388,7 @@ function ptExec(o, px, when, tag) {   // fill an order at a price. Returns false
     const feeOpen = p.fees * (closed / Math.abs(old)), feeClose = comm * (closed / Math.abs(dq));
     a.bal += gross - feeClose; p.fees = Math.max(0, p.fees - feeOpen);
     closedTrade = { id: uid(), sym, side: old > 0 ? 'long' : 'short', qty: ptFix(sym, closed), entry: p.avg, exit: px, at: p.at, end: when, pnl: gross - feeOpen - feeClose, fees: feeOpen + feeClose, why: tag || 'order' };
-    a.hist.push(closedTrade); ptJournal(closedTrade, p);
+    a.hist.push(closedTrade); ptJournal(a, closedTrade, p);
   }
   if (!nw) a.pos = a.pos.filter(x => x !== p);
   else if (!old || Math.sign(nw) !== Math.sign(old)) {   // a new position, or the order flipped it to the other side
@@ -5346,11 +5400,11 @@ function ptExec(o, px, when, tag) {   // fill an order at a price. Returns false
     if (o.tp) p.tp = o.tp; if (o.sl) p.sl = o.sl; if (o.trail) p.trail = o.trail;
   } else p.qty = nw;   // a partial close
   o.st = 'filled'; o.fill = px; o.fillAt = when; o.upd = when; if (tag) o.tag = tag;
-  const q = ptFmtQty(sym, o.qty), at = ptPx(sym, px);
-  ptLog(`Filled: ${ptSideWord(o.side)} ${q} ${label(sym)} at ${at}${closedTrade ? ` · ${usd(closedTrade.pnl, true)}` : ''}${tag && tag !== 'order' ? ` (${PT_WHY[tag]})` : ''}`, 'fill');
-  if (tag === 'tp' || tag === 'sl' || tag === 'trail') ptNotice(`${PT_WHY[tag]} hit: ${label(sym)} closed at ${at}, ${usd(closedTrade.pnl, true)}`);
-  else if (tag === 'stopout') ptNotice(`Margin call: your ${label(sym)} position was closed at ${at}, ${usd(closedTrade.pnl, true)}`, 'warn');
-  else ptNotice(`Filled: ${ptSideWord(o.side)} ${q} ${label(sym)} at ${at}${closedTrade ? `, ${usd(closedTrade.pnl, true)}` : ''}`);
+  const q = ptFmtQty(sym, o.qty), at = ptPx(sym, px), where = PT.s.accts.length > 1 ? ` (${a.name})` : '';
+  ptLog(a, `Filled: ${ptSideWord(o.side)} ${q} ${label(sym)} at ${at}${closedTrade ? ` · ${usd(closedTrade.pnl, true)}` : ''}${tag && tag !== 'order' ? ` (${PT_WHY[tag]})` : ''}`, 'fill');
+  if (tag === 'tp' || tag === 'sl' || tag === 'trail') ptNotice(a, `${PT_WHY[tag]} hit: ${label(sym)} closed at ${at}, ${usd(closedTrade.pnl, true)}${where}`);
+  else if (tag === 'stopout') ptNotice(a, `Margin call: your ${label(sym)} position was closed at ${at}, ${usd(closedTrade.pnl, true)}${where}`, 'warn');
+  else if (tag !== 'replay') ptNotice(a, `Filled: ${ptSideWord(o.side)} ${q} ${label(sym)} at ${at}${closedTrade ? `, ${usd(closedTrade.pnl, true)}` : ''}${where}`);
   return true;
 }
 function ptNewOrder(spec, now) {
@@ -5358,10 +5412,10 @@ function ptNewOrder(spec, now) {
     tif: spec.tif === 'day' && spec.type !== 'market' ? 'day' : 'gtc', exp: spec.tif === 'day' && spec.type !== 'market' ? ptDayEnd(spec.sym, now) : null,
     st: 'working', at: now, upd: now, fill: null, fillAt: null, why: '', trig: false, tag: spec.tag || null };
 }
-// Check working orders and the position's stops for one symbol at a price. `path` means the price moved there
-// smoothly from the last check (price history), so orders fill exactly at their price instead of at the market.
-function ptEval(sym, q, when, path) {
-  const a = PT.a; let changed = false;
+// Check an account's working orders and its position's stops for one symbol at a price. `path` means the price moved
+// there smoothly from the last check (price history or replay), so orders fill exactly at their price, not the market's.
+function ptEval(a, sym, q, when, path) {
+  let changed = false;
   for (const o of a.ord.slice()) {
     if (o.sym !== sym || o.st !== 'working' || o.at > when) continue;
     const buy = o.side === 'buy', mk = buy ? q.ask : q.bid;
@@ -5371,10 +5425,10 @@ function ptEval(sym, q, when, path) {
     else if (o.type === 'limit' || (o.type === 'stoplimit' && o.trig)) px = limitFill(o.lim);
     else if (o.type === 'stop') { if (buy ? mk >= o.stp : mk <= o.stp) px = path ? o.stp : mk; }
     else if (o.type === 'stoplimit' && (buy ? mk >= o.stp : mk <= o.stp)) {
-      o.trig = true; o.upd = when; changed = true; ptLog(`Triggered: ${ptDesc(o)}. It's now a limit order.`, 'info');
+      o.trig = true; o.upd = when; changed = true; ptLog(a, `Triggered: ${ptDesc(o)}. It's now a limit order.`, 'info');
       px = limitFill(o.lim);
     }
-    if (px != null) { ptExec(o, px, when, o.tag); changed = true; }
+    if (px != null) { ptExec(a, o, px, when, o.tag); changed = true; }
   }
   const p = a.pos.find(x => x.sym === sym);
   if (p && p.at <= when) {
@@ -5383,66 +5437,75 @@ function ptEval(sym, q, when, path) {
     let hit = null, px = null;
     if (p.sl != null && (long ? mk <= p.sl : mk >= p.sl)) { hit = p.trail ? 'trail' : 'sl'; px = path ? p.sl : mk; }
     else if (p.tp != null && (long ? mk >= p.tp : mk <= p.tp)) { hit = 'tp'; px = path ? p.tp : long ? Math.max(p.tp, mk) : Math.min(p.tp, mk); }
-    if (hit) { ptClosePos(p, px, when, hit); changed = true; }
+    if (hit) { ptClosePos(a, p, px, when, hit); changed = true; }
   }
   return changed;
 }
-function ptClosePos(p, px, when, tag, qty) {
+function ptClosePos(a, p, px, when, tag, qty) {
   const o = ptNewOrder({ sym: p.sym, side: p.qty > 0 ? 'sell' : 'buy', type: 'market', qty: qty || Math.abs(p.qty), tag }, when);
-  PT.a.ord.push(o); ptExec(o, px, when, tag); return o;
+  a.ord.push(o); ptExec(a, o, px, when, tag); return o;
 }
-function ptMarginCheck(when) {   // below half the margin in use, the biggest losers are closed (a margin call)
+function ptMarginCheck(a, when) {   // below half the margin in use, the biggest losers are closed (a margin call)
+  let any = false;
   for (let guard = 0; guard < 50; guard++) {
-    const m = ptMetrics(); if (!(m.margin > 0) || m.equity >= m.margin * 0.5) return false;
-    const r = m.rows.filter(x => x.q && ptCanFill(x.p.sym)).sort((x, y) => x.pl - y.pl)[0]; if (!r) return false;
-    ptLog(`Margin call: equity ${usd(m.equity)} fell below half the margin in use (${usd(m.margin)}).`, 'warn');
-    ptClosePos(r.p, r.p.qty > 0 ? r.q.bid : r.q.ask, when, 'stopout');
+    const m = ptMetrics(a); if (!(m.margin > 0) || m.equity >= m.margin * 0.5) return any;
+    const r = m.rows.filter(x => x.q && ptCanFill(a, x.p.sym)).sort((x, y) => x.pl - y.pl)[0]; if (!r) return any;
+    ptLog(a, `Margin call: equity ${usd(m.equity)} fell below half the margin in use (${usd(m.margin)}).`, 'warn');
+    ptClosePos(a, r.p, r.p.qty > 0 ? r.q.bid : r.q.ask, when, 'stopout'); any = true;
   }
-  return true;
+  return any;
 }
-function ptDayEnd(id, now) {   // when a Day order expires: the end of today's session
+function ptDayEnd(id, now) {   // when a Day order expires: the end of that day's session
   const cls = classOf(id);
   if (cls === 'crypto') { const d = new Date(now); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1); }
   const p = ny(now / 1000);
   if (cls === 'stock') {
-    let y = p.y, m = p.m, d = p.d;
+    let y = p.y, m = p.m, d = p.d, guard = 0;
     const close = () => nyTime(y, m, d, 16, 0) * 1000;
-    let guard = 0;
     while ((isWeekendYMD(y, m, d) || close() <= now) && guard++ < 10) { const x = new Date(Date.UTC(y, m - 1, d + 1)); y = x.getUTCFullYear(); m = x.getUTCMonth() + 1; d = x.getUTCDate(); }
     return close();
   }
   let t = nyTime(p.y, p.m, p.d, 17, 0) * 1000; if (t <= now) t += 864e5; return t;
 }
-function ptExpire(now) {
+function ptExpire(a, now) {
   let n = 0;
-  for (const o of PT.a.ord) if (o.st === 'working' && o.exp && o.exp <= now) { o.st = 'cancelled'; o.upd = now; o.why = 'Expired at the end of the day'; n++; ptLog(`Expired: ${ptDesc(o)} (Day order).`, 'cancel'); }
+  for (const o of a.ord) if (o.st === 'working' && o.exp && o.exp <= now) { o.st = 'cancelled'; o.upd = now; o.why = 'Expired at the end of the day'; n++; ptLog(a, `Expired: ${ptDesc(o)} (Day order).`, 'cancel'); }
   return n;
 }
-function ptJournal(h, p) {
-  if (!PT.a.set.journal || !PT.leader) return;   // only the tab that runs the account writes to the journal
+function ptJournal(a, h, p) {
+  if (a.set.journal !== true) return;
+  if (a.kind === 'live' && !PT.leader) return;   // only the tab that runs the live accounts writes them to the journal
   const t = jClean({ symbol: h.sym, side: h.side, opened_at: new Date(h.at).toISOString(), closed_at: new Date(h.end).toISOString(), entry: h.entry, exit: h.exit, qty: h.qty, fees: Math.round(h.fees * 100) / 100,
-    stop: p.sl || null, target: p.tp || null, pnl: Math.round(h.pnl * 100) / 100, strategy: 'Paper trading', tags: ['Paper'], notes: `Paper trade. ${PT_WHY[h.why] || 'Closed'}.` });
+    stop: p.sl || null, target: p.tp || null, pnl: Math.round(h.pnl * 100) / 100, strategy: ptJournalName(a), tags: a.kind === 'replay' ? ['Paper', 'Replay'] : ['Paper'],
+    notes: `${a.kind === 'replay' ? 'Bar replay' : 'Paper'} trade in ${a.name}. ${PT_WHY[h.why] || 'Closed'}.` });
   if (!t) return;
-  const go = (tries) => { if (!JR.loaded) { if (tries < 20) setTimeout(() => go(tries + 1), 1500); return; } jInsert([t]).then(() => Journal.changed()).catch(() => {}); };
+  const go = tries => { if (!JR.loaded) { if (tries < 20) setTimeout(() => go(tries + 1), 1500); return; } jInsert([t]).then(() => Journal.changed()).catch(() => {}); };
   go(0);
 }
-function ptTrim() {
-  const a = PT.a, working = a.ord.filter(o => o.st === 'working'), done = a.ord.filter(o => o.st !== 'working').sort((x, y) => x.upd - y.upd).slice(-PT_KEEP.done);
+const ptJournalName = a => ('Paper · ' + a.name).slice(0, 60);
+function ptKeep() { const n = Math.max(1, PT.s.accts.length); return { done: Math.min(150, Math.floor(400 / n)), hist: Math.min(300, Math.floor(600 / n)), log: Math.min(150, Math.floor(300 / n)) }; }   // the account record has a size limit
+function ptTrim(a, k) {
+  const working = a.ord.filter(o => o.st === 'working'), done = a.ord.filter(o => o.st !== 'working').sort((x, y) => x.upd - y.upd).slice(-k.done);
   a.ord = working.concat(done).sort((x, y) => x.at - y.at);
-  a.hist = a.hist.slice(-PT_KEEP.hist); a.log = a.log.slice(-PT_KEEP.log);
+  a.hist = a.hist.slice(-k.hist); a.log = a.log.slice(-k.log);
 }
-function ptStats() {
-  const h = PT.a.hist; let w = 0, l = 0, gw = 0, gl = 0;
-  h.forEach(x => { if (x.pnl > 0) { w++; gw += x.pnl; } else if (x.pnl < 0) { l++; gl += x.pnl; } });
+function ptStats(a) {
+  const h = a.hist; let w = 0, gw = 0, gl = 0;
+  h.forEach(x => { if (x.pnl > 0) { w++; gw += x.pnl; } else if (x.pnl < 0) gl += x.pnl; });
   return { n: h.length, win: h.length ? w / h.length : null, pf: gl < 0 ? gw / -gl : gw > 0 ? Infinity : null, net: h.reduce((s, x) => s + x.pnl, 0) };
 }
 
 // ----- placing, changing and cancelling -----
-function ptCheckOrder(spec) {   // returns a reason the order can't be placed, or ''
-  const id = spec.sym, q = ptQuote(id);
-  if (R.on) return 'Trading is paused during bar replay. Go back to live prices to trade.';
-  if (!ptLive(id)) return srcOf(id) === 'demo' ? `${label(id)} isn't live on RealChart right now, so it can't be traded.` : `Waiting for a live price for ${label(id)}…`;
-  if (!q) return `Waiting for a live price for ${label(id)}…`;
+function ptCheckOrder(a, spec) {   // returns a reason the order can't be placed, or ''
+  const id = spec.sym;
+  if (a.kind === 'live' && R.on) return 'Bar replay is on, so orders go to a replay account. Leave replay to trade on live prices.';
+  if (a.kind === 'replay') {
+    if (!R.on) return 'Start a bar replay to trade in a replay account.';
+    if (R.picking) return 'Pick the bar to replay from first.';
+    if (id !== S.symbol) return `In bar replay you can only trade the symbol being replayed (${label(S.symbol)}).`;
+  } else if (!ptLive(id)) return srcOf(id) === 'demo' ? `${label(id)} isn't live on RealChart right now, so it can't be traded.` : `Waiting for a live price for ${label(id)}…`;
+  const q = ptQuoteFor(a, id);
+  if (!q) return `Waiting for a price for ${label(id)}…`;
   if (!(spec.qty > 0)) return 'Enter a quantity.';
   if (spec.qty < ptStep(id) - 1e-12) return `The smallest quantity for ${label(id)} is ${ptFmtQty(id, ptStep(id))}.`;
   const buy = spec.side === 'buy', mk = buy ? q.ask : q.bid;
@@ -5454,62 +5517,122 @@ function ptCheckOrder(spec) {   // returns a reason the order can't be placed, o
   if (spec.sl != null && (buy ? spec.sl >= ref : spec.sl <= ref)) return `Stop loss must be ${buy ? 'below' : 'above'} the entry price (${ptPx(id, ref)}).`;
   return '';
 }
-function ptPlace(spec) {
-  const err = ptCheckOrder(spec); if (err) { toast(err); return null; }
-  const now = Date.now(), o = ptNewOrder(spec, now);
-  PT.a.ord.push(o); ptLog(`Placed: ${ptDesc(o)}${o.tif === 'day' ? ' (Day)' : ''}.`, 'info'); ptRememberQty(o.sym, o.qty);
-  if (PT.leader && ptCanFill(o.sym)) { const q = ptQuote(o.sym); if (q) ptEval(o.sym, q, now, false); }
-  if (o.st === 'working') toast(o.type === 'market' ? (openNow(o.sym) ? `Order sent: ${ptDesc(o)}` : `${label(o.sym)}'s market is closed. Your order fills when it opens.`) : `Order placed: ${ptDesc(o)}`);
-  Paper.changed(); return o;
+// Places an order. The first order in an account asks whether its trades go into the Journal; `done` runs once it's placed.
+function ptPlace(a, spec, done) {
+  const err = ptCheckOrder(a, spec); if (err) { toast(err); return null; }
+  if (a.set.journal == null) { ptAskJournal(a, () => { const o = ptPlace(a, spec); if (o && done) done(o); }); return null; }
+  const now = ptNow(a), o = ptNewOrder(spec, now);
+  a.ord.push(o); ptLog(a, `Placed: ${ptDesc(o)}${o.tif === 'day' ? ' (Day)' : ''}.`, 'info'); ptRememberQty(o.sym, o.qty);
+  if ((a.kind === 'replay' || PT.leader) && ptCanFill(a, o.sym)) { const q = ptQuoteFor(a, o.sym); if (q) ptEval(a, o.sym, q, now, false); }
+  if (o.st === 'working') toast(o.type === 'market' ? (openNow(o.sym) || a.kind === 'replay' ? `Order sent: ${ptDesc(o)}` : `${label(o.sym)}'s market is closed. Your order fills when it opens.`) : `Order placed: ${ptDesc(o)}`);
+  Paper.changed(); if (done) done(o); return o;
 }
-function ptCancel(o, why) {
+function ptCancel(a, o, why) {
   if (!o || o.st !== 'working') return;
-  o.st = 'cancelled'; o.upd = Date.now(); o.why = why || 'Cancelled by you'; ptLog(`Cancelled: ${ptDesc(o)}.`, 'cancel');
+  o.st = 'cancelled'; o.upd = ptNow(a); o.why = why || 'Cancelled by you'; ptLog(a, `Cancelled: ${ptDesc(o)}.`, 'cancel');
 }
-function ptCloseNow(p, qty, tag) {   // close all or part of a position at the market
-  if (!ptLive(p.sym)) { toast(`${label(p.sym)} isn't live right now, so the position can't be closed.`); return; }
-  if (PT.a.ord.some(o => o.st === 'working' && o.sym === p.sym && o.type === 'market' && (o.tag === 'close' || o.tag === 'reverse'))) { toast(`A closing order for ${label(p.sym)} is already waiting for the market to open.`); return; }
-  const now = Date.now();
+function ptCloseNow(a, p, qty, tag) {   // close all or part of a position at the market
+  if (!ptTradable(a, p.sym)) { toast(a.kind === 'replay' ? `Show ${label(p.sym)} in the replay to close this position.` : `${label(p.sym)} isn't live right now, so the position can't be closed.`); return; }
+  if (a.ord.some(o => o.st === 'working' && o.sym === p.sym && o.type === 'market' && (o.tag === 'close' || o.tag === 'reverse'))) { toast(`A closing order for ${label(p.sym)} is already waiting for the market to open.`); return; }
+  const now = ptNow(a);
   const o = ptNewOrder({ sym: p.sym, side: p.qty > 0 ? 'sell' : 'buy', type: 'market', qty: qty || Math.abs(p.qty), tag: tag || 'close' }, now);
-  PT.a.ord.push(o);
-  if (ptCanFill(p.sym)) { const q = ptQuote(p.sym); ptExec(o, p.qty > 0 ? q.bid : q.ask, now, o.tag); }
+  a.ord.push(o);
+  if (ptCanFill(a, p.sym)) { const q = ptQuoteFor(a, p.sym); ptExec(a, o, p.qty > 0 ? q.bid : q.ask, now, o.tag); }
   else toast(`${label(p.sym)}'s market is closed. The position closes when it opens.`);
   Paper.changed();
 }
-function ptReverse(p) {
-  if (!ptCanFill(p.sym)) { toast(`${label(p.sym)} can't be traded right now${ptLive(p.sym) ? ': its market is closed' : ''}.`); return; }
-  const now = Date.now(), q = ptQuote(p.sym), side = p.qty > 0 ? 'sell' : 'buy', qty = ptFix(p.sym, Math.abs(p.qty) * 2);
+function ptReverse(a, p) {
+  if (!ptCanFill(a, p.sym)) { toast(`${label(p.sym)} can't be traded right now${ptLive(p.sym) ? ': its market is closed' : ''}.`); return; }
+  const now = ptNow(a), q = ptQuoteFor(a, p.sym), side = p.qty > 0 ? 'sell' : 'buy', qty = ptFix(p.sym, Math.abs(p.qty) * 2);
   const o = ptNewOrder({ sym: p.sym, side, type: 'market', qty, tag: 'reverse' }, now);
-  PT.a.ord.push(o); ptExec(o, side === 'buy' ? q.ask : q.bid, now, 'reverse'); Paper.changed();
+  a.ord.push(o); ptExec(a, o, side === 'buy' ? q.ask : q.bid, now, 'reverse'); Paper.changed();
 }
-function ptMark(p) { const q = ptQuote(p.sym); return q ? (p.qty > 0 ? q.bid : q.ask) : p.avg; }
-function ptBracketErr(p, kind, v) {   // a position's take profit and stop loss must sit on the right side of the price
+function ptMark(a, p) { const q = ptQuoteFor(a, p.sym); return q ? (p.qty > 0 ? q.bid : q.ask) : p.avg; }
+function ptBracketErr(a, p, kind, v) {   // a position's take profit and stop loss must sit on the right side of the price
   if (v == null) return '';
-  const long = p.qty > 0, mk = ptMark(p);
+  const long = p.qty > 0, mk = ptMark(a, p);
   if (kind === 'tp' && (long ? v <= mk : v >= mk)) return `Take profit must be ${long ? 'above' : 'below'} the current price (${ptPx(p.sym, mk)}).`;
   if (kind === 'sl' && (long ? v >= mk : v <= mk)) return `Stop loss must be ${long ? 'below' : 'above'} the current price (${ptPx(p.sym, mk)}).`;
   return '';
 }
 // trailOn: the stop follows the price at its current distance from it
-function ptSetBrackets(p, tp, sl, trailOn) {
-  const err = ptBracketErr(p, 'tp', tp) || ptBracketErr(p, 'sl', sl); if (err) return err;
-  p.tp = tp || null; p.sl = sl || null; p.trail = trailOn && sl ? Math.abs(ptMark(p) - sl) : null;
-  ptLog(`${label(p.sym)} position: take profit ${p.tp ? ptPx(p.sym, p.tp) : 'none'}, stop loss ${p.sl ? ptPx(p.sym, p.sl) + (p.trail ? ' (trailing)' : '') : 'none'}.`, 'info');
+function ptSetBrackets(a, p, tp, sl, trailOn) {
+  const err = ptBracketErr(a, p, 'tp', tp) || ptBracketErr(a, p, 'sl', sl); if (err) return err;
+  p.tp = tp || null; p.sl = sl || null; p.trail = trailOn && sl ? Math.abs(ptMark(a, p) - sl) : null;
+  ptLog(a, `${label(p.sym)} position: take profit ${p.tp ? ptPx(p.sym, p.tp) : 'none'}, stop loss ${p.sl ? ptPx(p.sym, p.sl) + (p.trail ? ' (trailing)' : '') : 'none'}.`, 'info');
   return '';
 }
 
-// ----- the account object the rest of the page talks to -----
+// ----- accounts: switch, create, rename, delete, and the Journal question -----
+function ptSwitch(id) {
+  const a = ptAcctById(id); if (!a) return;
+  if (a.kind === 'live') PT.s.cur = a.id; else PT.s.rcur = a.id;
+  if ($('#ordDlg').open) $('#ordDlg').close();
+  Paper.changed(); toast(`Now trading in ${a.name}${a.kind === 'replay' && !R.on ? ' (used during bar replay)' : ''}.`);
+}
+function ptAskJournal(a, then) {
+  PT.jAsk = { aid: a.id, then };
+  $('#pjTitle').textContent = 'Add paper trades to your Journal?';
+  $('#pjText').textContent = `When a trade in “${a.name}” closes, it can be added to your trade journal automatically, tagged “Paper”${a.kind === 'replay' ? ' and “Replay”' : ''}, so the Journal's statistics include it. Or keep this account's trades separate.`;
+  $('#ptJDlg').showModal();
+}
+function ptAnswerJournal(yes) {
+  const q = PT.jAsk; PT.jAsk = null; $('#ptJDlg').close();
+  const a = q && ptAcctById(q.aid); if (!a) return;
+  a.set.journal = yes; ptLog(a, yes ? 'Closed trades will be added to the Journal.' : 'Closed trades are kept out of the Journal.', 'info');
+  Paper.save(); toast(yes ? `${a.name}: closed trades will go into your Journal.` : `${a.name}: trades stay out of your Journal. You can change this in the Account tab.`);
+  if (q.then) q.then();
+}
+function ptNewAcctDlg(kind) {
+  if (PT.s.accts.length >= PT_MAX_ACCTS) { toast(`You can have up to ${PT_MAX_ACCTS} paper accounts. Delete one to make another.`); return; }
+  const dlg = $('#ptNewDlg'); dlg.dataset.kind = kind || (R.on ? 'replay' : 'live');
+  const n = PT.s.accts.length + 1;
+  $('#pnName').value = `Account ${n}`; $('#pnBal').value = '10000'; $('#pnErr').hidden = true;
+  dlg.querySelectorAll('input[name="pnj"]').forEach(r => { r.checked = false; });
+  ptNewRender(); dlg.showModal(); setTimeout(() => $('#pnName').select(), 30);
+}
+function ptNewRender() {
+  const dlg = $('#ptNewDlg'), kind = dlg.dataset.kind, bal = ptNum($('#pnBal').value);
+  dlg.querySelectorAll('#pnKind .btn').forEach(b => { const on = b.dataset.kind === kind; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
+  dlg.querySelectorAll('#pnSizes button').forEach(b => b.classList.toggle('on', +b.dataset.v === bal));
+  $('#pnKindNote').textContent = kind === 'replay' ? 'Trades in a bar replay: start a replay, then buy and sell as the bars play.' : 'Trades on live prices, like a real account.';
+}
+function ptNewSubmit() {
+  const dlg = $('#ptNewDlg'), name = $('#pnName').value.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 30), bal = ptNum($('#pnBal').value), j = dlg.querySelector('input[name="pnj"]:checked');
+  const err = !name ? 'Give the account a name.' : !(bal >= 100 && bal <= 1e9) ? 'The starting balance must be between $100 and $1,000,000,000.' : !j ? 'Choose whether its trades go into your Journal.' : PT.s.accts.some(a => a.name.toLowerCase() === name.toLowerCase()) ? 'You already have an account with that name.' : '';
+  if (err) { $('#pnErr').textContent = err; $('#pnErr').hidden = false; return; }
+  const kind = dlg.dataset.kind, a = ptNewAcct(name, Math.round(bal * 100) / 100, kind, j.value === 'yes'), cur = ptA();
+  a.set.lev = Object.assign({}, cur.set.lev); a.set.comm = cur.set.comm;   // the same trading settings as the account in use
+  PT.s.accts.push(a); if (kind === 'live') PT.s.cur = a.id; else PT.s.rcur = a.id;
+  ptLog(a, `Account opened with ${usd(a.start)}.`, 'info');
+  dlg.close(); if ($('#ordDlg').open) $('#ordDlg').close();
+  Paper.changed(); toast(`${a.name} is ready with ${usd(a.start)}${kind === 'replay' && !R.on ? '. Start a bar replay to trade in it.' : '.'}`);
+}
+function ptDeleteAcct(a) {
+  const same = PT.s.accts.filter(x => x.kind === a.kind && x !== a);
+  if (!same.length) { toast(`Keep at least one ${a.kind === 'replay' ? 'replay' : 'live-price'} account. Reset it instead.`); return; }
+  ptConfirm(`Delete ${a.name}?`, `This deletes the account with its positions, orders and history. Trades already added to your Journal stay there.`, 'Delete account', () => {
+    PT.s.accts = PT.s.accts.filter(x => x !== a);
+    if (PT.s.cur === a.id) PT.s.cur = ptLiveAccts()[0].id;
+    if (PT.s.rcur === a.id) PT.s.rcur = (PT.s.accts.find(x => x.kind === 'replay') || { id: '' }).id;
+    Paper.changed(); toast(`${a.name} deleted.`);
+  });
+}
+
+// ----- the paper trading object the rest of the page talks to -----
 const Paper = {
   boot() {
-    window.addEventListener('storage', e => {   // another tab changed the account
+    window.addEventListener('storage', e => {   // another tab changed the accounts
       if (e.key !== NS + 'paper') return;
-      PT.a = ptClean(store.get('paper', null));
+      PT.s = ptClean(store.get('paper', null));
       if (this.relevantSet()) ensureTickerSubs();
       let changed = false;
-      if (PT.leader) for (const s of PT.relevant) if (ptCanFill(s) && !PT.catching.has(s)) { const q = ptQuote(s); if (q && ptEval(s, q, Date.now(), false)) changed = true; }
+      if (PT.leader) for (const a of ptLiveAccts()) for (const s of new Set(a.ord.filter(o => o.st === 'working').map(o => o.sym).concat(a.pos.map(p => p.sym)))) {
+        if (ptCanFill(a, s) && !PT.catching.has(s)) { const q = ptQuoteLive(s); if (q && ptEval(a, s, q, Date.now(), false)) changed = true; }
+      }
       if (changed) this.changed(); else { this.refresh(); syncTradeMarks(); }
     });
-    // Only one tab runs the account (fills orders), so two open tabs never fill the same order twice.
+    // Only one tab runs the live accounts (fills orders), so two open tabs never fill the same order twice.
     try {
       if (navigator.locks && navigator.locks.request) navigator.locks.request('realchart-paper', () => new Promise(() => { PT.leader = true; if (S.ready) this.catchUp(); }));
       else PT.leader = true;
@@ -5518,39 +5641,48 @@ const Paper = {
     ptUiInit(); this.refresh();
   },
   ready() { this.relevantSet(); if (PT.leader) this.catchUp(); ptQtSync(); },
-  relevantSet() {
-    const s = new Set(); PT.a.pos.forEach(p => { s.add(p.sym); const cs = ptConvSym(quoteCcy(p.sym)); if (cs) s.add(cs.id); });
-    PT.a.ord.forEach(o => { if (o.st === 'working') s.add(o.sym); });
+  relevantSet() {   // symbols the live accounts need prices for
+    const s = new Set();
+    for (const a of ptLiveAccts()) {
+      a.pos.forEach(p => { s.add(p.sym); const cs = ptConvSym(quoteCcy(p.sym)); if (cs) s.add(cs.id); });
+      a.ord.forEach(o => { if (o.st === 'working') s.add(o.sym); });
+    }
     const before = [...PT.relevant].sort().join(); PT.relevant = s;
     return before !== [...s].sort().join();
   },
   symbols() { return [...PT.relevant]; },
   onPrice(sym) {
-    if (sym === S.symbol) ptQtSync();
+    if (sym === S.symbol && !R.on) ptQtSync();
     if (!PT.relevant.has(sym)) return;
-    if (PT.leader && !PT.catching.has(sym) && ptCanFill(sym)) { const q = ptQuote(sym); if (q && ptEval(sym, q, Date.now(), false)) { this.changed(); return; } }
-    if (sym === S.symbol && PT.a.pos.some(p => p.sym === sym)) markDirty();
+    if (PT.leader && !PT.catching.has(sym) && ptLive(sym) && openNow(sym)) {
+      const q = ptQuoteLive(sym); let changed = false;
+      if (q) for (const a of ptLiveAccts()) if (a.ord.some(o => o.sym === sym && o.st === 'working') || a.pos.some(p => p.sym === sym)) { if (ptEval(a, sym, q, Date.now(), false)) changed = true; }
+      if (changed) { this.changed(); return; }
+    }
+    if (sym === S.symbol && !R.on && ptLiveAcct().pos.some(p => p.sym === sym)) markDirty();
     this.ui();
   },
   tick() {
     const now = Date.now();
     if (PT.leader && S.ready) {
-      let changed = ptExpire(now) > 0;
-      if (ptMarginCheck(now)) changed = true;
+      let changed = false;
+      for (const a of ptLiveAccts()) { if (ptExpire(a, now)) changed = true; if (ptMarginCheck(a, now)) changed = true; }
       if (changed) this.changed();
       else if (PT.trailMoved && now - PT.trailMoved > 8000) { PT.trailMoved = 0; this.save(); }
       if (!PT.catching.size && (!this.seenAt || now - this.seenAt > 10000)) { this.seenAt = now; store.raw('ptSeen', now); }
     }
     ptQtSync();
   },
-  async catchUp() {   // orders and stops that would have filled while the page was closed
+  async catchUp() {   // orders and stops in the live accounts that would have filled while the page was closed
     if (this.caught) return; this.caught = true;
     const seen = +store.get('ptSeen', 0), now = Date.now();
     if (!(seen > 0) || now - seen < 60000) return;
     const syms = new Set();
-    PT.a.ord.forEach(o => { if (o.st === 'working' && o.type !== 'market' && o.at < now) syms.add(o.sym); });
-    PT.a.pos.forEach(p => { if (p.tp || p.sl || p.trail) syms.add(p.sym); });
-    const done0 = PT.a.ord.filter(o => o.st === 'filled').length;
+    for (const a of ptLiveAccts()) {
+      a.ord.forEach(o => { if (o.st === 'working' && o.type !== 'market' && o.at < now) syms.add(o.sym); });
+      a.pos.forEach(p => { if (p.tp || p.sl || p.trail) syms.add(p.sym); });
+    }
+    const filled = () => ptLiveAccts().reduce((n, a) => n + a.ord.filter(o => o.st === 'filled').length, 0), done0 = filled();
     for (const sym of syms) {
       if (srcOf(sym) === 'demo') continue;
       PT.catching.add(sym);
@@ -5561,17 +5693,45 @@ const Paper = {
           const t0 = b.time * 1000;
           if (t0 < seen || t0 + step * 1000 > now) continue;   // only bars that started after the page was last open and have finished
           const pts = b.close >= b.open ? [b.open, b.low, b.high, b.close] : [b.open, b.high, b.low, b.close];
-          pts.forEach((px, i) => ptEval(sym, { bid: px, ask: px, last: px }, t0 + i * step * 250, i > 0));
+          for (const a of ptLiveAccts()) pts.forEach((px, i) => ptEval(a, sym, { bid: px, ask: px, last: px }, t0 + i * step * 250, i > 0));
         }
       } catch (e) { /* that market's history isn't available; its live prices take over */ }
       PT.catching.delete(sym);
     }
-    const n = PT.a.ord.filter(o => o.st === 'filled').length - done0;
-    if (n) { ptLog(`While RealChart was closed, ${n} order${n === 1 ? '' : 's'} filled from the price history.`, 'info'); toast(`While you were away, ${n} paper order${n === 1 ? '' : 's'} filled. See the Orders tab.`); this.changed(); }
+    const n = filled() - done0;
+    if (n) { toast(`While you were away, ${n} paper order${n === 1 ? '' : 's'} filled. See the Orders tab.`); this.changed(); }
     store.raw('ptSeen', Date.now());
   },
-  save() { ptTrim(); store.set('paper', PT.a); },
-  changed() {   // after anything in the account changed
+  // ----- bar replay -----
+  replayStart() { const a = ptReplayAcct(true); if (S.bars.length) PT.rlast[S.symbol] = S.bars[S.bars.length - 1].close; if (a) this.changed(); },
+  replayBar(b) {   // a new bar appeared in the replay: fill from it
+    const a = ptReplayAcct(); if (!a) return;
+    PT.rlast[S.symbol] = b.close;
+    let changed = false;
+    if (a.ord.some(o => o.sym === S.symbol && o.st === 'working') || a.pos.some(p => p.sym === S.symbol)) {
+      const step = tfOf(S.tf).sec, t0 = b.time * 1000, pts = b.close >= b.open ? [b.open, b.low, b.high, b.close] : [b.open, b.high, b.low, b.close];
+      pts.forEach((px, i) => { if (ptEval(a, S.symbol, { bid: px, ask: px, last: px }, t0 + i * step * 250, i > 0)) changed = true; });
+    }
+    if (ptExpire(a, (b.time + tfOf(S.tf).sec) * 1000)) changed = true;
+    if (ptMarginCheck(a, (b.time + tfOf(S.tf).sec) * 1000 - 1000)) changed = true;
+    if (changed) this.changed();
+    else if (a.pos.length) { markDirty(); this.ui(); }
+    ptQtSync();
+  },
+  // Leaving the replay, going back in it, or jumping to another bar closes the replay positions at the last replayed
+  // price and cancels the replay orders, since the bars they depend on change. otherOnly: only those not on the chart's symbol.
+  replayClose(why, otherOnly) {
+    const a = ptReplayAcct(); if (!a) return;
+    const pos = a.pos.filter(p => !otherOnly || p.sym !== S.symbol), ords = a.ord.filter(o => o.st === 'working' && (!otherOnly || o.sym !== S.symbol));
+    if (!pos.length && !ords.length) return;
+    const now = ptNow(a);
+    ords.forEach(o => ptCancel(a, o, why));
+    pos.forEach(p => { const q = ptQuoteFor(a, p.sym), px = q ? (p.qty > 0 ? q.bid : q.ask) : p.avg; ptClosePos(a, p, px, now, 'replay'); });
+    if (pos.length) toast(`${why}: ${pos.length} replay position${pos.length === 1 ? ' was' : 's were'} closed at the last replayed price.`);
+    this.changed();
+  },
+  save() { const k = ptKeep(); PT.s.accts.forEach(a => ptTrim(a, k)); store.set('paper', PT.s); },
+  changed() {   // after anything in the accounts changed
     this.save();
     if (this.relevantSet()) ensureTickerSubs();
     this.refresh(); syncTradeMarks();
@@ -5580,9 +5740,9 @@ const Paper = {
   ui() { if (!PT.uiT) PT.uiT = setTimeout(() => { PT.uiT = 0; ptRenderPanel(false); ptTicketLive(); }, 250); },
   draw(m, W, H) { ptDraw(m, W, H); },
   pointerDown(e, x, y) { return ptPointerDown(e, x, y); },
-  marks() {   // executions on the chart
-    if (!PT.a.set.exec || R.on) return [];
-    return PT.a.ord.filter(o => o.st === 'filled' && o.sym === S.symbol && o.fillAt).map(o => ({ at: o.fillAt / 1000, buy: o.side === 'buy', text: `${ptSideWord(o.side)} ${ptFmtQty(o.sym, o.qty)}` }));
+  marks() {   // executions in the account on screen, for the chart
+    if (!PT.s.ui.exec) return [];
+    return ptA().ord.filter(o => o.st === 'filled' && o.sym === S.symbol && o.fillAt).map(o => ({ at: o.fillAt / 1000, buy: o.side === 'buy', text: `${ptSideWord(o.side)} ${ptFmtQty(o.sym, o.qty)}` }));
   },
   hotkey(side) { ptTicket({ sym: S.symbol, side }); },
 };
@@ -5590,36 +5750,37 @@ const Paper = {
 // ----- quick trade buttons on the chart -----
 function ptQtSync() {
   const box = $('#qt'); if (!box) return;
-  const id = S.symbol, show = S.ready && PT.a.set.qt && !R.on && curView() === 'chart';
-  box.hidden = !show; wrap.classList.toggle('qt-on', show);
+  const id = S.symbol, a = ptA(), show = S.ready && PT.s.ui.qt && !R.picking && curView() === 'chart';
+  box.hidden = !show; wrap.classList.toggle('qt-on', show); box.classList.toggle('replay', R.on);
   if (!show) return;
-  const live = ptLive(id), q = ptQuote(id);
-  box.classList.toggle('off', !live);
-  box.title = live ? (PT.a.set.one ? 'One-click trading is on: Buy and Sell place market orders straight away' : 'Paper trading: click Buy or Sell to open an order') : `${label(id)} isn't live right now, so it can't be traded`;
+  const ok = ptTradable(a, id), q = ptQuoteFor(a, id);
+  box.classList.toggle('off', !ok);
+  box.title = R.on ? `Bar replay trading in ${a.name}` : !ok ? `${label(id)} isn't live right now, so it can't be traded` : PT.s.ui.one ? 'One-click trading is on: Buy and Sell place market orders straight away' : `Paper trading in ${a.name}: click Buy or Sell to open an order`;
   $('#qtBid').textContent = q ? ptPx(id, q.bid) : '—'; $('#qtAsk').textContent = q ? ptPx(id, q.ask) : '—';
   const sp = q ? q.ask - q.bid : 0;
-  $('#qtSpread').textContent = q && sp > 0 ? (sp / ptPip(id)).toFixed(classOf(id) === 'forex' && !CFD[id] ? 1 : 0) : '';
+  $('#qtSpread').textContent = R.on ? 'replay' : q && sp > 0 ? (sp / ptPip(id)).toFixed(classOf(id) === 'forex' && !CFD[id] ? 1 : 0) : '';
   const qi = $('#qtQty');
-  if (qi.dataset.sym !== id) { qi.dataset.sym = id; qi.value = ptFmtQty(id, ptDefQty(id)).replace(/,/g, ''); }
+  if (qi.dataset.sym !== id && document.activeElement !== qi) { qi.dataset.sym = id; qi.value = ptFmtQty(id, ptDefQty(id)).replace(/,/g, ''); }
   try { const w = chart.priceScale('right').width(); if (w && box.dataset.w !== String(w)) { box.dataset.w = String(w); box.style.right = (w + 10) + 'px'; } } catch (e) { /* keep the CSS default */ }
 }
 function ptQtQty() { const v = ptNum($('#qtQty').value); return v > 0 ? ptRoundQty(S.symbol, v) : ptDefQty(S.symbol); }
 function ptQuick(side) {
-  const id = S.symbol, qty = ptQtQty();
-  if (PT.a.set.one && ptLive(id)) ptPlace({ sym: id, side, type: 'market', qty });
+  const id = S.symbol, qty = ptQtQty(), a = ptA();
+  if (PT.s.ui.one && ptTradable(a, id)) ptPlace(a, { sym: id, side, type: 'market', qty });
   else ptTicket({ sym: id, side, qty });
 }
 
 // ----- the order ticket -----
+const ptTA = () => (PT.t && ptAcctById(PT.t.aid)) || ptA();   // the account the ticket is for
 function ptTicket(opts) {
-  const id = opts.sym || S.symbol;
-  const t = PT.t = { mode: opts.mode || 'new', sym: id, side: opts.side || 'buy', type: opts.type || 'market', oid: opts.oid || null, pid: opts.pid || null };
-  const dlg = $('#ordDlg'), o = t.oid ? PT.a.ord.find(x => x.id === t.oid) : null, p = t.pid ? PT.a.pos.find(x => x.id === t.pid) : null;
+  const id = opts.sym || S.symbol, a = ptA();
+  const t = PT.t = { aid: a.id, mode: opts.mode || 'new', sym: id, side: opts.side || 'buy', type: opts.type || 'market', oid: opts.oid || null, pid: opts.pid || null };
+  const dlg = $('#ordDlg'), o = t.oid ? a.ord.find(x => x.id === t.oid) : null, p = t.pid ? a.pos.find(x => x.id === t.pid) : null;
   if (t.mode === 'modify' && !o) return; if (t.mode === 'pos' && !p) return;
-  dlg.dataset.mode = t.mode;
+  dlg.dataset.mode = t.mode; dlg.classList.toggle('replay', a.kind === 'replay');
   $('#oTitle').textContent = t.mode === 'modify' ? `Modify order · ${label(id)}` : t.mode === 'pos' ? `${label(id)} position` : label(id);
-  $('#oName').textContent = nameOf(id);
-  const q = ptQuote(id), px = q ? q.last : null, prec = px ? precFor(id, px) : 2;
+  $('#oName').textContent = `${a.kind === 'replay' ? 'Bar replay · ' : ''}${a.name} · ${nameOf(id)}`;
+  const q = ptQuoteFor(a, id), px = q ? q.last : null, prec = px ? precFor(id, px) : 2;
   const setPx = (sel, v) => { $(sel).value = v != null ? Number(v).toFixed(prec) : ''; };
   if (o) { t.side = o.side; t.type = o.type; setPx('#oLim', o.lim); setPx('#oStop', o.stp); $('#oQty').value = String(o.qty); $('#oTif').value = o.tif; }
   else if (p) { t.side = p.qty > 0 ? 'buy' : 'sell'; $('#oQty').value = String(Math.abs(p.qty)); $('#oPartQty').value = String(ptRoundQty(id, Math.abs(p.qty) / 2) || Math.abs(p.qty)); }
@@ -5635,11 +5796,11 @@ function ptTicket(opts) {
   ['#oTpMode', '#oSlMode'].forEach(x => { $(x).value = 'price'; $(x).dataset.prev = 'price'; }); setPx('#oTp', tp); setPx('#oSl', sl);
   $('#oRiskOn').checked = false;
   {   // ready-made take profit and stop loss where there's none yet: 2:1, sized to how much the market usually moves
-    const ref = p ? ptMark(p) : ptTicketRef(), c = catOf(id), r = (c === 'forex' && !/^X(AU|AG)\//.test(rawOf(id)) ? 0.25 : c === 'bond' ? 0.2 : c === 'crypto' ? 1 : 0.5) / 100, b = t.side === 'buy' ? 1 : -1;
+    const ref = p ? ptMark(a, p) : ptTicketRef(), c = catOf(id), r = (c === 'forex' && !/^X(AU|AG)\//.test(rawOf(id)) ? 0.25 : c === 'bond' ? 0.2 : c === 'crypto' ? 1 : 0.5) / 100, b = t.side === 'buy' ? 1 : -1;
     if (ref) { if (tp == null) setPx('#oTp', ref * (1 + 2 * r * b)); if (sl == null) setPx('#oSl', ref * (1 - r * b)); }
   }
-  $('#oUnit').textContent = { forex: CFD[id] ? 'units' : 'units', stock: 'shares', fund: 'shares', crypto: splitSym(rawOf(id))[0] || 'coins' }[catOf(id)] || 'units';
-  t.touched = { tp: !!tp, sl: !!sl }; t.ref = ptTicketRef();
+  $('#oUnit').textContent = { stock: 'shares', fund: 'shares', crypto: splitSym(rawOf(id))[0] || 'coins' }[catOf(id)] || 'units';
+  t.touched = { tp: tp != null, sl: sl != null }; t.ref = ptTicketRef();
   ptTicketRender();
   if (!dlg.open) {
     if (matchMedia('(max-width: 880px)').matches) { dlg.style.left = dlg.style.top = ''; dlg.showModal(); }
@@ -5649,8 +5810,9 @@ function ptTicket(opts) {
 }
 function ptTicketRef() {   // the entry price the brackets are measured from
   const t = PT.t; if (!t) return null;
-  if (t.mode === 'pos') { const p = PT.a.pos.find(x => x.id === t.pid); return p ? p.avg : null; }
-  const q = ptQuote(t.sym);
+  const a = ptTA();
+  if (t.mode === 'pos') { const p = a.pos.find(x => x.id === t.pid); return p ? p.avg : null; }
+  const q = ptQuoteFor(a, t.sym);
   if (t.type === 'market') return q ? (t.side === 'buy' ? q.ask : q.bid) : null;
   if (t.type === 'stop') return ptNum($('#oStop').value);
   return ptNum($('#oLim').value);
@@ -5682,7 +5844,7 @@ function ptTicketQty(raw) {
   if (t.mode === 'new' && $('#oRiskOn').checked) {
     const sl = ptBracketPrice('sl'), ref = ptTicketRef(), r = ptNum($('#oRisk').value);
     if (!(sl > 0) || !ref || !(r > 0) || sl === ref) return null;
-    const risk = $('#oRiskMode').value === 'pct' ? ptMetrics().equity * r / 100 : r;
+    const risk = $('#oRiskMode').value === 'pct' ? ptMetrics(ptTA()).equity * r / 100 : r;
     return ptRoundQty(t.sym, risk / (Math.abs(ref - sl) * ptConv(t.sym)));
   }
   const v = ptNum($('#oQty').value); if (!(v > 0)) return null;
@@ -5709,49 +5871,50 @@ function ptTicketRender() {
   $('#oQtyRow').hidden = pos; $('#oRiskWrap').hidden = pos || mod;
   $('#oPart').hidden = !pos; $('#oBe').hidden = !pos;
   const risk = !pos && !mod && $('#oRiskOn').checked; $('#oRiskRow').hidden = !risk; $('#oQty').disabled = risk;
-  if (risk && !$('#oSlOn').checked) { $('#oSlOn').checked = true; }
+  if (risk && !$('#oSlOn').checked) $('#oSlOn').checked = true;
   $('#oTpRow').hidden = !$('#oTpOn').checked; $('#oSlRow').hidden = !$('#oSlOn').checked;
   const pn = ptPipName(t.sym); dlg.querySelectorAll('option[value="pips"]').forEach(op => { op.textContent = pn === 'pips' ? 'Pips' : 'Ticks'; });
   ptTicketLive();
 }
 function ptTicketLive() {   // prices, estimates and the summary; runs as prices move
   const t = PT.t, dlg = $('#ordDlg'); if (!t || !dlg.open) return;
-  const id = t.sym, q = ptQuote(id), conv = ptConv(id), m = ptMetrics();
+  const a = ptAcctById(t.aid); if (!a) { dlg.close(); return; }
+  const id = t.sym, q = ptQuoteFor(a, id), conv = ptConv(id), m = ptMetrics(a);
   $('#oBid').textContent = q ? ptPx(id, q.bid) : '—'; $('#oAsk').textContent = q ? ptPx(id, q.ask) : '—';
-  const sp = q ? q.ask - q.bid : 0; $('#oSpread').textContent = q && sp > 0 ? `${(sp / ptPip(id)).toFixed(1)} ${ptPipName(id)}` : '';
-  const ref = ptTicketRef(), qty = t.mode === 'pos' ? Math.abs((PT.a.pos.find(x => x.id === t.pid) || { qty: 0 }).qty) : ptTicketQty();
+  const sp = q ? q.ask - q.bid : 0; $('#oSpread').textContent = a.kind === 'replay' ? 'replay' : q && sp > 0 ? `${(sp / ptPip(id)).toFixed(1)} ${ptPipName(id)}` : '';
+  const ref = ptTicketRef(), qty = t.mode === 'pos' ? Math.abs((a.pos.find(x => x.id === t.pid) || { qty: 0 }).qty) : ptTicketQty();
   if (t.mode === 'new' && $('#oRiskOn').checked) { $('#oQty').value = qty ? String(qty) : ''; $('#oRiskInfo').textContent = qty ? `${ptFmtQty(id, qty)} ${$('#oUnit').textContent}` : 'Set a stop loss to size by risk'; }
-  const est = (which, el) => {
-    const pr = ptBracketPrice(which); el.textContent = '';
+  const est = (which, node) => {
+    const pr = ptBracketPrice(which); node.textContent = '';
     if (pr == null) return;
-    if (!(pr > 0) || !ref || !qty) { el.textContent = '—'; return; }
+    if (!(pr > 0) || !ref || !qty) { node.textContent = '—'; return; }
     const dir = t.side === 'buy' ? 1 : -1, pnl = (pr - ref) * qty * dir * conv;
-    el.textContent = `${$(which === 'tp' ? '#oTpMode' : '#oSlMode').value === 'price' ? '' : 'at ' + ptPx(id, pr) + ' · '}${usd(pnl, true)} · ${fmtPct(((pr - ref) / ref) * 100 * dir)}`;
-    el.className = 'o-est ' + (pnl >= 0 ? 'up-t' : 'dn-t');
+    node.textContent = `${$(which === 'tp' ? '#oTpMode' : '#oSlMode').value === 'price' ? '' : 'at ' + ptPx(id, pr) + ' · '}${usd(pnl, true)} · ${fmtPct(((pr - ref) / ref) * 100 * dir)}`;
+    node.className = 'o-est ' + (pnl >= 0 ? 'up-t' : 'dn-t');
   };
   est('tp', $('#oTpEst')); est('sl', $('#oSlEst'));
   const sum = $('#oSum'); sum.replaceChildren();
   const row = (k, v, cls) => { const d = el('div'); d.append(el('dt', null, k), el('dd', cls || null, v)); sum.append(d); };
   let err = '';
   if (t.mode === 'pos') {
-    const p = PT.a.pos.find(x => x.id === t.pid); if (!p) { dlg.close(); return; }
+    const p = a.pos.find(x => x.id === t.pid); if (!p) { dlg.close(); return; }
     const r = m.rows.find(x => x.p === p);
     row('Entry price', ptPx(id, p.avg)); row('Open P&L', usd(r.pl, true), r.pl >= 0 ? 'up-t' : 'dn-t');
     const tp = ptBracketPrice('tp'), sl = ptBracketPrice('sl');
     if (tp > 0 && sl > 0) row('Reward to risk', (Math.abs(tp - p.avg) / Math.abs(p.avg - sl)).toFixed(2));
-    err = Number.isNaN(tp) ? 'Enter a take profit, or untick it.' : Number.isNaN(sl) ? 'Enter a stop loss, or untick it.' : ptBracketErr(p, 'tp', tp) || ptBracketErr(p, 'sl', sl);
+    err = Number.isNaN(tp) ? 'Enter a take profit, or untick it.' : Number.isNaN(sl) ? 'Enter a stop loss, or untick it.' : ptBracketErr(a, p, 'tp', tp) || ptBracketErr(a, p, 'sl', sl);
     $('#oGo').textContent = 'Save'; $('#oGo').className = 'primary o-go';
   } else {
-    const spec = ptTicketSpec(), value = qty && ref ? qty * ref * conv : null, lev = ptLev(id);
+    const spec = ptTicketSpec(), value = qty && ref ? qty * ref * conv : null, lev = ptLev(a, id);
     row('Order value', value ? usd(value) : '—'); row('Margin needed', value ? `${usd(value / lev)} (1:${lev})` : '—'); row('Available', usd(m.avail));
-    if (PT.a.set.comm) row('Commission', value ? usd(value * PT.a.set.comm / 100) : '—');
+    if (a.set.comm) row('Commission', value ? usd(value * a.set.comm / 100) : '—');
     if (spec.tp > 0 && spec.sl > 0 && ref) row('Reward to risk', (Math.abs(spec.tp - ref) / Math.abs(ref - spec.sl)).toFixed(2));
     const riskUsd = t.mode === 'new' && $('#oRiskOn').checked && $('#oSlMode').value === 'usd';
     err = riskUsd ? 'When sizing by risk, set the stop loss as a price, pips or %.'
       : Number.isNaN(spec.tp) ? 'Enter a take profit, or untick it.' : Number.isNaN(spec.sl) ? 'Enter a stop loss, or untick it.'
-      : t.mode === 'modify' ? ptCheckModify(spec) : ptCheckOrder(spec);
+      : t.mode === 'modify' ? ptCheckModify(a, spec) : ptCheckOrder(a, spec);
     if (!err && t.mode === 'new' && value) {
-      const p = PT.a.pos.find(x => x.sym === id), dq = t.side === 'buy' ? qty : -qty, old = p ? p.qty : 0;
+      const p = a.pos.find(x => x.sym === id), dq = t.side === 'buy' ? qty : -qty, old = p ? p.qty : 0;
       const adds = !old || Math.sign(old) === Math.sign(dq) || Math.abs(dq) > Math.abs(old);
       if (adds && value / lev > m.avail + (p && Math.sign(old) !== Math.sign(dq) ? Math.abs(old) * ref * conv / lev : 0)) err = `Not enough margin: this needs ${usd(value / lev)} and ${usd(Math.max(0, m.avail))} is available. Lower the quantity, or raise leverage in the Account tab.`;
     }
@@ -5760,30 +5923,31 @@ function ptTicketLive() {   // prices, estimates and the summary; runs as prices
   }
   const w = $('#oWarn'); w.hidden = !err; w.textContent = err; $('#oGo').disabled = !!err;
 }
-function ptCheckModify(spec) {
-  const o = PT.a.ord.find(x => x.id === PT.t.oid); if (!o || o.st !== 'working') return 'This order is no longer working.';
-  return ptCheckOrder(o.trig ? Object.assign({}, spec, { type: 'limit' }) : spec);   // a triggered stop limit is a limit order now
+function ptCheckModify(a, spec) {
+  const o = a.ord.find(x => x.id === PT.t.oid); if (!o || o.st !== 'working') return 'This order is no longer working.';
+  return ptCheckOrder(a, o.trig ? Object.assign({}, spec, { type: 'limit' }) : spec);   // a triggered stop limit is a limit order now
 }
 function ptTicketSubmit() {
   const t = PT.t; if (!t) return;
+  const a = ptAcctById(t.aid); if (!a) return;
   if (t.mode === 'pos') {
-    const p = PT.a.pos.find(x => x.id === t.pid); if (!p) return;
+    const p = a.pos.find(x => x.id === t.pid); if (!p) return;
     const tp = ptBracketPrice('tp'), sl = ptBracketPrice('sl');
     if (Number.isNaN(tp) || Number.isNaN(sl)) { toast('Check the take profit and stop loss.'); return; }
-    const err = ptSetBrackets(p, tp, sl, sl > 0 && $('#oTrail').checked); if (err) { toast(err); return; }
+    const err = ptSetBrackets(a, p, tp, sl, sl > 0 && $('#oTrail').checked); if (err) { toast(err); return; }
     $('#ordDlg').close(); Paper.changed(); toast(`${label(p.sym)} position updated.`); return;
   }
   const spec = ptTicketSpec();
   if (Number.isNaN(spec.tp) || Number.isNaN(spec.sl)) { toast('Check the take profit and stop loss.'); return; }
   if (t.mode === 'modify') {
-    const o = PT.a.ord.find(x => x.id === t.oid), err = ptCheckModify(spec); if (err) { toast(err); return; }
-    Object.assign(o, { qty: spec.qty, lim: spec.lim || null, stp: spec.stp || null, tp: spec.tp || null, sl: spec.sl || null, trail: spec.trail || null, tif: spec.type === 'market' ? 'gtc' : spec.tif, upd: Date.now() });
-    o.exp = o.tif === 'day' ? (o.exp || ptDayEnd(o.sym, Date.now())) : null;
-    ptLog(`Modified: ${ptDesc(o)}.`, 'info'); $('#ordDlg').close();
-    if (PT.leader && ptCanFill(o.sym)) { const q = ptQuote(o.sym); if (q) ptEval(o.sym, q, Date.now(), false); }
+    const o = a.ord.find(x => x.id === t.oid), err = ptCheckModify(a, spec); if (err) { toast(err); return; }
+    Object.assign(o, { qty: spec.qty, lim: spec.lim || null, stp: spec.stp || null, tp: spec.tp || null, sl: spec.sl || null, trail: spec.trail || null, tif: spec.type === 'market' ? 'gtc' : spec.tif, upd: ptNow(a) });
+    o.exp = o.tif === 'day' ? (o.exp || ptDayEnd(o.sym, ptNow(a))) : null;
+    ptLog(a, `Modified: ${ptDesc(o)}.`, 'info'); $('#ordDlg').close();
+    if ((a.kind === 'replay' || PT.leader) && ptCanFill(a, o.sym)) { const q = ptQuoteFor(a, o.sym); if (q) ptEval(a, o.sym, q, ptNow(a), false); }
     Paper.changed(); toast(`Order modified: ${ptDesc(o)}`); return;
   }
-  if (ptPlace(spec)) $('#ordDlg').close();
+  ptPlace(a, spec, () => { if ($('#ordDlg').open) $('#ordDlg').close(); });
 }
 function ptBracketMode(which) {   // switching between price, pips, % and $ keeps the same price
   const inp = $(which === 'tp' ? '#oTp' : '#oSl'), sel = $(which === 'tp' ? '#oTpMode' : '#oSlMode');
@@ -5795,10 +5959,19 @@ function ptBracketMode(which) {   // switching between price, pips, % and $ keep
   inp.value = now === 'price' ? pr.toFixed(precFor(id, pr)) : now === 'pips' ? (dist / ptPip(id)).toFixed(1) : now === 'pct' ? ((dist / ref) * 100).toFixed(2) : (dist * qty * ptConv(id)).toFixed(2);
   ptTicketLive();
 }
+function ptFlipBrackets() {   // switching buy and sell mirrors the take profit and stop loss around the entry
+  const ref = ptTicketRef(); if (!ref) return;
+  ['tp', 'sl'].forEach(w => { const sel = $(w === 'tp' ? '#oTpMode' : '#oSlMode'), inp = $(w === 'tp' ? '#oTp' : '#oSl'); if (sel.value !== 'price') return; const v = ptNum(inp.value); if (v > 0) inp.value = (2 * ref - v).toFixed(precFor(PT.t.sym, ref)); });
+}
+function ptConfirm(title, text, go, fn, bal) {
+  $('#pcTitle').textContent = title; $('#pcText').textContent = text; $('#pcGo').textContent = go;
+  $('#pcBalWrap').hidden = !bal; if (bal) $('#pcBal').value = String(bal);
+  PT.confirm = fn; $('#ptConfirm').showModal();
+}
 function ptUiInit() {
   const dlg = $('#ordDlg');
   dlg.querySelectorAll('#oSide .o-sb').forEach(b => { b.onclick = () => { if (PT.t.side === b.dataset.side) return; PT.t.side = b.dataset.side; ptFlipBrackets(); PT.t.ref = ptTicketRef(); ptTicketRender(); }; });
-  dlg.querySelectorAll('#oType .btn').forEach(b => { b.onclick = () => { PT.t.type = b.dataset.type; const q = ptQuote(PT.t.sym); if (q) { const prec = precFor(PT.t.sym, q.last), g = q.last * 0.005, buy = PT.t.side === 'buy';
+  dlg.querySelectorAll('#oType .btn').forEach(b => { b.onclick = () => { PT.t.type = b.dataset.type; const q = ptQuoteFor(ptTA(), PT.t.sym); if (q) { const prec = precFor(PT.t.sym, q.last), g = q.last * 0.005, buy = PT.t.side === 'buy';
     if (!ptNum($('#oLim').value)) $('#oLim').value = (q.last + (buy ? -g : g)).toFixed(prec); if (!ptNum($('#oStop').value)) $('#oStop').value = (q.last + (buy ? g : -g)).toFixed(prec); } ptFollowRef(); ptTicketRender(); }; });
   ['#oLim', '#oStop'].forEach(s => $(s).addEventListener('input', () => { ptFollowRef(); ptTicketLive(); }));
   ['#oTp', '#oSl'].forEach(s => $(s).addEventListener('input', () => { if (PT.t) PT.t.touched[s === '#oTp' ? 'tp' : 'sl'] = true; ptTicketLive(); }));
@@ -5812,9 +5985,9 @@ function ptUiInit() {
   ['#oTpOn', '#oSlOn', '#oRiskOn', '#oTrail', '#oTif', '#oRiskMode'].forEach(s => $(s).addEventListener('change', () => ptTicketRender()));
   $('#oTpMode').addEventListener('change', () => ptBracketMode('tp')); $('#oSlMode').addEventListener('change', () => ptBracketMode('sl'));
   $('#oForm').addEventListener('submit', e => { e.preventDefault(); ptTicketSubmit(); });
-  $('#oBe').onclick = () => { const p = PT.t && PT.a.pos.find(x => x.id === PT.t.pid); if (!p) return; $('#oSlOn').checked = true; $('#oSlMode').value = 'price'; $('#oSlMode').dataset.prev = 'price'; $('#oSl').value = p.avg.toFixed(precFor(p.sym, p.avg)); ptTicketRender(); };
-  $('#oPartGo').onclick = () => { const p = PT.a.pos.find(x => x.id === PT.t.pid), v = ptNum($('#oPartQty').value); if (!p) return; const qn = v > 0 ? ptRoundQty(p.sym, Math.min(v, Math.abs(p.qty))) : 0; if (!qn) { toast('Enter how much to close.'); return; } dlg.close(); ptCloseNow(p, qn); };
-  $('#oPartBtns').querySelectorAll('button').forEach(b => { b.onclick = () => { const p = PT.a.pos.find(x => x.id === PT.t.pid); if (p) { $('#oPartQty').value = String(ptRoundQty(p.sym, Math.abs(p.qty) * (+b.dataset.f)) || Math.abs(p.qty)); } }; });
+  $('#oBe').onclick = () => { const a = ptTA(), p = PT.t && a.pos.find(x => x.id === PT.t.pid); if (!p) return; $('#oSlOn').checked = true; $('#oSlMode').value = 'price'; $('#oSlMode').dataset.prev = 'price'; $('#oSl').value = p.avg.toFixed(precFor(p.sym, p.avg)); ptTicketRender(); };
+  $('#oPartGo').onclick = () => { const a = ptTA(), p = a.pos.find(x => x.id === PT.t.pid), v = ptNum($('#oPartQty').value); if (!p) return; const qn = v > 0 ? ptRoundQty(p.sym, Math.min(v, Math.abs(p.qty))) : 0; if (!qn) { toast('Enter how much to close.'); return; } dlg.close(); ptCloseNow(a, p, qn); };
+  $('#oPartBtns').querySelectorAll('button').forEach(b => { b.onclick = () => { const p = ptTA().pos.find(x => x.id === PT.t.pid); if (p) $('#oPartQty').value = String(ptRoundQty(p.sym, Math.abs(p.qty) * (+b.dataset.f)) || Math.abs(p.qty)); }; });
   dlg.addEventListener('keydown', e => { if (e.key === 'Escape' && !dlg.matches(':modal')) { e.preventDefault(); dlg.close(); } });
   dlg.addEventListener('close', () => { PT.t = null; });
   $('#qtBuy').onclick = () => ptQuick('buy'); $('#qtSell').onclick = () => ptQuick('sell');
@@ -5825,10 +5998,22 @@ function ptUiInit() {
   $('#tpFold').onclick = () => ptSetOpen(!PT.open);
   $('#tp').querySelectorAll('.tp-tab').forEach(b => { b.onclick = () => { PT.tab = b.dataset.tab; store.raw('ptTab', PT.tab); ptSetOpen(true); ptRenderPanel(true); }; });
   ptGripInit();
+  // account switcher
+  $('#tpAcct').onclick = e => { e.stopPropagation(); const m = $('#tpMenu'); if (m.hidden) ptAcctMenu(); else m.hidden = true; };
+  document.addEventListener('pointerdown', e => { const m = $('#tpMenu'); if (!m.hidden && !m.contains(e.target) && !$('#tpAcct').contains(e.target)) m.hidden = true; }, true);
+  // dialogs: confirm, new account, the Journal question
   $('#ptConfirm').addEventListener('close', () => { PT.confirm = null; });
   $('#pcGo').onclick = () => { const fn = PT.confirm; $('#ptConfirm').close(); if (fn) fn(); };
+  $('#pjYes').onclick = () => ptAnswerJournal(true); $('#pjNo').onclick = () => ptAnswerJournal(false);
+  $('#ptJDlg').addEventListener('close', () => { if (PT.jAsk) { PT.jAsk = null; toast('Order not placed.'); } });
+  const nd = $('#ptNewDlg');
+  PT_SIZES.forEach(v => { const b = el('button', 'pn-size', usd(v, false, true).replace('.0', '')); b.type = 'button'; b.dataset.v = String(v); b.onclick = () => { $('#pnBal').value = String(v); ptNewRender(); }; $('#pnSizes').append(b); });
+  nd.querySelectorAll('#pnKind .btn').forEach(b => { b.onclick = () => { nd.dataset.kind = b.dataset.kind; ptNewRender(); }; });
+  $('#pnBal').addEventListener('input', ptNewRender);
+  $('#pnForm').addEventListener('submit', e => { e.preventDefault(); ptNewSubmit(); });
+  // the right-click menu and the chart lines
   document.addEventListener('pointerdown', e => { const m = $('#ctxMenu'); if (!m.hidden && !m.contains(e.target)) m.hidden = true; }, true);
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#ctxMenu').hidden = true; });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('#ctxMenu').hidden = true; $('#tpMenu').hidden = true; } });
   window.addEventListener('blur', () => { $('#ctxMenu').hidden = true; });
   wrap.addEventListener('contextmenu', e => ptMenuAt(e));
   wrap.addEventListener('pointermove', e => { if (PT.drag || e.buttons) return; const r = wrap.getBoundingClientRect(), h = ptHit(e.clientX - r.left, e.clientY - r.top); wrap.classList.toggle('pt-ns', !!h && h.part !== 'close'); wrap.classList.toggle('pt-hand', !!h && h.part === 'close'); });
@@ -5838,15 +6023,6 @@ function ptUiInit() {
   window.addEventListener('pointermove', ptPointerMove);
   window.addEventListener('pointerup', ptPointerUp);
   window.addEventListener('pointercancel', () => { if (PT.drag) { PT.drag = null; markDirty(); } });
-}
-function ptFlipBrackets() {   // switching buy and sell mirrors the take profit and stop loss around the entry
-  const ref = ptTicketRef(); if (!ref) return;
-  ['tp', 'sl'].forEach(w => { const sel = $(w === 'tp' ? '#oTpMode' : '#oSlMode'), inp = $(w === 'tp' ? '#oTp' : '#oSl'); if (sel.value !== 'price') return; const v = ptNum(inp.value); if (v > 0) inp.value = (2 * ref - v).toFixed(precFor(PT.t.sym, ref)); });
-}
-function ptConfirm(title, text, go, fn, bal) {
-  $('#pcTitle').textContent = title; $('#pcText').textContent = text; $('#pcGo').textContent = go;
-  $('#pcBalWrap').hidden = !bal; if (bal) $('#pcBal').value = String(PT.a.start);
-  PT.confirm = fn; $('#ptConfirm').showModal();
 }
 
 // ----- the trading panel under the chart -----
@@ -5862,39 +6038,61 @@ function ptGripInit() {
   grip.addEventListener('pointermove', e => { if (!st) return; const max = Math.max(160, $('.stage').getBoundingClientRect().height - 180), h = clamp(st.h + (st.y - e.clientY), 120, max); tp.style.setProperty('--tp-h', h + 'px'); });
   grip.addEventListener('pointerup', () => { if (!st) return; st = null; store.raw('ptH', Math.round(tp.getBoundingClientRect().height)); sizeOverlay(); markDirty(); });
 }
+function ptAcctMenu() {   // the account switcher: the accounts for live prices, or for bar replay while replaying
+  const m = $('#tpMenu'), kind = R.on ? 'replay' : 'live', cur = ptA(); m.replaceChildren();
+  m.append(el('div', 'tp-menu-h', R.on ? 'Bar replay accounts' : 'Live-price accounts'));
+  PT.s.accts.filter(a => a.kind === kind).forEach(a => {
+    const b = el('button', 'tp-menu-i' + (a === cur ? ' on' : '')); b.type = 'button'; b.setAttribute('role', 'menuitemradio'); b.setAttribute('aria-checked', String(a === cur));
+    const eq = ptMetrics(a).equity;
+    b.append(el('span', 'nm', a.name), el('span', 'eq ' + (eq > a.start ? 'up-t' : eq < a.start ? 'dn-t' : ''), usd(eq)), el('span', 'st', `started ${usd(a.start, false, true)}`));
+    b.onclick = () => { m.hidden = true; if (a !== cur) ptSwitch(a.id); };
+    m.append(b);
+  });
+  const other = PT.s.accts.filter(a => a.kind !== kind).length;
+  if (other) m.append(el('div', 'tp-menu-note', R.on ? `${other} live-price account${other === 1 ? '' : 's'}: leave replay to use ${other === 1 ? 'it' : 'them'}.` : `${other} bar replay account${other === 1 ? '' : 's'}: used while you replay.`));
+  m.append(el('div', 'ctx-sep'));
+  const nb = el('button', 'tp-menu-i act', 'New account…'); nb.type = 'button'; nb.onclick = () => { m.hidden = true; ptNewAcctDlg(kind); }; m.append(nb);
+  const mb = el('button', 'tp-menu-i act', 'Manage accounts'); mb.type = 'button'; mb.onclick = () => { m.hidden = true; PT.tab = 'acct'; store.raw('ptTab', 'acct'); ptSetOpen(true); }; m.append(mb);
+  m.hidden = false;
+  const r = $('#tpAcct').getBoundingClientRect(), h = m.offsetHeight, w = m.offsetWidth;
+  const up = r.top - h - 6 > 8 || r.bottom + h + 6 > innerHeight;
+  m.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px'; m.style.top = (up ? Math.max(8, r.top - h - 6) : r.bottom + 6) + 'px';
+}
 function ptBtn(text, cls, fn, title) { const b = el('button', cls || null, text); b.type = 'button'; if (title) { b.title = title; b.setAttribute('aria-label', title); } b.onclick = e => { e.stopPropagation(); fn(); }; return b; }
 function ptXBtn(fn, title) { const b = ptBtn('', 'x', fn, title); b.innerHTML = svg('x'); return b; }
-const ptWhen = ms => { const d = new Date(ms), today = new Date(); const same = d.toDateString() === today.toDateString(); return (same ? '' : `${d.getDate()} ${MON[d.getMonth()]} `) + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const ptWhen = ms => { const d = new Date(ms), today = new Date(); const same = d.toDateString() === today.toDateString(); return (same ? '' : `${d.getDate()} ${MON[d.getMonth()]}${d.getFullYear() !== today.getFullYear() ? ' ' + d.getFullYear() : ''} `) + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
 function ptCell(tr, text, cls, f) { const td = el('td', cls || null, text); if (f) td.dataset.f = f; tr.append(td); return td; }
 function ptSymCell(tr, id) { const td = el('td', 'sym'); const b = ptBtn(label(id), null, () => { if (id !== S.symbol) setSymbol(id); }, `Show ${label(id)} on the chart`); td.append(b); tr.append(td); }
-function ptSidePill(tr, side) { const td = el('td'); td.append(el('span', 'side-pill ' + side, side === 'long' || side === 'buy' ? (side === 'buy' ? 'Buy' : 'Long') : (side === 'sell' ? 'Sell' : 'Short'))); tr.append(td); }
+function ptSidePill(tr, side) { const td = el('td'); td.append(el('span', 'side-pill ' + side, { buy: 'Buy', sell: 'Sell', long: 'Long', short: 'Short' }[side])); tr.append(td); }
 function ptTable(heads) {
   const box = el('div', 'tp-scroll'), t = el('table', 'tp-t'), thead = el('thead'), tr = el('tr');
   heads.forEach(h => { const [txt, cls] = Array.isArray(h) ? h : [h]; tr.append(el('th', cls || null, txt)); });
   thead.append(tr); t.append(thead, el('tbody')); box.append(t); return { box, body: t.tBodies[0] };
 }
-function ptRenderSummary(m) {
+function ptRenderSummary(a, m) {
   const sum = $('#tpSum'); sum.replaceChildren();
   const item = (k, v, cls, lvl) => { const d = el('div', lvl ? 'l' + lvl : null); d.append(el('dt', null, k), el('dd', cls || null, v)); sum.append(d); };   // l2 and l1 make way on smaller screens
-  item('Balance', usd(PT.a.bal), null, 2); item('Equity', usd(m.equity));
+  item('Balance', usd(a.bal), null, 2); item('Equity', usd(m.equity));
   item('Open P&L', usd(m.upl, true), m.upl > 0 ? 'up-t' : m.upl < 0 ? 'dn-t' : null);
   item('Margin', usd(m.margin), null, 2); item('Available', usd(m.avail), m.avail < 0 ? 'dn-t' : null, 1);
-  const np = PT.a.pos.length, no = PT.a.ord.filter(o => o.st === 'working').length;
+  const np = a.pos.length, no = a.ord.filter(o => o.st === 'working').length;
   $('#tpNPos').textContent = np ? String(np) : ''; $('#tpNOrd').textContent = no ? String(no) : '';
+  $('#tpAcctName').textContent = a.name; $('#tpAcctKind').textContent = a.kind === 'replay' ? 'Replay' : 'Paper';
+  $('#tpAcct').classList.toggle('replay', a.kind === 'replay'); $('#tp').classList.toggle('replay', a.kind === 'replay');
+  $('#tpAcct').title = `${a.name}: ${a.kind === 'replay' ? 'bar replay' : 'live-price'} paper account, started with ${usd(a.start)}. Click to switch or add accounts.`;
 }
 function ptRenderPanel(full) {
   const box = $('#tpBody'); if (!box) return;
-  const m = ptMetrics(); ptRenderSummary(m);
+  const a = ptA(), m = ptMetrics(a); ptRenderSummary(a, m);
   $('#tp').querySelectorAll('.tp-tab').forEach(b => b.setAttribute('aria-selected', String(PT.open && b.dataset.tab === PT.tab)));
   if (!PT.open) return;
-  const a = PT.a;
-  const sig = PT.tab + '|' + PT.ordView + '|' + PT.histView + '|' + a.pos.map(p => [p.id, p.qty, p.tp, p.sl, !!p.trail].join()).join(';') + '|' + a.ord.map(o => o.id + o.st + o.trig + o.qty + o.lim + o.stp + o.tp + o.sl).join(';') + '|' + a.hist.length + '|' + a.log.length + '|' + JSON.stringify(a.set) + '|' + a.start;
+  const sig = a.id + '|' + PT.tab + '|' + PT.ordView + '|' + PT.histView + '|' + a.pos.map(p => [p.id, p.qty, p.tp, p.sl, !!p.trail].join()).join(';') + '|' + a.ord.map(o => o.id + o.st + o.trig + o.qty + o.lim + o.stp + o.tp + o.sl).join(';') + '|' + a.hist.length + '|' + a.log.length + '|' + JSON.stringify(a.set) + '|' + a.start + '|' + a.name + '|' + JSON.stringify(PT.s.ui) + '|' + PT.s.accts.length;
   if (!full && sig === PT.sig) { ptLiveCells(m); return; }
   PT.sig = sig; box.replaceChildren();
-  if (PT.tab === 'pos') ptRenderPositions(box, m);
-  else if (PT.tab === 'ord') ptRenderOrders(box);
-  else if (PT.tab === 'hist') ptRenderHistory(box);
-  else ptRenderAccount(box, m);
+  if (PT.tab === 'pos') ptRenderPositions(box, a, m);
+  else if (PT.tab === 'ord') ptRenderOrders(box, a);
+  else if (PT.tab === 'hist') ptRenderHistory(box, a);
+  else ptRenderAccount(box, a, m);
 }
 function ptLiveCells(m) {
   $('#tpBody').querySelectorAll('tr[data-pid]').forEach(tr => {
@@ -5905,10 +6103,16 @@ function ptLiveCells(m) {
   const tot = $('#tpBody [data-f="tot"]'); if (tot) { tot.textContent = usd(m.upl, true); tot.className = m.upl > 0 ? 'up-t' : m.upl < 0 ? 'dn-t' : ''; }
 }
 function ptEmpty(box, text, action) { const d = el('div', 'tp-empty'); d.append(el('p', null, text)); if (action) d.append(action); box.append(d); }
-function ptRenderPositions(box, m) {
-  if (!PT.a.pos.length) { ptEmpty(box, 'No open positions. Use Buy or Sell on the chart, or the Trade button, to open one with virtual money.', ptBtn('Place an order', 'primary', () => ptTicket({ sym: S.symbol, side: 'buy' }))); return; }
-  const bar = el('div', 'tp-bar'); const tot = el('span'); tot.append(document.createTextNode(`${PT.a.pos.length} position${PT.a.pos.length === 1 ? '' : 's'} · open P&L `)); const tv = el('b', null, ''); tv.dataset.f = 'tot'; tot.append(tv);
-  bar.append(tot, el('span', 'spacer'), ptBtn('Close all', 'ghost sm', () => ptConfirm('Close all positions?', `This closes all ${PT.a.pos.length} positions at the market price.`, 'Close all', () => { PT.a.pos.slice().forEach(p => { if (ptCanFill(p.sym)) { const q = ptQuote(p.sym); ptClosePos(p, p.qty > 0 ? q.bid : q.ask, Date.now(), 'close'); } else toast(`${label(p.sym)}: market closed, not closed.`); }); Paper.changed(); })));
+function ptRenderPositions(box, a, m) {
+  if (!a.pos.length) {
+    ptEmpty(box, a.kind === 'replay' ? 'No open replay positions. Use Buy or Sell while the bars play: orders fill from the replayed bars.' : `No open positions in ${a.name}. Use Buy or Sell on the chart, or the Trade button, to open one with virtual money.`, ptBtn('Place an order', 'primary', () => ptTicket({ sym: S.symbol, side: 'buy' })));
+    return;
+  }
+  const bar = el('div', 'tp-bar'); const tot = el('span'); tot.append(document.createTextNode(`${a.pos.length} position${a.pos.length === 1 ? '' : 's'} · open P&L `)); const tv = el('b', null, ''); tv.dataset.f = 'tot'; tot.append(tv);
+  bar.append(tot, el('span', 'spacer'), ptBtn('Close all', 'ghost sm', () => ptConfirm('Close all positions?', `This closes all ${a.pos.length} positions in ${a.name} at the market price.`, 'Close all', () => {
+    a.pos.slice().forEach(p => { if (ptCanFill(a, p.sym)) { const q = ptQuoteFor(a, p.sym); ptClosePos(a, p, p.qty > 0 ? q.bid : q.ask, ptNow(a), 'close'); } else toast(`${label(p.sym)}: market closed, not closed.`); });
+    Paper.changed();
+  })));
   box.append(bar);
   const { box: tb, body } = ptTable(['Symbol', 'Side', ['Qty', 'num'], ['Avg price', 'num'], ['Last', 'num'], ['Open P&L', 'num'], ['P&L %', 'num'], ['Take profit', 'num'], ['Stop loss', 'num'], ['Value', 'num'], ['', 'act']]);
   for (const r of m.rows) {
@@ -5918,21 +6122,21 @@ function ptRenderPositions(box, m) {
     ptCell(tr, p.tp ? ptPx(p.sym, p.tp) : '—', 'num'); ptCell(tr, p.sl ? ptPx(p.sym, p.sl) + (p.trail ? ' ↗' : '') : '—', 'num').title = p.trail ? 'Trailing stop' : ''; ptCell(tr, '', 'num', 'val');
     const acts = el('td', 'act'); const g = el('div', 'tp-acts');
     g.append(ptBtn('TP/SL', null, () => ptTicket({ sym: p.sym, mode: 'pos', pid: p.id }), `Take profit, stop loss or close part of ${label(p.sym)}`),
-      ptBtn('Reverse', null, () => ptReverse(p), `Reverse: turn this ${p.qty > 0 ? 'long into a short' : 'short into a long'} of the same size`),
-      ptXBtn(() => ptCloseNow(p), `Close the ${label(p.sym)} position`));
+      ptBtn('Reverse', null, () => ptReverse(a, p), `Reverse: turn this ${p.qty > 0 ? 'long into a short' : 'short into a long'} of the same size`),
+      ptXBtn(() => ptCloseNow(a, p), `Close the ${label(p.sym)} position`));
     acts.append(g); tr.append(acts); body.append(tr);
   }
   box.append(tb); ptLiveCells(m);
 }
 function ptStatus(o) { return o.st === 'working' ? (o.trig ? 'Triggered' : 'Working') : o.st === 'cancelled' && /^Expired/.test(o.why) ? 'Expired' : { filled: 'Filled', cancelled: 'Cancelled', rejected: 'Rejected' }[o.st]; }
-function ptRenderOrders(box) {
+function ptRenderOrders(box, a) {
   const bar = el('div', 'tp-bar'), seg = el('div', 'seg tp-seg');
-  [['working', 'Working'], ['filled', 'Filled'], ['cancelled', 'Cancelled'], ['all', 'All']].forEach(([k, t]) => { const b = ptBtn(t, 'btn' + (PT.ordView === k ? ' on' : ''), () => { PT.ordView = k; ptRenderPanel(true); }); seg.append(b); });
+  [['working', 'Working'], ['filled', 'Filled'], ['cancelled', 'Cancelled'], ['all', 'All']].forEach(([k, t]) => seg.append(ptBtn(t, 'btn' + (PT.ordView === k ? ' on' : ''), () => { PT.ordView = k; ptRenderPanel(true); })));
   bar.append(seg, el('span', 'spacer'));
-  const working = PT.a.ord.filter(o => o.st === 'working');
-  if (working.length) bar.append(ptBtn('Cancel all', 'ghost sm', () => ptConfirm('Cancel all orders?', `This cancels ${working.length} working order${working.length === 1 ? '' : 's'}.`, 'Cancel all', () => { working.forEach(o => ptCancel(o)); Paper.changed(); })));
+  const working = a.ord.filter(o => o.st === 'working');
+  if (working.length) bar.append(ptBtn('Cancel all', 'ghost sm', () => ptConfirm('Cancel all orders?', `This cancels ${working.length} working order${working.length === 1 ? '' : 's'} in ${a.name}.`, 'Cancel all', () => { working.forEach(o => ptCancel(a, o)); Paper.changed(); })));
   box.append(bar);
-  const list = PT.a.ord.filter(o => PT.ordView === 'all' || (PT.ordView === 'cancelled' ? o.st === 'cancelled' || o.st === 'rejected' : o.st === PT.ordView)).slice().sort((x, y) => (PT.ordView === 'working' ? x.at - y.at : y.upd - x.upd));
+  const list = a.ord.filter(o => PT.ordView === 'all' || (PT.ordView === 'cancelled' ? o.st === 'cancelled' || o.st === 'rejected' : o.st === PT.ordView)).slice().sort((x, y) => (PT.ordView === 'working' ? x.at - y.at : y.upd - x.upd));
   if (!list.length) { ptEmpty(box, PT.ordView === 'working' ? 'No working orders. Limit and stop orders wait here until the price reaches them.' : 'Nothing here yet.'); return; }
   const { box: tb, body } = ptTable(['Placed', 'Symbol', 'Side', 'Type', ['Qty', 'num'], ['Limit', 'num'], ['Stop', 'num'], ['TP', 'num'], ['SL', 'num'], 'Duration', 'Status', ['Fill price', 'num'], ['', 'act']]);
   for (const o of list) {
@@ -5945,28 +6149,28 @@ function ptRenderOrders(box) {
     const st = ptCell(tr, ptStatus(o), 'st st-' + o.st); if (o.why) st.title = o.why;
     ptCell(tr, o.fill ? ptPx(o.sym, o.fill) : '—', 'num');
     const acts = el('td', 'act'); const g = el('div', 'tp-acts');
-    if (o.st === 'working') g.append(ptBtn('Modify', null, () => ptTicket({ sym: o.sym, mode: 'modify', oid: o.id }), 'Change this order'), ptXBtn(() => { ptCancel(o); Paper.changed(); }, 'Cancel this order'));
+    if (o.st === 'working') g.append(ptBtn('Modify', null, () => ptTicket({ sym: o.sym, mode: 'modify', oid: o.id }), 'Change this order'), ptXBtn(() => { ptCancel(a, o); Paper.changed(); }, 'Cancel this order'));
     acts.append(g); tr.append(acts); body.append(tr);
   }
   box.append(tb);
 }
-function ptRenderHistory(box) {
+function ptRenderHistory(box, a) {
   const bar = el('div', 'tp-bar'), seg = el('div', 'seg tp-seg');
   [['trades', 'Closed trades'], ['log', 'Account log']].forEach(([k, t]) => seg.append(ptBtn(t, 'btn' + (PT.histView === k ? ' on' : ''), () => { PT.histView = k; ptRenderPanel(true); })));
   bar.append(seg, el('span', 'spacer'));
-  const st = ptStats();
-  if (PT.histView === 'trades' && st.n) bar.append(el('span', 'muted', `${st.n} trade${st.n === 1 ? '' : 's'} · ${Math.round(st.win * 100)}% won · `), (() => { const b = el('b', st.net >= 0 ? 'up-t' : 'dn-t', usd(st.net, true)); return b; })());
-  if (PT.histView === 'trades' && PT.a.set.journal && st.n) bar.append(ptBtn('Statistics in the Journal', 'ghost sm', () => { JR.f.strategy = 'Paper trading'; setView('journal', true); }));
+  const st = ptStats(a);
+  if (PT.histView === 'trades' && st.n) bar.append(el('span', 'muted', `${st.n} trade${st.n === 1 ? '' : 's'} · ${Math.round(st.win * 100)}% won · `), el('b', st.net >= 0 ? 'up-t' : 'dn-t', usd(st.net, true)));
+  if (PT.histView === 'trades' && a.set.journal === true && st.n) bar.append(ptBtn('Statistics in the Journal', 'ghost sm', () => { JR.f.strategy = ptJournalName(a); setView('journal', true); }));
   box.append(bar);
   if (PT.histView === 'log') {
-    if (!PT.a.log.length) { ptEmpty(box, 'Your account activity shows here.'); return; }
+    if (!a.log.length) { ptEmpty(box, 'Your account activity shows here.'); return; }
     const ul = el('ul', 'tp-log');
-    PT.a.log.slice().reverse().forEach(l => { const li = el('li', 'k-' + l.k); li.append(el('time', null, ptWhen(l.t)), el('span', null, l.m)); ul.append(li); });
+    a.log.slice().reverse().forEach(l => { const li = el('li', 'k-' + l.k); li.append(el('time', null, ptWhen(l.t)), el('span', null, l.m)); ul.append(li); });
     box.append(ul); return;
   }
-  if (!PT.a.hist.length) { ptEmpty(box, 'Trades you close show here with their profit or loss.'); return; }
+  if (!a.hist.length) { ptEmpty(box, 'Trades you close show here with their profit or loss.'); return; }
   const { box: tb, body } = ptTable(['Closed', 'Symbol', 'Side', ['Qty', 'num'], ['Entry', 'num'], ['Exit', 'num'], ['P&L', 'num'], ['Fees', 'num'], ['Held', 'num'], 'Reason']);
-  PT.a.hist.slice().reverse().forEach(h => {
+  a.hist.slice().reverse().forEach(h => {
     const tr = el('tr'); ptCell(tr, ptWhen(h.end), 'muted'); ptSymCell(tr, h.sym); ptSidePill(tr, h.side);
     ptCell(tr, ptFmtQty(h.sym, h.qty), 'num'); ptCell(tr, ptPx(h.sym, h.entry), 'num'); ptCell(tr, ptPx(h.sym, h.exit), 'num');
     ptCell(tr, usd(h.pnl, true), 'num ' + (h.pnl > 0 ? 'up-t' : h.pnl < 0 ? 'dn-t' : '')); ptCell(tr, h.fees ? usd(h.fees) : '—', 'num'); ptCell(tr, fmtHeld((h.end - h.at) / 1000), 'num'); ptCell(tr, PT_WHY[h.why] || '');
@@ -5974,8 +6178,17 @@ function ptRenderHistory(box) {
   });
   box.append(tb);
 }
-function ptRenderAccount(box, m) {
-  const a = PT.a, st = ptStats(), k = el('div', 'tp-kpis');
+function ptRenderAccount(box, a, m) {
+  const st = ptStats(a);
+  // which account, and the others
+  const head = el('div', 'tp-ahead');
+  const nm = el('input', 'field tp-aname'); nm.value = a.name; nm.maxLength = 30; nm.setAttribute('aria-label', 'Account name');
+  nm.onchange = () => { const v = nm.value.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 30); if (!v || PT.s.accts.some(x => x !== a && x.name.toLowerCase() === v.toLowerCase())) { toast(!v ? 'Give the account a name.' : 'You already have an account with that name.'); nm.value = a.name; return; } ptLog(a, `Renamed from ${a.name} to ${v}.`, 'info'); a.name = v; Paper.changed(); };
+  nm.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') nm.blur(); });
+  head.append(nm, el('span', 'chip' + (a.kind === 'replay' ? ' live' : ''), a.kind === 'replay' ? 'Bar replay' : 'Live prices'), el('span', 'muted', `Started with ${usd(a.start)} · opened ${new Date(a.at).toLocaleDateString()}`), el('span', 'spacer'),
+    ptBtn('New account…', 'ghost sm', () => ptNewAcctDlg(a.kind)));
+  box.append(head);
+  const k = el('div', 'tp-kpis');
   const tile = (key, v, cls, sub) => { const d = el('div', 'tp-tile'); d.append(el('p', 'k', key), el('p', 'v ' + (cls || ''), v)); if (sub) d.append(el('p', 's', sub)); k.append(d); };
   tile('Equity', usd(m.equity), null, `Started with ${usd(a.start)}`);
   tile('Balance', usd(a.bal), null, 'Cash, with closed trades');
@@ -5985,30 +6198,55 @@ function ptRenderAccount(box, m) {
   tile('Win rate', st.win == null ? '—' : Math.round(st.win * 100) + '%', null, `${st.n} closed trade${st.n === 1 ? '' : 's'}`);
   tile('Profit factor', st.pf == null ? '—' : st.pf === Infinity ? '∞' : st.pf.toFixed(2), null, 'Gross profit ÷ gross loss');
   box.append(k);
+  // all accounts at a glance
+  if (PT.s.accts.length > 1) {
+    const { box: tb, body } = ptTable(['Account', 'Type', ['Started with', 'num'], ['Equity', 'num'], ['Return', 'num'], ['Trades', 'num'], 'Journal', ['', 'act']]);
+    tb.classList.add('tp-accts');
+    PT.s.accts.forEach(x => {
+      const mx = ptMetrics(x), tr = el('tr'); if (x === a) tr.className = 'cur';
+      const nc = el('td', 'nm'); nc.append(el('b', null, x.name)); if (x === a) nc.append(el('span', 'chip live', 'In use')); tr.append(nc);
+      ptCell(tr, x.kind === 'replay' ? 'Bar replay' : 'Live prices'); ptCell(tr, usd(x.start), 'num'); ptCell(tr, usd(mx.equity), 'num');
+      const ret = ((mx.equity - x.start) / x.start) * 100; ptCell(tr, fmtPct(ret), 'num ' + (ret > 0 ? 'up-t' : ret < 0 ? 'dn-t' : '')); ptCell(tr, String(x.hist.length), 'num');
+      ptCell(tr, x.set.journal === true ? 'Added' : x.set.journal === false ? 'Separate' : 'Not chosen', 'muted');
+      const acts = el('td', 'act'), g = el('div', 'tp-acts');
+      const usable = x.kind === (R.on ? 'replay' : 'live');
+      if (x !== a && usable) g.append(ptBtn('Use', null, () => ptSwitch(x.id), `Trade in ${x.name}`));
+      g.append(ptXBtn(() => ptDeleteAcct(x), `Delete ${x.name}`));
+      acts.append(g); tr.append(acts); body.append(tr);
+    });
+    box.append(tb);
+  }
   const set = el('div', 'tp-set');
-  const lev = el('fieldset', 'tp-lev'); lev.append(el('legend', null, 'Leverage'));
+  const lev = el('fieldset', 'tp-lev'); lev.append(el('legend', null, `Leverage · ${a.name}`));
   PT_MKTS.forEach(([key, name]) => {
     const lab = el('label'); lab.append(el('span', null, name)); const w = el('span', 'selwrap'), sel = el('select');
     PT_LEVS.forEach(v => { const o = el('option', null, '1:' + v); o.value = String(v); sel.append(o); }); sel.value = String(a.set.lev[key]);
-    sel.onchange = () => { a.set.lev[key] = +sel.value; ptLog(`Leverage for ${name.toLowerCase()} set to 1:${sel.value}.`, 'info'); Paper.changed(); };
+    sel.onchange = () => { a.set.lev[key] = +sel.value; ptLog(a, `Leverage for ${name.toLowerCase()} set to 1:${sel.value}.`, 'info'); Paper.changed(); };
     w.append(sel); lab.append(w); lev.append(lab);
   });
   const opts = el('fieldset', 'tp-opts'); opts.append(el('legend', null, 'Trading'));
-  const cl = el('label', 'tp-comm'); cl.append(el('span', null, 'Commission (% of each trade)'));
+  const cl = el('label', 'tp-comm'); cl.append(el('span', null, `Commission (% of each trade) · ${a.name}`));
   const ci = el('input', 'field'); ci.inputMode = 'decimal'; ci.value = String(a.set.comm); ci.setAttribute('aria-label', 'Commission percent');
   ci.onchange = () => { const v = ptNum(ci.value); if (v == null || v < 0 || v > 5) { toast('Commission must be between 0 and 5%.'); ci.value = String(a.set.comm); return; } a.set.comm = v; Paper.changed(); };
   cl.append(ci); opts.append(cl);
-  [['qt', 'Show Buy and Sell buttons on the chart'], ['one', 'One-click trading (the chart buttons place market orders straight away)'], ['lines', 'Show positions and orders on the chart'], ['exec', 'Show executions on the chart'], ['sound', 'Sound when an order fills'], ['journal', 'Add closed trades to the Journal (tagged Paper)']].forEach(([key, text]) => {
-    const lab = el('label', 'tp-chk'), cb = el('input'); cb.type = 'checkbox'; cb.checked = !!a.set[key];
-    cb.onchange = () => { a.set[key] = cb.checked; Paper.changed(); };
+  const jr = el('div', 'tp-jr'); jr.append(el('span', null, `Add ${a.name}'s closed trades to the Journal`));
+  const jseg = el('div', 'seg tp-seg');
+  [[true, 'Yes'], [false, 'No']].forEach(([v, t]) => jseg.append(ptBtn(t, 'btn' + (a.set.journal === v ? ' on' : ''), () => { a.set.journal = v; ptLog(a, v ? 'Closed trades will be added to the Journal.' : 'Closed trades are kept out of the Journal.', 'info'); Paper.changed(); })));
+  jr.append(jseg); if (a.set.journal == null) jr.append(el('span', 'muted', `Not chosen yet: you'll be asked at the first order`));
+  opts.append(jr);
+  [['qt', 'Show Buy and Sell buttons on the chart'], ['one', 'One-click trading (the chart buttons place market orders straight away)'], ['lines', 'Show positions and orders on the chart'], ['exec', 'Show executions on the chart'], ['sound', 'Sound when an order fills']].forEach(([key, text]) => {
+    const lab = el('label', 'tp-chk'), cb = el('input'); cb.type = 'checkbox'; cb.checked = !!PT.s.ui[key];
+    cb.onchange = () => { PT.s.ui[key] = cb.checked; Paper.changed(); };
     lab.append(cb, el('span', null, text)); opts.append(lab);
   });
   const reset = el('div', 'tp-reset');
-  reset.append(el('p', 'fine', 'Paper trading uses virtual money on live prices. Orders fill while RealChart is open; when you come back, orders and stops that would have filled while it was closed are filled from the price history. Real trading can fill differently (slippage, spreads, partial fills).'),
-    ptBtn('Reset account…', 'danger', () => ptConfirm('Reset paper account', 'This closes all positions, cancels all orders and clears the history, then starts again with the balance below. Trades already added to your Journal stay there.', 'Reset account', () => {
-      const v = ptNum($('#pcBal').value), start = v >= 100 && v <= 1e9 ? Math.round(v * 100) / 100 : 100000;
-      const keep = a.set; PT.a = ptFresh(start); PT.a.set = keep; ptLog(`Account reset with ${usd(start)}.`, 'info'); Paper.changed(); toast(`Paper account reset to ${usd(start)}.`);
-    }, true)));
+  reset.append(el('p', 'fine', a.kind === 'replay'
+      ? 'A replay account trades inside a bar replay: orders fill from the bars as they play. Leaving the replay, stepping back or jumping to another bar closes its positions at the last replayed price.'
+      : 'Paper trading uses virtual money on live prices. Orders fill while RealChart is open; when you come back, orders and stops that would have filled while it was closed are filled from the price history. Real trading can fill differently (slippage, spreads, partial fills).'),
+    ptBtn('Reset account…', 'danger', () => ptConfirm(`Reset ${a.name}`, 'This closes all positions, cancels all orders and clears the history, then starts again with the balance below. Trades already added to your Journal stay there.', 'Reset account', () => {
+      const v = ptNum($('#pcBal').value), start = v >= 100 && v <= 1e9 ? Math.round(v * 100) / 100 : a.start;
+      Object.assign(a, { start, bal: start, pos: [], ord: [], hist: [], log: [] }); ptLog(a, `Account reset with ${usd(start)}.`, 'info'); Paper.changed(); toast(`${a.name} reset to ${usd(start)}.`);
+    }, a.start)));
   set.append(lev, opts, reset); box.append(set);
 }
 
@@ -6035,19 +6273,19 @@ function ptLabelBox(x, y, parts, col) {   // a label made of segments; returns e
 }
 function ptDraw(m, W, H) {
   PT.hits = [];
-  if (!PT.a.set.lines || R.on || !S.bars.length) { ptHitsOut(); return; }
-  const id = S.symbol, a = PT.a, p = a.pos.find(x => x.sym === id), ords = a.ord.filter(o => o.sym === id && o.st === 'working');
+  if (!PT.s.ui.lines || R.picking || !S.bars.length) { ptHitsOut(); return; }
+  const a = ptA(), id = S.symbol, p = a.pos.find(x => x.sym === id), ords = a.ord.filter(o => o.sym === id && o.st === 'working');
   if (!p && !ords.length) { ptHitsOut(); return; }
-  const d = PT.drag, q = ptQuote(id), conv = ptConv(id), prec = S.prec;
+  const d = PT.drag, q = ptQuoteFor(a, id), conv = ptConv(id), prec = S.prec;
   const lines = [];
   const pnlAt = (price, qty, entry) => (price - entry) * qty * conv;
   if (p) {
     const long = p.qty > 0, mark = q ? (long ? q.bid : q.ask) : p.avg, pl = pnlAt(mark, p.qty, p.avg);
-    lines.push({ price: p.avg, col: C.draw, dash: [], kind: 'pos', ref: p, parts: [{ t: `${long ? 'Long' : 'Short'} ${ptFmtQty(id, p.qty)}`, fill: true, part: 'body' }, { t: usd(pl, true), color: pl >= 0 ? C.up : C.down, part: 'body' }, { x: true, part: 'close' }], z: 3 });
+    lines.push({ price: p.avg, col: C.draw, dash: [], kind: 'pos', ref: p, parts: [{ t: `${long ? 'Long' : 'Short'} ${ptFmtQty(id, p.qty)}`, fill: true, part: 'body' }, { t: usd(pl, true), color: pl >= 0 ? C.up : C.down, part: 'body' }, { x: true, part: 'close' }] });
     const br = (kind, price) => {
       if (price == null) return;
       const v = pnlAt(price, p.qty, p.avg), c = kind === 'tp' ? C.up : C.down;
-      lines.push({ price, col: c, dash: [5, 4], kind, ref: p, parts: [{ t: kind === 'tp' ? 'TP' : p.trail ? 'Trailing SL' : 'SL', fill: true, part: 'body' }, { t: `${usd(v, true)} · ${fmtPct(((price - p.avg) / p.avg) * 100 * Math.sign(p.qty))}`, color: v >= 0 ? C.up : C.down, part: 'body' }, { x: true, part: 'close' }], z: 2 });
+      lines.push({ price, col: c, dash: [5, 4], kind, ref: p, parts: [{ t: kind === 'tp' ? 'TP' : p.trail ? 'Trailing SL' : 'SL', fill: true, part: 'body' }, { t: `${usd(v, true)} · ${fmtPct(((price - p.avg) / p.avg) * 100 * Math.sign(p.qty))}`, color: v >= 0 ? C.up : C.down, part: 'body' }, { x: true, part: 'close' }] });
     };
     const tp = d && d.kind === 'tp' && d.ref === p && d.moved ? d.price : p.tp, sl = d && d.kind === 'sl' && d.ref === p && d.moved ? d.price : p.sl;
     br('tp', tp); br('sl', sl);
@@ -6059,15 +6297,16 @@ function ptDraw(m, W, H) {
     const buy = o.side === 'buy', col = buy ? C.up : C.down, mv = d && d.kind === 'ord' && d.ref === o && d.moved;
     const pr = o.type === 'stop' || (o.type === 'stoplimit' && !o.trig) ? o.stp : o.lim;
     const price = mv ? d.price : pr;
+    if (price == null) continue;   // a market order waiting for the market to open
     const tName = o.type === 'stoplimit' ? (o.trig ? 'Limit' : 'Stop limit') : PT_TYPES[o.type];
-    lines.push({ price, col, dash: [2, 3], kind: 'ord', ref: o, parts: [{ t: `${ptSideWord(o.side)} ${tName} ${ptFmtQty(id, o.qty)}`, fill: true, part: 'body' }, { t: fmtP(price, prec), color: C.fg, part: 'body' }, { x: true, part: 'close' }], z: 1 });
-    if (o.type === 'stoplimit' && !o.trig && o.lim) lines.push({ price: mv ? o.lim + (d.price - o.stp) : o.lim, col: alpha(col, 0.6), dash: [1, 4], kind: 'none', parts: null, z: 0 });
-    const ob = (kind, bp) => { if (bp == null) return; const mvb = d && d.kind === 'o' + kind && d.ref === o && d.moved; lines.push({ price: mvb ? d.price : bp, col: alpha(kind === 'tp' ? C.up : C.down, 0.7), dash: [1, 3], kind: 'o' + kind, ref: o, parts: [{ t: kind === 'tp' ? 'TP' : 'SL', fill: true, part: 'body' }, { t: fmtP(mvb ? d.price : bp, prec), color: C.muted, part: 'body' }, { x: true, part: 'close' }], z: 0 }); };
+    lines.push({ price, col, dash: [2, 3], kind: 'ord', ref: o, parts: [{ t: `${ptSideWord(o.side)} ${tName} ${ptFmtQty(id, o.qty)}`, fill: true, part: 'body' }, { t: fmtP(price, prec), color: C.fg, part: 'body' }, { x: true, part: 'close' }] });
+    if (o.type === 'stoplimit' && !o.trig && o.lim) lines.push({ price: mv ? o.lim + (d.price - o.stp) : o.lim, col: alpha(col, 0.6), dash: [1, 4], kind: 'none', parts: null });
+    const ob = (kind, bp) => { if (bp == null) return; const mvb = d && d.kind === 'o' + kind && d.ref === o && d.moved; lines.push({ price: mvb ? d.price : bp, col: alpha(kind === 'tp' ? C.up : C.down, 0.7), dash: [1, 3], kind: 'o' + kind, ref: o, parts: [{ t: kind === 'tp' ? 'TP' : 'SL', fill: true, part: 'body' }, { t: fmtP(mvb ? d.price : bp, prec), color: C.muted, part: 'body' }, { x: true, part: 'close' }] }); };
     ob('tp', o.tp); ob('sl', o.sl);
   }
   // lines, then labels on top (nudged apart when they would overlap), then the price tags on the scale
   const placed = [];
-  for (const L of lines) { L.y = m.y(L.price); }
+  for (const L of lines) L.y = m.y(L.price);
   const vis = lines.filter(L => L.y != null && isFinite(L.y));
   for (const L of vis) {
     if (L.y < -20 || L.y > H + 20) continue;
@@ -6102,7 +6341,7 @@ function ptHitsOut() {   // where the lines and labels are, for the automated te
   if (ov.dataset.pt !== v) ov.dataset.pt = v;
 }
 function ptHit(x, y) {
-  if (!PT.hits.length || S.tool !== 'cursor' || S.draft || R.picking || R.on) return null;
+  if (!PT.hits.length || S.tool !== 'cursor' || S.draft || R.picking) return null;
   let best = null;
   for (const h of PT.hits) {
     if (x < h.x || x > h.x + h.w || y < h.y || y > h.y + h.h) continue;
@@ -6129,15 +6368,15 @@ function ptPointerMove(e) {
 function ptPointerUp() {
   const d = PT.drag; if (!d) return; PT.drag = null;
   if (!d.moved) { if (d.click) ptLineOpen(d); markDirty(); return; }
-  const v = d.price, a = PT.a; let err = '';
+  const v = d.price, a = ptA(); let err = '';
   if (d.kind === 'pos' || d.kind === 'tp' || d.kind === 'sl') {
     const p = a.pos.find(x => x === d.ref); if (!p) { markDirty(); return; }
     const long = p.qty > 0;
     const kind = d.kind === 'pos' ? ((long ? v > p.avg : v < p.avg) ? 'tp' : 'sl') : d.kind;
-    err = ptBracketErr(p, kind, v);
+    err = ptBracketErr(a, p, kind, v);
     if (!err) {
-      if (kind === 'tp') p.tp = v; else { p.sl = v; if (p.trail) p.trail = Math.abs(ptMark(p) - v); }
-      ptLog(`${label(p.sym)} position: ${kind === 'tp' ? 'take profit' : p.trail ? 'trailing stop' : 'stop loss'} moved to ${ptPx(p.sym, v)}.`, 'info');
+      if (kind === 'tp') p.tp = v; else { p.sl = v; if (p.trail) p.trail = Math.abs(ptMark(a, p) - v); }
+      ptLog(a, `${label(p.sym)} position: ${kind === 'tp' ? 'take profit' : p.trail ? 'trailing stop' : 'stop loss'} moved to ${ptPx(p.sym, v)}.`, 'info');
     }
   } else if (d.kind === 'ord' || d.kind === 'otp' || d.kind === 'osl') {
     const o = a.ord.find(x => x === d.ref && x.st === 'working'); if (!o) { markDirty(); return; }
@@ -6145,47 +6384,47 @@ function ptPointerUp() {
     if (d.kind === 'ord') { if (o.type === 'stop') spec.stp = v; else if (o.type === 'limit' || o.trig) spec.lim = v; else { spec.lim = Number((o.lim + (v - o.stp)).toFixed(S.prec)); spec.stp = v; } }
     else if (d.kind === 'otp') spec.tp = v; else spec.sl = v;
     if (o.trig) spec.type = 'limit';
-    err = ptCheckOrder(spec);
-    if (!err) { o.lim = spec.lim; o.stp = spec.stp; o.tp = spec.tp; o.sl = spec.sl; if (o.trail && spec.sl) o.trail = Math.abs((o.type === 'stop' ? o.stp : o.lim) - spec.sl); o.upd = Date.now(); ptLog(`Modified: ${ptDesc(o)}.`, 'info');
-      if (PT.leader && ptCanFill(o.sym)) { const q = ptQuote(o.sym); if (q) ptEval(o.sym, q, Date.now(), false); } }
+    err = ptCheckOrder(a, spec);
+    if (!err) { o.lim = spec.lim; o.stp = spec.stp; o.tp = spec.tp; o.sl = spec.sl; if (o.trail && spec.sl) o.trail = Math.abs((o.type === 'stop' ? o.stp : o.lim) - spec.sl); o.upd = ptNow(a); ptLog(a, `Modified: ${ptDesc(o)}.`, 'info');
+      if ((a.kind === 'replay' || PT.leader) && ptCanFill(a, o.sym)) { const q = ptQuoteFor(a, o.sym); if (q) ptEval(a, o.sym, q, ptNow(a), false); } }
   }
   if (err) toast(err);
   Paper.changed();
 }
 function ptLineClose(h) {
-  const a = PT.a;
-  if (h.kind === 'pos') { const p = a.pos.find(x => x === h.ref); if (p) ptCloseNow(p); return; }
-  if (h.kind === 'tp' || h.kind === 'sl') { const p = a.pos.find(x => x === h.ref); if (!p) return; if (h.kind === 'tp') p.tp = null; else { p.sl = null; p.trail = null; } ptLog(`${label(p.sym)} position: ${h.kind === 'tp' ? 'take profit' : 'stop loss'} removed.`, 'info'); Paper.changed(); return; }
-  if (h.kind === 'ord') { ptCancel(h.ref); Paper.changed(); return; }
-  if (h.kind === 'otp' || h.kind === 'osl') { const o = h.ref; if (h.kind === 'otp') o.tp = null; else { o.sl = null; o.trail = null; } o.upd = Date.now(); Paper.changed(); }
+  const a = ptA();
+  if (h.kind === 'pos') { const p = a.pos.find(x => x === h.ref); if (p) ptCloseNow(a, p); return; }
+  if (h.kind === 'tp' || h.kind === 'sl') { const p = a.pos.find(x => x === h.ref); if (!p) return; if (h.kind === 'tp') p.tp = null; else { p.sl = null; p.trail = null; } ptLog(a, `${label(p.sym)} position: ${h.kind === 'tp' ? 'take profit' : 'stop loss'} removed.`, 'info'); Paper.changed(); return; }
+  if (h.kind === 'ord') { ptCancel(a, h.ref); Paper.changed(); return; }
+  if (h.kind === 'otp' || h.kind === 'osl') { const o = h.ref; if (h.kind === 'otp') o.tp = null; else { o.sl = null; o.trail = null; } o.upd = ptNow(a); Paper.changed(); }
 }
 function ptLineOpen(d) {
-  if (d.kind === 'pos' || d.kind === 'tp' || d.kind === 'sl') { const p = PT.a.pos.find(x => x === d.ref); if (p) ptTicket({ sym: p.sym, mode: 'pos', pid: p.id }); }
+  const a = ptA();
+  if (d.kind === 'pos' || d.kind === 'tp' || d.kind === 'sl') { const p = a.pos.find(x => x === d.ref); if (p) ptTicket({ sym: p.sym, mode: 'pos', pid: p.id }); }
   else if (d.kind === 'ord' || d.kind === 'otp' || d.kind === 'osl') { const o = d.ref; if (o && o.st === 'working') ptTicket({ sym: o.sym, mode: 'modify', oid: o.id }); }
 }
 
 // ----- right-click menu on the chart -----
 function ptMenuAt(e) {
-  if (curView() !== 'chart' || R.on || R.picking || S.tool !== 'cursor') return;
+  if (curView() !== 'chart' || R.picking || S.tool !== 'cursor') return;
   const r = wrap.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
   let ps; try { ps = chart.paneSize(0); } catch (er) { return; }
   if (x < 0 || y < 0 || x > ps.width || y > ps.height) return;
   const m = mapper(); if (!m) return;
   const raw = m.p(y); if (raw == null || !(raw > 0)) return;
   e.preventDefault();
-  const id = S.symbol, price = Number(raw.toFixed(S.prec)), q = ptQuote(id), live = ptLive(id), qty = ptQtQty(), menu = $('#ctxMenu');
+  const a = ptA(), id = S.symbol, price = Number(raw.toFixed(S.prec)), q = ptQuoteFor(a, id), ok = ptTradable(a, id), qty = ptQtQty(), menu = $('#ctxMenu');
   menu.replaceChildren();
   const item = (text, fn, cls, dis) => { const b = el('button', 'ctx-i' + (cls ? ' ' + cls : ''), text); b.type = 'button'; b.setAttribute('role', 'menuitem'); b.disabled = !!dis; b.onclick = () => { menu.hidden = true; fn(); }; menu.append(b); };
-  menu.append(el('div', 'ctx-h', `${label(id)} at ${fmtP(price, S.prec)}`));
-  if (!live) menu.append(el('div', 'ctx-note', `${label(id)} isn't live right now, so it can't be traded.`));
+  menu.append(el('div', 'ctx-h', `${label(id)} at ${fmtP(price, S.prec)}${R.on ? ' · replay' : ''}`));
+  if (!ok) menu.append(el('div', 'ctx-note', `${label(id)} isn't live right now, so it can't be traded.`));
   else if (q) {
     const below = price < q.last, qs = ptFmtQty(id, qty);
-    if (below) { item(`Buy ${qs} limit at ${fmtP(price, S.prec)}`, () => ptPlace({ sym: id, side: 'buy', type: 'limit', qty, lim: price }), 'buy'); item(`Sell ${qs} stop at ${fmtP(price, S.prec)}`, () => ptPlace({ sym: id, side: 'sell', type: 'stop', qty, stp: price }), 'sell'); }
-    else { item(`Sell ${qs} limit at ${fmtP(price, S.prec)}`, () => ptPlace({ sym: id, side: 'sell', type: 'limit', qty, lim: price }), 'sell'); item(`Buy ${qs} stop at ${fmtP(price, S.prec)}`, () => ptPlace({ sym: id, side: 'buy', type: 'stop', qty, stp: price }), 'buy'); }
+    if (below) { item(`Buy ${qs} limit at ${fmtP(price, S.prec)}`, () => ptPlace(a, { sym: id, side: 'buy', type: 'limit', qty, lim: price }), 'buy'); item(`Sell ${qs} stop at ${fmtP(price, S.prec)}`, () => ptPlace(a, { sym: id, side: 'sell', type: 'stop', qty, stp: price }), 'sell'); }
+    else { item(`Sell ${qs} limit at ${fmtP(price, S.prec)}`, () => ptPlace(a, { sym: id, side: 'sell', type: 'limit', qty, lim: price }), 'sell'); item(`Buy ${qs} stop at ${fmtP(price, S.prec)}`, () => ptPlace(a, { sym: id, side: 'buy', type: 'stop', qty, stp: price }), 'buy'); }
     item('New order at this price…', () => ptTicket({ sym: id, side: below ? 'buy' : 'sell', type: 'limit', price, qty }));
   }
-  menu.append(el('div', 'ctx-sep'));
-  item(`Add alert at ${fmtP(price, S.prec)}`, () => createAlert(id, price));
+  if (!R.on) { menu.append(el('div', 'ctx-sep')); item(`Add alert at ${fmtP(price, S.prec)}`, () => createAlert(id, price)); }
   menu.hidden = false;
   const w = menu.offsetWidth, h = menu.offsetHeight;
   menu.style.left = clamp(e.clientX, 8, innerWidth - w - 8) + 'px'; menu.style.top = clamp(e.clientY, 8, innerHeight - h - 8) + 'px';
