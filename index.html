@@ -155,8 +155,8 @@ select option{background:var(--panel);color:var(--fg)}
 .view-tab{height:26px;padding:0 12px;border-radius:6px;display:inline-flex;align-items:center;font-weight:600;font-size:12.5px;color:var(--muted);text-decoration:none}
 .view-tab:hover{color:var(--fg)}
 .view-tab[aria-current="page"]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(8,12,20,.1)}
-body:is([data-view="journal"],[data-view="ideas"]) .app>:is(.tools,.stage,.side){display:none}
-body:is([data-view="journal"],[data-view="ideas"]) .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#ideaBtn,#tradeBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn){display:none!important}
+body:is([data-view="journal"],[data-view="ideas"],[data-view="home"]) .app>:is(.tools,.stage,.side){display:none}
+body:is([data-view="journal"],[data-view="ideas"],[data-view="home"]) .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#ideaBtn,#tradeBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn){display:none!important}
 
 /* journal */
 .journal{grid-column:1/-1;grid-row:2/-1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px}
@@ -892,6 +892,111 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
   .tp-acct{max-width:170px}
   .tp-sum{gap:2px 12px}
 }
+/* home page */
+a.brand{color:inherit;text-decoration:none;border-radius:6px}
+a.brand:hover{opacity:.85}
+.home{grid-column:1/-1;grid-row:2/-1;min-height:0;overflow:auto;overscroll-behavior:contain;border-radius:8px}
+.h-hero{position:relative;max-width:980px;margin:0 auto;padding:54px 16px 6px;text-align:center;display:flex;flex-direction:column;align-items:center}
+.h-eyebrow{display:inline-flex;align-items:center;gap:8px;margin:0 0 18px;padding:5px 12px 5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel);font-size:12.5px;font-weight:500;color:var(--muted)}
+.h-live{width:8px;height:8px;border-radius:50%;background:var(--up);animation:pulse 2s infinite;flex:none}
+.h-hero h1{margin:0;font-family:var(--font-display);font-weight:800;font-size:clamp(36px,6vw,68px);line-height:1.02;letter-spacing:-.035em;color:var(--fg);text-wrap:balance}
+.h-grad{background:linear-gradient(92deg,var(--accent) 10%,var(--up) 90%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.h-lede{margin:20px 0 0;max-width:62ch;font-size:clamp(15px,1.6vw,17.5px);line-height:1.6;color:var(--muted);text-wrap:pretty}
+.h-search{display:flex;align-items:center;gap:10px;width:min(560px,100%);height:50px;margin-top:28px;padding:0 10px 0 18px;border:1px solid var(--line);border-radius:999px;background:var(--panel);box-shadow:0 8px 28px rgba(8,12,20,.08);color:var(--faint);font-size:15px;text-align:left}
+.h-search:hover{border-color:color-mix(in srgb,var(--fg) 25%,var(--line))}
+.h-search svg{width:19px;height:19px;flex:none;fill:none;stroke:var(--muted);stroke-width:1.9;stroke-linecap:round}
+.h-search span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.h-search kbd{flex:none}
+.h-cta{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-top:18px}
+.h-btn{height:44px;padding:0 20px;border-radius:999px;font-size:14.5px;font-weight:600;display:inline-flex;align-items:center;gap:8px;text-decoration:none}
+a.h-btn.primary{color:var(--panel)}
+.h-btn.ghost{background:var(--panel)}
+.h-fine{margin:16px 0 0;font-size:12.5px;color:var(--faint)}
+.h-shot{position:relative;max-width:1180px;margin:42px auto 0;padding:0 16px;perspective:2400px}
+.h-shot::before{content:"";position:absolute;inset:6% 12% 20%;background:radial-gradient(closest-side,color-mix(in srgb,var(--accent) 34%,transparent),transparent);filter:blur(40px);opacity:.55;pointer-events:none}
+.h-img{position:relative;display:block;width:100%;height:auto;border-radius:14px;border:1px solid var(--line);box-shadow:0 30px 80px rgba(5,8,14,.28),0 4px 14px rgba(5,8,14,.12);transform:rotateX(9deg);transform-origin:50% 0;transition:transform .6s cubic-bezier(.2,.7,.2,1)}
+.h-shot:hover .h-img{transform:rotateX(2deg)}
+.h-shot::after{content:"";position:absolute;left:0;right:0;bottom:-2px;height:28%;background:linear-gradient(to bottom,transparent,var(--bg) 92%);pointer-events:none}
+.h-light{display:none}
+:root[data-theme="light"] .h-dark{display:none}
+:root[data-theme="light"] .h-light{display:block}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]) .h-dark{display:none}:root:not([data-theme="dark"]) .h-light{display:block}}
+.h-sec{max-width:1180px;margin:0 auto;padding:18px 16px}
+.h-sec-h{display:flex;align-items:baseline;gap:12px;margin:0 0 12px}
+.h-sec-h h2{margin:0;font-family:var(--font-display);font-size:21px;font-weight:800;letter-spacing:-.02em}
+.h-sec-h a{margin-left:auto;font-size:13px;font-weight:600;color:var(--accent);text-decoration:none;white-space:nowrap}
+.h-sec-h a:hover{text-decoration:underline;text-underline-offset:3px}
+.h-note{font-size:12.5px;color:var(--faint)}
+.h-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.h-tile{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"top top" "px chg" "sp sp";gap:2px 8px;align-items:baseline;padding:12px 14px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);text-align:left;min-width:0}
+.h-tile:hover{border-color:color-mix(in srgb,var(--fg) 25%,var(--line));transform:translateY(-1px)}
+.h-tile{transition:transform .15s,border-color .15s}
+.h-t-top{grid-area:top;display:flex;align-items:baseline;gap:7px;min-width:0}
+.h-t-top b{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.h-t-sym{font-family:var(--font-data);font-size:11px;color:var(--faint);white-space:nowrap}
+.h-t-px{grid-area:px;font-family:var(--font-data);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px}
+.h-t-chg{grid-area:chg;font-family:var(--font-data);font-size:12px;font-weight:600;white-space:nowrap}
+.h-t-chg.up{color:var(--up-ink)}.h-t-chg.down{color:var(--down-ink)}.h-t-chg.saved{color:var(--faint);font-family:var(--font-body);font-weight:500;font-size:11px}
+.h-tile canvas{grid-area:sp;width:100%;height:42px;margin-top:6px;display:block}
+.h-two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.55fr);gap:12px}
+.h-two:has(#hIdeasCard[hidden]){grid-template-columns:minmax(0,1fr)}
+.h-two:has(#hMovers[hidden]){grid-template-columns:minmax(0,1fr)}
+.h-two:has(#hMovers[hidden]):has(#hIdeasCard[hidden]){display:none}
+.h-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 16px 14px;min-width:0}
+.h-movers{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px}
+.h-movers h3{margin:0 0 4px;font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+.h-movers h3.up{color:var(--up-ink)}.h-movers h3.down{color:var(--down-ink)}
+.h-movers ul{list-style:none;margin:0;padding:0}
+.h-mv{width:100%;display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"b px pc" "nm nm pc";gap:0 8px;align-items:baseline;padding:7px 6px;border-radius:7px;text-align:left}
+.h-mv:hover{background:var(--panel-2)}
+.h-mv b{grid-area:b;font-family:var(--font-data);font-size:13px;font-weight:600}
+.h-mv .nm{grid-area:nm;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.h-mv .px{grid-area:px;font-family:var(--font-data);font-size:12px;color:var(--muted);text-align:right;white-space:nowrap}
+.h-mv .pc{grid-area:pc;align-self:center;font-family:var(--font-data);font-size:12px;font-weight:600;padding:2px 7px;border-radius:5px;min-width:64px;text-align:right}
+.h-mv .pc.up{color:var(--up-ink);background:color-mix(in srgb,var(--up) 12%,transparent)}
+.h-mv .pc.down{color:var(--down-ink);background:color-mix(in srgb,var(--down) 12%,transparent)}
+.h-ideas{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.h-ideas .i-card .i-ex{display:none}
+.h-empty{grid-column:1/-1;display:flex;flex-direction:column;align-items:flex-start;gap:10px;margin:0;color:var(--muted);font-size:13px}
+.h-empty p{margin:0}
+.h-feats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.h-feat{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:18px 18px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel);min-width:0}
+.h-feat-ic{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
+.h-feat-ic svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.h-feat h3{margin:4px 0 0;font-size:15.5px;font-weight:600}
+.h-feat p{margin:0;font-size:13px;line-height:1.55;color:var(--muted);flex:1}
+.h-feat-go{margin-top:4px;padding:4px 0;font-size:13px;font-weight:600;color:var(--accent)}
+.h-feat-go:hover{text-decoration:underline;text-underline-offset:3px}
+.h-foot{max-width:1180px;margin:10px auto 0;padding:22px 16px 30px;border-top:1px solid var(--line);text-align:center;font-size:12px;color:var(--faint);display:flex;flex-direction:column;gap:6px}
+.h-foot p{margin:0}
+.h-foot a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+.h-foot a:hover{color:var(--muted)}
+@media (max-width: 1100px){
+  .h-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .h-two{grid-template-columns:minmax(0,1fr)}
+  .h-feats{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width: 880px){
+  .home{grid-row:auto;overflow:visible}
+  .h-hero{padding-top:34px}
+  .h-img{transform:none}
+  .h-shot:hover .h-img{transform:none}
+}
+@media (max-width: 640px){
+  .h-ideas{grid-template-columns:minmax(0,1fr)}
+  .h-feats{grid-template-columns:minmax(0,1fr)}
+  .h-search kbd{display:none}
+  .h-tile{grid-template-columns:minmax(0,1fr);grid-template-areas:"top" "px" "chg" "sp"}
+  .h-t-sym{display:none}
+  .h-t-px{margin-top:2px}
+  .h-shot{margin-top:28px;padding:0}
+  .h-img{border-radius:10px}
+}
+@media (max-width: 520px){body[data-view="home"] .brand .word{display:inline}body[data-view="home"] .brand{padding-right:10px}}
+@media (max-width: 420px){
+  .h-movers{grid-template-columns:minmax(0,1fr)}
+  .h-t-px{font-size:16px}
+}
 </style>
 <style>body{margin:0}[hidden]{display:none!important}img{max-width:100%}</style>
 </head>
@@ -899,12 +1004,12 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
 
 <div class="app" id="app">
   <header class="top">
-    <div class="brand" aria-label="RealChart">
+    <a class="brand" href="./" aria-label="RealChart">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2.5v4M8 17.5v4M16 5v3.5M16 15.5V20" style="stroke:var(--muted);stroke-width:1.8;stroke-linecap:round;fill:none"/><rect x="5" y="6.5" width="6" height="11" rx="1.6" style="fill:var(--up)"/><rect x="13" y="8.5" width="6" height="7" rx="1.6" style="fill:var(--accent)"/></svg>
       <span class="word">RealChart</span>
-    </div>
+    </a>
     <nav class="views" aria-label="Pages">
-      <a class="view-tab" href="./" data-view="chart" aria-current="page">Chart</a>
+      <a class="view-tab" href="?view=chart" data-view="chart" aria-current="page">Chart</a>
       <a class="view-tab" href="?view=ideas" data-view="ideas" aria-current="false">Ideas</a>
       <a class="view-tab" href="?view=journal" data-view="journal" aria-current="false">Journal</a>
     </nav>
@@ -1042,6 +1147,43 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
     </section>
     <p class="credit"><a href="privacy.html" target="_blank" rel="noopener">Privacy</a> · Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></p>
   </aside>
+
+  <section class="home" id="home" hidden aria-label="Home">
+    <div class="h-hero">
+      <p class="h-eyebrow"><span class="h-live" aria-hidden="true"></span>Live crypto, US stocks, forex, indices and commodities</p>
+      <h1>See the market clearly.<br><span class="h-grad">Practise before you risk it.</span></h1>
+      <p class="h-lede">Free live charts with 25 indicators and drawing tools, paper trading with virtual money, bar replay, a trading journal and a community that shares ideas. All in your browser, with nothing to install.</p>
+      <button class="h-search" id="hSearch" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search a symbol: BTCUSDT, AAPL, EUR/USD, gold…</span><kbd>/</kbd></button>
+      <div class="h-cta"><a class="h-btn primary" id="hOpen" href="?view=chart">Open the chart <span aria-hidden="true">→</span></a><button class="h-btn ghost" id="hPaper" type="button">Try paper trading</button></div>
+      <p class="h-fine">Free to use · No card needed · Sign in with Google to keep your setup on every device</p>
+    </div>
+    <figure class="h-shot">
+      <img class="h-img h-dark" src="hero-dark.webp" width="1600" height="930" loading="lazy" decoding="async" alt="RealChart showing Bitcoin on a 4-hour chart, with moving averages, RSI, drawings and a paper trading position with its take profit and stop loss">
+      <img class="h-img h-light" src="hero-light.webp" width="1600" height="930" loading="lazy" decoding="async" alt="RealChart showing Bitcoin on a 4-hour chart, with moving averages, RSI, drawings and a paper trading position with its take profit and stop loss">
+    </figure>
+    <section class="h-sec" aria-labelledby="hMarketsH">
+      <div class="h-sec-h"><h2 id="hMarketsH">Markets now</h2><a href="?view=chart" id="hMarketsOpen">Open the chart →</a></div>
+      <div class="h-tiles" id="hTiles"></div>
+    </section>
+    <div class="h-sec h-two">
+      <section class="h-card" id="hMovers" aria-labelledby="hMoversH">
+        <div class="h-sec-h"><h2 id="hMoversH">Crypto movers</h2><span class="h-note">last 24 hours</span></div>
+        <div class="h-movers"><div><h3 class="up">Gainers</h3><ul id="hUp"></ul></div><div><h3 class="down">Losers</h3><ul id="hDown"></ul></div></div>
+      </section>
+      <section class="h-card" id="hIdeasCard" aria-labelledby="hIdeasH">
+        <div class="h-sec-h"><h2 id="hIdeasH">Latest ideas</h2><a href="?view=ideas" id="hAllIdeas">All ideas →</a></div>
+        <div class="h-ideas" id="hIdeas"></div>
+      </section>
+    </div>
+    <section class="h-sec" aria-labelledby="hFeatsH">
+      <div class="h-sec-h"><h2 id="hFeatsH">Everything you need, in one place</h2></div>
+      <div class="h-feats" id="hFeats"></div>
+    </section>
+    <footer class="h-foot">
+      <p>RealChart is for information and practice only. It isn't financial advice, and paper trading uses virtual money.</p>
+      <p><a href="privacy.html" target="_blank" rel="noopener">Privacy</a> · <a href="rules.html" target="_blank" rel="noopener">Community rules</a> · Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></p>
+    </footer>
+  </section>
 
   <section class="journal" id="journal" hidden aria-label="Trade journal">
     <div class="j-head">

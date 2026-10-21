@@ -1,14 +1,22 @@
 {
   "name": "RealChart",
   "short_name": "RealChart",
-  "description": "Live charts for crypto, US stocks and forex with indicators, drawing tools, a watchlist and price alerts.",
-  "start_url": "./",
+  "description": "Free live charts for crypto, US stocks, forex, indices and commodities, with indicators, drawing tools, paper trading, bar replay and a trading journal.",
+  "start_url": "./?view=chart",
   "scope": "./",
   "display": "standalone",
   "background_color": "#07090e",
   "theme_color": "#0e131b",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ]
 }

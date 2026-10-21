@@ -1899,9 +1899,10 @@ function onTicker(t) {
   S.tickers[t.sym] = t;
   updateWatchRow(t.sym, prev);
   if (t.sym === S.symbol) renderDetails();
+  Home.onTicker(t);
   if (!t.stand) { checkAlerts(t.sym, t.last); Paper.onPrice(t.sym); }   // a saved stand-in price never sets off an alert or fills an order
 }
-function tickerSet() { const set = new Set(S.watch); set.add(S.symbol); S.alerts.forEach(a => { if (!a.hit) set.add(a.sym); }); Paper.symbols().forEach(id => set.add(id)); return Array.from(set); }
+function tickerSet() { const set = new Set(S.watch); set.add(S.symbol); S.alerts.forEach(a => { if (!a.hit) set.add(a.sym); }); Paper.symbols().forEach(id => set.add(id)); Home.symbols().forEach(id => set.add(id)); return Array.from(set); }
 
 /* ---------- network helpers ---------- */
 function fetchT(url, ms, opts) {
@@ -3089,7 +3090,7 @@ function renderSearch(q) {
     li.append(main, tag, star); sList.append(li);
   });
 }
-function choose(id) { if (sMode === 'add') addWatch(id); sDlg.close(); setSymbol(id); }
+function choose(id) { if (sMode === 'add') addWatch(id); sDlg.close(); if (curView() !== 'chart') { setView('chart', true); window.scrollTo(0, 0); } setSymbol(id); }
 sInput.addEventListener('input', runSearch);
 sInput.addEventListener('keydown', e => {
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -3314,6 +3315,7 @@ function updateUrl() {
   try { history.replaceState(null, '', shareQuery()); } catch (e) { /* address can't be changed here */ }
 }
 function updateDocTitle() {
+  if (curView() === 'home') { document.title = `${CFG.siteName} · Free live charts, paper trading and a trading journal`; return; }
   if (curView() === 'journal') { document.title = `Trade journal · ${CFG.siteName}`; return; }
   if (curView() === 'ideas') { document.title = ID.open && ID.cur ? `${ID.cur.title} · Ideas · ${CFG.siteName}` : `Ideas · ${CFG.siteName}`; return; }
   const t = S.tickers[S.symbol];
@@ -3397,6 +3399,7 @@ document.addEventListener('keydown', e => {
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'select' || tag === 'textarea' || e.target.isContentEditable) return;
   if (document.querySelector('dialog[open]')) return;
+  if (curView() === 'home' && !e.ctrlKey && !e.metaKey && !e.altKey && (/^[a-z0-9]$/i.test(e.key) || e.key === '/')) { e.preventDefault(); openSearch('open', e.key === '/' ? '' : e.key); return; }   // typing on the home page searches
   if (curView() !== 'chart') return;
   if (e.key === 'Escape' && R.picking) { rpCancelPick(); return; }
   if (e.key === 'Escape') { if (S.tool !== 'cursor' || S.draft) finishTool(); select(null); S.measure = null; markDirty(); return; }
@@ -3618,26 +3621,28 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && Aut
 if (sessionStorage.getItem('wickline:deleted')) { sessionStorage.removeItem('wickline:deleted'); setTimeout(() => toast('Your account and everything saved to it have been deleted.'), 600); }
 
 /* ---------- pages: Chart, Ideas and Journal ---------- */
-const VIEWS = ['chart', 'ideas', 'journal'];
+const VIEWS = ['home', 'chart', 'ideas', 'journal'];
 const curView = () => (VIEWS.includes(document.body.dataset.view) ? document.body.dataset.view : 'chart');
 function viewQuery(v) {
   v = v || curView();
   if (v === 'journal') return '?view=journal';
   if (v === 'ideas') return '?view=ideas' + (ID.open ? '&idea=' + ID.open : '');
-  return '';
+  if (v === 'chart') return '?view=chart';
+  return '';   // home
 }
 function setView(v, push) {
   v = VIEWS.includes(v) ? v : 'chart';
   document.body.dataset.view = v;
-  $('#journal').hidden = v !== 'journal'; $('#ideas').hidden = v !== 'ideas';
+  $('#journal').hidden = v !== 'journal'; $('#ideas').hidden = v !== 'ideas'; $('#home').hidden = v !== 'home';
   document.querySelectorAll('.view-tab').forEach(a => a.setAttribute('aria-current', a.dataset.view === v ? 'page' : 'false'));
   let url;
   if (v === 'chart') {
     const q = new URLSearchParams(location.search); q.delete('view'); q.delete('idea');
-    url = location.pathname + (S.ready && !S.sandbox ? shareQuery() : (String(q) ? '?' + q : ''));
+    url = location.pathname + (S.ready && !S.sandbox ? shareQuery() : (String(q) ? '?' + q : '?view=chart'));
   } else url = location.pathname + viewQuery(v);
   try { if (push && url !== location.pathname + location.search) history.pushState({ view: v }, '', url); else history.replaceState({ view: v }, '', url); } catch (e) { /* address can't be changed here */ }
   $('#acctMenu').hidden = true; jTipHide();
+  if (v === 'home') Home.show();
   if (v === 'journal') Journal.show();
   else if (v === 'ideas') Ideas.show();
   else requestAnimationFrame(() => { sizeOverlay(); markDirty(); if (S.focusTime) focusChart(); });
@@ -3647,8 +3652,10 @@ function setView(v, push) {
 function readViewFromUrl() {
   const q = new URLSearchParams(location.search), v = q.get('view'), id = q.get('idea');
   ID.open = v === 'ideas' && isUuid(id) ? id.toLowerCase() : null;
-  return VIEWS.includes(v) ? v : 'chart';
+  if (VIEWS.includes(v)) return v;
+  return q.get('s') || q.get('symbol') || /^#[A-Za-z0-9._-]{1,20}$/.test(location.hash) ? 'chart' : 'home';   // a shared chart link opens the chart; the bare address, the home page
 }
+$('.brand').onclick = e => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); setView('home', true); window.scrollTo(0, 0); };
 document.querySelectorAll('.view-tab').forEach(a => { a.onclick = e => { e.preventDefault(); if (a.dataset.view === 'ideas') ID.open = null; setView(a.dataset.view, true); }; });
 window.addEventListener('popstate', () => setView(readViewFromUrl()));
 document.body.dataset.view = 'chart';
@@ -5638,7 +5645,8 @@ const Paper = {
       else PT.leader = true;
     } catch (e) { PT.leader = true; }
     setInterval(() => this.tick(), 1000);
-    ptUiInit(); this.refresh();
+    ptUiInit(); if (PT.open) ptSetOpen(true);   // a panel left open stays open
+    this.refresh();
   },
   ready() { this.relevantSet(); if (PT.leader) this.catchUp(); ptQtSync(); },
   relevantSet() {   // symbols the live accounts need prices for
@@ -6431,6 +6439,140 @@ function ptMenuAt(e) {
   const first = menu.querySelector('button:not(:disabled)'); if (first) first.focus({ preventScroll: true });
 }
 
+/* ---------- home page ----------
+   The first thing people see at the site's address: what RealChart does, a picture of it, live markets, the day's
+   crypto movers, the latest community ideas and the features. Shared chart links (?s=…) still open the chart. */
+const HOME_TILES = ['BINANCE:BTCUSDT', 'BINANCE:ETHUSDT', 'BINANCE:SOLUSDT', 'FX:XAU/USD', 'FX:EUR/USD', 'FX:SPX500/USD', 'FX:NAS100/USD', 'FX:WTICO/USD'];
+const HOME_NAMES = { 'BINANCE:BTCUSDT': 'Bitcoin', 'BINANCE:ETHUSDT': 'Ethereum', 'BINANCE:SOLUSDT': 'Solana', 'FX:XAU/USD': 'Gold', 'FX:EUR/USD': 'Euro / US dollar', 'FX:SPX500/USD': 'S&P 500', 'FX:NAS100/USD': 'Nasdaq 100', 'FX:WTICO/USD': 'WTI crude oil' };
+const HOME_MOVERS = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'LINK', 'AVAX', 'LTC', 'DOT', 'TRX', 'SUI', 'NEAR', 'ATOM', 'UNI', 'APT', 'ARB', 'OP', 'BCH', 'AAVE', 'XLM', 'PEPE', 'SHIB', 'INJ', 'FET', 'RENDER', 'WIF', 'ENA', 'TAO', 'HBAR', 'FIL'].map(c => c + 'USDT');
+const HOME_ICON = {
+  chart: '<path d="M4 19h16"/><path d="M7 15V9M7 9V6M12 16v-6M12 10V5M17 14v-3M17 11V8"/><rect x="5.5" y="9" width="3" height="5" rx=".6"/><rect x="10.5" y="10" width="3" height="5" rx=".6"/><rect x="15.5" y="11" width="3" height="3" rx=".6"/>',
+  paper: '<rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6.5 9.5v5M17.5 9.5v5"/>',
+  replay: '<path d="M11.5 7l-6 5 6 5z"/><path d="M19.5 7l-6 5 6 5z"/>',
+  journal: '<path d="M6 4h11a2 2 0 0 1 2 2v14H8a2 2 0 0 1-2-2z"/><path d="M6 18a2 2 0 0 1 2-2h11"/><path d="M10 8h6M10 11h4"/>',
+  ideas: '<path d="M9.5 18h5M10.5 21h3"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>',
+  alert: '<path d="M6 16v-5a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+};
+const homeSvg = n => `<svg viewBox="0 0 24 24" aria-hidden="true">${HOME_ICON[n]}</svg>`;
+const Home = {
+  built: false, spark: {}, sparkAt: {}, moversAt: 0, ideasAt: 0, timer: null,
+  symbols() { return curView() === 'home' && S.ready ? HOME_TILES : []; },
+  show() {
+    if (!this.built) this.build();
+    if (!S.ready) return;   // the rest waits for the market data to connect (see ready)
+    ensureTickerSubs(); this.tiles(); this.loadSparks(); this.movers(); this.ideas();
+    clearInterval(this.timer); this.timer = setInterval(() => { if (curView() !== 'home') { clearInterval(this.timer); return; } this.movers(); this.loadSparks(); }, 60000);
+  },
+  ready() { if (curView() === 'home') this.show(); },
+  build() {
+    this.built = true;
+    const box = $('#hTiles');
+    HOME_TILES.forEach(id => {
+      const b = el('button', 'h-tile'); b.type = 'button'; b.dataset.sym = id; b.title = `Open ${label(id)} on the chart`;
+      const top = el('span', 'h-t-top'); top.append(el('b', null, HOME_NAMES[id] || label(id)), el('span', 'h-t-sym', label(id)));
+      const cv = el('canvas'); cv.setAttribute('aria-hidden', 'true');
+      b.append(top, el('span', 'h-t-px', '—'), el('span', 'h-t-chg', ''), cv);
+      b.onclick = () => this.open(id);
+      box.append(b);
+    });
+    const feats = [
+      ['chart', 'Live charts', 'Crypto, US stocks, forex, indices and commodities, with 25 indicators, drawing tools and 8 timeframes.', 'Open the chart', () => this.go('chart')],
+      ['paper', 'Paper trading', 'Practise with virtual money on live prices: market, limit and stop orders, take profit and stop loss, several accounts.', 'Start practising', () => this.practise()],
+      ['replay', 'Bar replay', 'Rewind the market to any bar and trade it forward, bar by bar, to test your plan without waiting.', 'Try a replay', () => { this.go('chart'); setTimeout(() => rpStartPick(), 300); }],
+      ['journal', 'Trade journal', 'Log your trades and see your win rate, profit factor, equity curve and a calendar of your results.', 'Open the journal', () => this.go('journal')],
+      ['ideas', 'Community ideas', 'See how other traders read the chart, and publish your own view with your drawings.', 'Browse ideas', () => this.go('ideas')],
+      ['alert', 'Alerts and watchlist', 'Keep the markets you follow in one list, and get an alert the moment a price is crossed.', 'Set an alert', () => this.go('chart')],
+    ];
+    const fb = $('#hFeats');
+    feats.forEach(([icon, title, text, cta, fn]) => {
+      const c = el('article', 'h-feat'), ic = el('span', 'h-feat-ic'); ic.innerHTML = homeSvg(icon);
+      const go = el('button', 'h-feat-go', cta + ' →'); go.type = 'button'; go.onclick = fn;
+      c.append(ic, el('h3', null, title), el('p', null, text), go); fb.append(c);
+    });
+    $('#hSearch').onclick = () => openSearch('open');
+    $('#hOpen').onclick = e => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); this.go('chart'); };
+    $('#hPaper').onclick = () => this.practise();
+    $('#hAllIdeas').onclick = e => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); this.go('ideas'); };
+    $('#hMarketsOpen').onclick = e => { if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); this.go('chart'); };
+    new MutationObserver(() => this.redraw()).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    if (mq.addEventListener) mq.addEventListener('change', () => this.redraw());
+    window.addEventListener('resize', () => { if (curView() === 'home') this.redraw(); });
+  },
+  go(v) { if (v === 'ideas') ID.open = null; setView(v, true); window.scrollTo(0, 0); },
+  open(id) { setView('chart', true); window.scrollTo(0, 0); if (id !== S.symbol) setSymbol(id); },
+  practise() { this.go('chart'); ptSetOpen(true); setTimeout(() => ptTicket({ sym: S.symbol, side: 'buy' }), 200); },
+  tiles() { HOME_TILES.forEach(id => this.tile(id)); },
+  tile(id) {
+    const b = $(`#hTiles .h-tile[data-sym="${id}"]`), t = S.tickers[id]; if (!b) return;
+    const px = b.querySelector('.h-t-px'), ch = b.querySelector('.h-t-chg');
+    if (!t) { px.textContent = '—'; ch.textContent = ''; return; }
+    px.textContent = fmtP(t.last, t.prec || precFor(id, t.last));
+    if (t.src === 'demo' || t.stand) { ch.textContent = 'saved price'; ch.className = 'h-t-chg saved'; }
+    else { const pct = t.ref ? ((t.last - t.ref) / t.ref) * 100 : NaN; ch.textContent = isFinite(pct) ? fmtPct(pct) : ''; ch.className = 'h-t-chg ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''); }
+  },
+  onTicker(t) { if (curView() === 'home' && this.built && HOME_TILES.includes(t.sym)) this.tile(t.sym); },
+  async loadSparks() {   // the last two days, hour by hour
+    for (const id of HOME_TILES) {
+      if (srcOf(id) === 'demo' || (this.sparkAt[id] && Date.now() - this.sparkAt[id] < 9 * 60000)) continue;
+      this.sparkAt[id] = Date.now();
+      try { const bars = await feedFor(id).klines(id, '1h'); this.spark[id] = bars.slice(-48).map(b => b.close); this.drawSpark(id); } catch (e) { this.sparkAt[id] = 0; }
+    }
+  },
+  drawSpark(id) {
+    const b = $(`#hTiles .h-tile[data-sym="${id}"]`), pts = this.spark[id]; if (!b || !pts || pts.length < 2) return;
+    const cv = b.querySelector('canvas'), r = cv.getBoundingClientRect(); if (!r.width) return;
+    const d = window.devicePixelRatio || 1; cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d);
+    const g = cv.getContext('2d'); g.setTransform(d, 0, 0, d, 0, 0); g.clearRect(0, 0, r.width, r.height);
+    const lo = Math.min(...pts), hi = Math.max(...pts), span = hi - lo || 1, w = r.width, h = r.height - 2;
+    const X = i => (i / (pts.length - 1)) * w, Y = v => 1 + h - ((v - lo) / span) * h;
+    const col = pts[pts.length - 1] >= pts[0] ? C.up : C.down;
+    g.beginPath(); pts.forEach((v, i) => (i ? g.lineTo(X(i), Y(v)) : g.moveTo(X(i), Y(v))));
+    g.strokeStyle = col; g.lineWidth = 1.6; g.lineJoin = 'round'; g.stroke();
+    g.lineTo(w, h + 1); g.lineTo(0, h + 1); g.closePath();
+    const grad = g.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, alpha(col, 0.22)); grad.addColorStop(1, alpha(col, 0)); g.fillStyle = grad; g.fill();
+  },
+  redraw() { if (!this.built) return; requestAnimationFrame(() => HOME_TILES.forEach(id => this.drawSpark(id))); },
+  async movers() {
+    const card = $('#hMovers');
+    if (!S.binance) { card.hidden = true; return; }
+    card.hidden = false;
+    if (Date.now() - this.moversAt < 50000) return;
+    this.moversAt = Date.now();
+    let list;
+    try { list = await Live.tickers(HOME_MOVERS); } catch (e) { this.moversAt = 0; return; }
+    const rows = list.filter(t => t.last > 0 && t.ref > 0).map(t => ({ id: t.sym, last: t.last, pct: ((t.last - t.ref) / t.ref) * 100 })).sort((a, b) => b.pct - a.pct);
+    const fill = (sel, items) => {
+      const ul = $(sel); ul.replaceChildren();
+      items.forEach(x => {
+        const li = el('li'), b = el('button', 'h-mv'); b.type = 'button'; b.title = `Open ${label(x.id)} on the chart`;
+        const [base] = splitSym(rawOf(x.id));
+        b.append(el('b', null, base), el('span', 'nm', COINS[base] || base), el('span', 'px', fmtP(x.last, precFor(x.id, x.last))), el('span', 'pc ' + (x.pct >= 0 ? 'up' : 'down'), fmtPct(x.pct)));
+        b.onclick = () => this.open(x.id); li.append(b); ul.append(li);
+      });
+    };
+    fill('#hUp', rows.slice(0, 5)); fill('#hDown', rows.slice(-5).reverse());
+  },
+  async ideas() {
+    const card = $('#hIdeasCard'), box = $('#hIdeas');
+    if (!Auth.sb) { card.hidden = true; return; }
+    card.hidden = false;
+    if (Date.now() - this.ideasAt < 120000 && box.children.length) return;
+    this.ideasAt = Date.now();
+    try {
+      const { data, error } = await Auth.sb.from('ideas').select(IDEA_LIST).eq('hidden', false).order('created_at', { ascending: false }).limit(3);
+      if (error) throw error;
+      const rows = (data || []).map(r => cleanIdea(r, false)).filter(Boolean);
+      box.replaceChildren();
+      if (!rows.length) {
+        const p = el('div', 'h-empty'); const b = el('button', 'primary', 'Publish the first idea'); b.type = 'button'; b.onclick = () => Ideas.startPublish();
+        p.append(el('p', null, 'No ideas yet. Share how you read a chart: open one, draw your levels and publish it.'), b); box.append(p); return;
+      }
+      rows.forEach(it => box.append(Ideas.card(it)));
+      requestAnimationFrame(() => box.querySelectorAll('canvas').forEach(cv => drawThumb(cv, cv._thumb)));
+    } catch (e) { this.ideasAt = 0; if (!box.children.length) box.append(el('p', 'h-empty', "Ideas couldn't be loaded right now.")); }
+  },
+};
+
 /* ---------- boot ---------- */
 async function probeTD() {
   if (TD.key === 'site') { try { return (await fetchT(API + '/', 4500)).ok; } catch (e) { return false; } }
@@ -6465,6 +6607,7 @@ async function boot() {
   const first = loadChart();   // queue the chart request before the watchlist quotes
   ensureTickerSubs();
   Paper.ready();
+  Home.ready();
   await first;
 }
 boot();
