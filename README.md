@@ -11,7 +11,7 @@ Free live charts for crypto, US stocks, forex, gold, stock indices, commodities 
 | `vendor/` | The chart library and the sign-in library, served from your own site (with their licences). |
 | `privacy.html` | The privacy policy, linked from the sign-in window and the page footer. |
 | `rules.html` | The community rules for Ideas, linked from the Publish idea window. |
-| `oanda-worker.js` | Your Cloudflare helper. It keeps your OANDA token and Twelve Data key secret. See below. |
+| `helper/` | Your Cloudflare helper (`oanda-worker.js` and its settings file `wrangler.toml`). It keeps your OANDA, Twelve Data and cTrader keys secret. See below. |
 | `favicon.svg`, `icon-*.png`, `apple-touch-icon.png`, `manifest.webmanifest`, `og-image.png` | Icons, phone home-screen support and the picture shown when someone shares your link. |
 
 ## Change a setting (no coding needed)
@@ -24,6 +24,7 @@ Free live charts for crypto, US stocks, forex, gold, stock indices, commodities 
 ## Where the prices come from
 
 - **Crypto:** Binance public market data (live). Where Binance doesn't answer (for example in the UK and US), the page switches to OKX, then Bybit, automatically.
+- **Forex, gold, indices and commodities:** a cTrader broker's prices, if you set up cTrader on your helper (see below). Markets that broker doesn't offer, and bonds, keep using the next source.
 - **Forex, gold, indices, commodities and bonds:** OANDA, through your Cloudflare helper. Without it, the 12 major forex pairs come from Kraken and gold follows PAX Gold, both live with no key.
 - **US stocks and ETFs:** Twelve Data, through your Cloudflare helper.
 - When a market can't be reached, the page shows real prices saved when it was built, clearly marked "saved". The older candles on those charts are illustrative.
@@ -32,21 +33,48 @@ Market data is for information only and is not financial advice.
 
 ## Your Cloudflare helper (keeps your keys secret)
 
-`oanda-worker.js` runs free on Cloudflare. Your secret keys live in its settings, so they never reach visitors' browsers. It only allows reading market data: it can't place trades or see your balance. It also limits how fast any one visitor can call it, and shares answers between visitors so your free allowances last.
+`helper/oanda-worker.js` runs free on Cloudflare. Your secret keys live in its settings, so they never reach visitors' browsers. It only allows reading market data: it can't place trades or see your balance. It also limits how fast any one visitor can call it, and shares answers between visitors so your free allowances last.
 
 ### Set it up or update it
 
-1. In Cloudflare, go to **Workers & Pages** and open your Worker (or **Create** one with **Start with Hello World!**, named `wickline-oanda`).
-2. Click **Edit code**, replace everything with the whole of `oanda-worker.js` from this repository, and click **Deploy**.
-3. In the Worker's **Settings → Variables and Secrets**, add:
+The cTrader part needs a Cloudflare *Durable Object*, which Cloudflare only creates from code in a repository. So connect the Worker to this GitHub repository once; after that, Cloudflare redeploys the helper by itself whenever the `helper/` folder changes.
+
+1. In Cloudflare, go to **Workers & Pages** and open your Worker `wickline-oanda` (or **Create** one with **Start with Hello World!** and that name).
+2. Open **Settings → Build** and click **Connect** next to *Git repository*. Choose GitHub, this repository and the `main` branch.
+3. Set **Root directory** to `helper`, leave the build command empty, keep the deploy command `npx wrangler deploy`, and set **Build watch paths** to `helper/*`. Save. The first deploy takes about a minute.
+4. In the Worker's **Settings → Variables and Secrets**, add:
    - `OANDA_TOKEN` (type **Secret**): your OANDA token, from hub.oanda.com → Tools → API.
    - `TD_KEY` (type **Secret**): your Twelve Data API key, from your Twelve Data dashboard.
-   - `ALLOWED_ORIGIN` (type **Text**): your site address, for example `https://yourname.github.io`.
-4. Put the Worker's address (for example `https://wickline-oanda.yourname.workers.dev`) in `proxy` in `config.js`.
+   - `ALLOWED_ORIGIN` (type **Text**): your site address, for example `https://realchart.trade`.
+5. Put the Worker's address (for example `https://wickline-oanda.yourname.workers.dev`) in `proxy` in `config.js`.
+
+Without cTrader, you can instead click **Edit code**, paste the whole of `helper/oanda-worker.js` and click **Deploy**; the cTrader part then stays switched off.
 
 Twelve Data's free plan allows 8 requests a minute and 800 a day, shared by every visitor. When it runs out, stocks show their saved price until midnight UTC. A visitor can paste their own free key under **Data sources** (the price badge, top right); it stays in their browser and goes only to Twelve Data.
 
 Before showing OANDA prices to the public, check OANDA's terms. Brokers often license their price data for your own use only.
+
+### cTrader prices (optional)
+
+With cTrader, forex, gold, indices and commodities come from a broker's live prices, with full candle history, through the free cTrader Open API.
+
+1. Sign in at [openapi.ctrader.com](https://openapi.ctrader.com) with your cTrader ID and register an application. Spotware reviews it and emails you when it's approved.
+2. On the approved application, open **Playground**, choose the **Accounts** scope (view only) and click **Get token**. Keep that page open.
+3. In the Worker's **Settings → Variables and Secrets**, add these as type **Secret**:
+   - `CT_CLIENT_ID` and `CT_CLIENT_SECRET`: from your application's page.
+   - `CT_REFRESH_TOKEN`: the refresh token from the Playground. (`CT_ACCESS_TOKEN`, the access token, is optional.)
+   - Optional, type **Text**: `CT_ACCOUNT`, the account number to read prices from. Otherwise the first account is used.
+4. Open `https://<your helper address>/ct/status`. It should say `"ok":true` and name your broker.
+
+Visitors' pages pick it up by themselves within the hour.
+
+How it works:
+- **One connection for everyone.** Spotware asks apps to keep at most one connection per server, so the helper holds a single connection and passes prices to every visitor.
+- **Tokens renew themselves.** cTrader tokens last 30 days and change each time they're renewed, so the helper renews them and keeps the newest pair. Paste a new refresh token only if you revoke the app's access.
+- **It fits the free plan.** While someone is watching, the connection stays open, which uses about 10,800 of Cloudflare's 13,000 free daily GB-seconds if someone watches all day. With nobody watching for 10 minutes, it disconnects.
+- **Unmatched markets keep their usual source.** Brokers name markets differently (for example `US500` for the S&P 500). The page matches the common names, and anything it can't match, or whose price doesn't fit, keeps using OANDA or the next source.
+
+Before showing a broker's prices to the public, get the broker's written permission. Asking as its partner (an introducing broker) helps.
 
 ## Indicators
 

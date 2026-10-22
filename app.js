@@ -1239,7 +1239,7 @@ function placePaneLegends() {
     rt.paneLg.style.top = (node.getBoundingClientRect().top - wr.top + 4) + 'px';
   }
 }
-const SRC_NAME = { binance: 'Binance', td: 'Twelve Data', demo: 'Saved price', paxg: 'via PAXG', metal: 'gold-api.com', oanda: 'OANDA', kraken: 'Kraken' };
+const SRC_NAME = { binance: 'Binance', td: 'Twelve Data', demo: 'Saved price', paxg: 'via PAXG', metal: 'gold-api.com', oanda: 'OANDA', kraken: 'Kraken', ctrader: 'cTrader' };
 function setTitle() {
   const src = S.ready ? srcOf(S.symbol) : null;
   L.title.innerHTML = '';
@@ -2652,8 +2652,188 @@ const MetalFeed = {
   },
 };
 
+/* ---------- cTrader: a broker's forex, indices, metals and commodities, through the site's helper ----------
+   The helper holds ONE connection to cTrader for everyone (Spotware's rule) and hands out candles and live prices.
+   Brokers name their symbols differently, so each site symbol lists the names brokers commonly use. */
+const CT_ALIAS = {
+  'FX:XAU/USD': ['XAUUSD', 'GOLD'], 'FX:XAG/USD': ['XAGUSD', 'SILVER'],
+  'FX:SPX500/USD': ['US500', 'SPX500', 'SP500', 'USA500', 'SPX'], 'FX:NAS100/USD': ['USTEC', 'NAS100', 'US100', 'NDX100', 'USTECH', 'USA100', 'NASDAQ100'],
+  'FX:US30/USD': ['US30', 'DJ30', 'WS30', 'DOW30', 'USA30', 'WALLST30'], 'FX:US2000/USD': ['US2000', 'RUSSELL2000', 'USSC2000', 'RTY'],
+  'FX:UK100/GBP': ['UK100', 'FTSE100'], 'FX:DE30/EUR': ['DE40', 'GER40', 'DE30', 'GER30', 'DAX40'], 'FX:FR40/EUR': ['F40', 'FRA40', 'FR40', 'CAC40'],
+  'FX:EU50/EUR': ['STOXX50', 'EU50', 'EUSTX50', 'ESTX50'], 'FX:JP225/USD': ['JP225', 'JPN225', 'NIKKEI225', 'J225'], 'FX:HK33/HKD': ['HK50', 'HK33', 'HSI50'],
+  'FX:AU200/AUD': ['AUS200', 'AU200', 'ASX200'], 'FX:CN50/USD': ['CN50', 'CHINA50', 'CHINAA50'], 'FX:CH20/CHF': ['CH20', 'SWI20', 'SMI20'],
+  'FX:NL25/EUR': ['NL25', 'NETH25', 'AEX25'], 'FX:ESPIX/EUR': ['ES35', 'ESP35', 'SPA35', 'IBEX35'], 'FX:SG30/SGD': ['SG30', 'SING30'],
+  'FX:WTICO/USD': ['XTIUSD', 'USOIL', 'WTI', 'SPOTCRUDE', 'USOUSD', 'OILUSD'], 'FX:BCO/USD': ['XBRUSD', 'UKOIL', 'BRENT', 'SPOTBRENT', 'UKOUSD'],
+  'FX:NATGAS/USD': ['XNGUSD', 'NATGAS', 'NGAS'], 'FX:XCU/USD': ['XCUUSD', 'COPPER'], 'FX:XPT/USD': ['XPTUSD', 'PLATINUM'], 'FX:XPD/USD': ['XPDUSD', 'PALLADIUM'],
+  'FX:CORN/USD': ['CORN'], 'FX:WHEAT/USD': ['WHEAT'], 'FX:SOYBN/USD': ['SOYBEAN', 'SOYBEANS'], 'FX:SUGAR/USD': ['SUGAR', 'SUGARRAW'],
+};
+const ctNorm = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const CT = {
+  state: 'off', broker: '', live: false, map: {}, rev: {}, refs: {}, refsAt: 0, syncAt: 0, busy: false, fails: 0,
+  configured() { return !!API; },
+  active() { return this.state === 'ok'; },
+  has(id) { return this.state === 'ok' && !!this.map[id]; },
+  async get(path) {
+    let r;
+    try { r = await fetchT(API + path, 20000); } catch (e) { throw new OErr(0, "Couldn't reach the cTrader prices. Check your connection."); }
+    let j = null; try { j = await r.json(); } catch (e) { /* not JSON */ }
+    if (!r.ok || !j || j.ok === false) throw new OErr(r.status, (j && j.message) || `cTrader prices answered with error ${r.status}.`);
+    return j;
+  },
+  async connect(check) {
+    if (!API) throw new OErr(0, 'cTrader is not set up for this site.');
+    if (check) await this.get('/ct/status');   // coming back after an outage: only once the helper and cTrader both answer
+    let j = store.get('ctsyms', null);   // the broker's symbol list, kept for six hours (it rarely changes)
+    if (j && j.none && Date.now() - (j.at || 0) < 3600000) throw new OErr(404, 'cTrader is not set up for this site.');   // asked within the hour
+    if (!j || j.none || !Array.isArray(j.symbols) || Date.now() - (j.at || 0) > 6 * 3600000) {
+      try { j = await this.get('/ct/symbols'); }
+      catch (e) { if (e.code >= 400 && e.code < 500) { store.raw('ctsyms', { at: Date.now(), none: true }); e.code = 404; } throw e; }   // a helper without cTrader (older ones answer 403)
+      store.raw('ctsyms', { at: Date.now(), broker: j.broker, live: j.live, symbols: j.symbols });
+    }
+    this.index(j);
+    if (!Object.keys(this.map).length) throw new OErr(404, "The broker's cTrader account offers none of the site's markets.");
+    this.state = 'ok'; this.fails = 0;
+  },
+  index(j) {
+    this.broker = j.broker || 'cTrader'; this.live = !!j.live; this.map = {}; this.rev = {};
+    SRC_NAME.ctrader = `cTrader · ${this.broker}`;
+    const keys = {};
+    for (const s of j.symbols || []) {
+      const n = ctNorm(s.name), base = ctNorm(String(s.name).split(/[._]/)[0]);
+      for (const k of [n, base, n.replace(/(CASH|SPOT|PRO|RAW|ECN|STD)$/, '')]) if (k && !keys[k]) keys[k] = s;
+    }
+    const ids = Object.keys(CFD).concat(FX.map(f => 'FX:' + f[0]));
+    for (const id of ids) {
+      if (CFD[id] && CFD[id].cat === 'bond') continue;   // brokers' bond CFDs differ too much from these
+      const names = CT_ALIAS[id] || [ctNorm(rawOf(id))];
+      const s = names.map(ctNorm).map(k => keys[k]).find(Boolean);
+      if (s && !this.rev[s.id]) { this.map[id] = { id: s.id, name: s.name, digits: s.digits }; this.rev[s.id] = id; }
+    }
+  },
+  drop(id) {   // a broker symbol that turns out to be something else (its price is far from this market's): use the other sources
+    const m = this.map[id]; if (!m) return;
+    delete this.rev[m.id]; delete this.map[id];
+  },
+  plausible(id, price) {
+    const ref = (S.tickers[id] && S.tickers[id].src !== 'ctrader' && S.tickers[id].last) || (DEMO[id] && DEMO[id][0]);
+    return !ref || !isFinite(price) || (price / ref < 1.6 && price / ref > 0.6);
+  },
+  async candles(id, tf, count, before) {
+    const j = await this.get(`/ct/bars?id=${this.map[id].id}&tf=${tf}&count=${count}${before ? `&to=${before}` : ''}`);
+    return j.bars || [];
+  },
+  async klines(id, tf, before) {
+    const bars = await this.candles(id, tf, 1000, before);
+    if (!bars.length && !before) throw new OErr(404, `${this.broker} has no candles for ${label(id)}.`);
+    if (bars.length && !before && !this.plausible(id, bars[bars.length - 1].close)) {
+      this.drop(id);
+      throw new OErr(409, `${label(id)} at ${this.broker} isn't the same market, so it comes from another source.`);
+    }
+    return before ? bars.filter(b => b.time < before) : bars;
+  },
+  async dayRef(id) {   // previous close and today's range; also the latest price, for markets that are closed
+    const d = await this.candles(id, '1d', 2);
+    if (!d.length) return;
+    const last = d[d.length - 1];
+    if (!this.plausible(id, last.close)) { this.drop(id); return; }
+    this.refs[id] = { prev: d.length > 1 ? d[d.length - 2].close : last.open, high: last.high, low: last.low };
+    if (!S.tickers[id] || S.tickers[id].src !== 'ctrader') onCtPrice([this.map[id].id, last.close, last.close, last.time * 1000]);
+  },
+};
+function onCtPrice(q) {
+  const id = CT.rev[q[0]];
+  if (!id || srcOf(id) !== 'ctrader') return;
+  const bid = q[1], ask = q[2], mid = bid != null && ask != null ? (bid + ask) / 2 : bid != null ? bid : ask;
+  if (mid == null || !isFinite(mid)) return;
+  const r = CT.refs[id] || {};
+  onTicker({ sym: id, src: 'ctrader', last: mid, bid, ask, ref: r.prev ?? null, prevClose: r.prev ?? null,
+    high: r.high != null ? Math.max(r.high, mid) : null, low: r.low != null ? Math.min(r.low, mid) : null, vol: null, qvol: null });
+  if (id === S.symbol && S.bars.length && marketOpen(id)) tickBar(mid, Date.now() / 1000, 0);
+}
+// Live prices: one WebSocket to the helper, telling it which symbols this page shows.
+const CTLive = {
+  ws: null, key: '', live: false, lastAt: 0, fails: 0, dead: 0, again: null,
+  want() { return CT.active() && S.ready ? tickerSet().filter(id => srcOf(id) === 'ctrader').map(id => CT.map[id].id).sort((a, b) => a - b).join(',') : ''; },
+  sync() {
+    const key = this.want();
+    if (!key) { if (this.ws) this.stop(); this.key = ''; return; }
+    if (this.ws) { if (key !== this.key) { this.key = key; this.send(); } return; }
+    if (this.again) return;
+    this.key = key; this.open();
+  },
+  open() {
+    let ws;
+    try { ws = new WebSocket(API.replace(/^http/, 'ws') + '/ct/live'); } catch (e) { this.retry(); return; }
+    this.ws = ws; this.lastAt = Date.now(); let got = false;
+    ws.onopen = () => { if (this.ws === ws) this.send(); };
+    ws.onmessage = ev => {
+      if (this.ws !== ws) return;
+      let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      this.lastAt = Date.now(); got = true; this.dead = 0;
+      if (m.err) { this.stop(); handleCtErr(new OErr(503, m.err)); return; }   // the helper is up, but cTrader isn't
+      if (m.q) { this.live = true; this.fails = 0; m.q.forEach(onCtPrice); }
+    };
+    ws.onclose = () => {
+      if (this.ws !== ws) return;
+      this.ws = null; this.live = false;
+      if (!got && ++this.dead >= 2) { this.dead = 0; handleCtErr(new OErr(0, "The site's helper isn't answering.")); return; }   // twice without a word: down
+      this.retry();
+    };
+  },
+  send() { const ws = this.ws; if (ws && ws.readyState === 1) ws.send(JSON.stringify({ ids: this.key ? this.key.split(',').map(Number) : [] })); },
+  retry() { this.fails++; clearTimeout(this.again); this.again = setTimeout(() => { this.again = null; this.sync(); }, Math.min(60000, 1000 * 2 ** Math.min(this.fails, 6))); },
+  stop() { clearTimeout(this.again); this.again = null; const ws = this.ws; this.ws = null; this.live = false; if (ws) { try { ws.close(); } catch (e) { /* closed */ } } },
+  check() {   // the helper sends a heartbeat every 10 s; a silent socket has dropped
+    if (this.ws && this.ws.readyState === 1 && Date.now() - this.lastAt > 35000) { this.stop(); this.key = ''; }
+    this.sync();
+  },
+};
+async function pollCt() {
+  if (CT.busy || !CT.active() || !S.ready) return;
+  CTLive.check();
+  const ids = tickerSet().filter(id => srcOf(id) === 'ctrader');
+  if (!ids.length) return;
+  CT.busy = true;
+  try {
+    const stale = Date.now() - CT.refsAt > 600000, need = ids.filter(id => stale || !CT.refs[id]);
+    if (need.length) { if (stale) CT.refsAt = Date.now(); await Promise.all(need.map(id => CT.dayRef(id).catch(() => {}))); }
+    if (srcOf(S.symbol) === 'ctrader' && S.bars.length && Date.now() - CT.syncAt > 60000) {   // keep the live candle exact
+      CT.syncAt = Date.now(); const token = S.token;
+      const tail = await CT.candles(S.symbol, S.tf, 3);
+      if (token === S.token) tail.forEach(b => { if (S.bars.length && b.time >= S.bars[S.bars.length - 1].time) onBar(b); });
+    }
+    CT.fails = 0;
+  } catch (e) { handleCtErr(e); }
+  finally { CT.busy = false; }
+}
+setInterval(pollCt, 1500);
+// Not answering (the helper or cTrader is down): use the other sources, and keep trying quietly.
+function handleCtErr(e, id) {
+  if (!e || !CT.active()) return false;
+  if (e.code === 404 || e.code === 409) { if (id) { CT.drop(id); switchSources(); return true; } return false; }   // just this market
+  CT.fails++;
+  if (CT.fails >= 2 || e.code === 503 || e.code === 0) {
+    CT.state = 'offline'; CT.fails = 0; CTLive.stop();
+    toast("The cTrader prices aren't answering, so forex and indices use the other sources for now. They come back by themselves.");
+    switchSources(); retryCt(30000);
+    return true;
+  }
+  return false;
+}
+let ctRetry = null;
+function retryCt(delay) {
+  clearTimeout(ctRetry);
+  ctRetry = setTimeout(async () => {
+    if (!CT.configured() || CT.active()) return;
+    try { await CT.connect(true); toast(`Live prices from ${CT.broker} are back.`); switchSources(); if ($('#srcDlg').open) renderSources(); }
+    catch (e) { if (e.code === 0 || e.code >= 500) retryCt(30000); }
+  }, delay == null ? 0 : delay);
+}
+window.addEventListener('online', () => { if (CT.state === 'offline') retryCt(1000); });
+
 /* ---------- which source serves a symbol ---------- */
 function srcOf(id) {
+  if (classOf(id) !== 'crypto' && CT.has(id)) return 'ctrader';   // the broker's own feed, when the site's helper has cTrader
   if (classOf(id) === 'crypto') return S.binance ? 'binance' : 'demo';
   if (CFD[id]) return OANDA.active() ? 'oanda' : 'demo';
   if (classOf(id) === 'forex' && OANDA.active()) return 'oanda';
@@ -2663,7 +2843,7 @@ function srcOf(id) {
   if (id === SILVER && S.goldApi) return 'metal';
   return 'demo';
 }
-const feedFor = id => ({ binance: Live, td: TDFeed, demo: Demo, paxg: PaxgFeed, metal: MetalFeed, oanda: OANDA, kraken: Kraken })[srcOf(id)];
+const feedFor = id => ({ binance: Live, td: TDFeed, demo: Demo, paxg: PaxgFeed, metal: MetalFeed, oanda: OANDA, kraken: Kraken, ctrader: CT })[srcOf(id)];
 function onBinTicker(t) {
   onTicker(t);
   if (t.sym === 'BINANCE:PAXGUSDT' && srcOf(GOLD) === 'paxg') onTicker(Object.assign({}, t, { sym: GOLD, src: 'paxg' }));
@@ -2688,6 +2868,8 @@ function ensureTickerSubs() {
   if (list.some(id => srcOf(id) === 'metal' && !(S.tickers[id] && S.tickers[id].src === 'metal'))) pollMetals();
   if (list.some(id => srcOf(id) === 'oanda' && !(S.tickers[id] && S.tickers[id].src === 'oanda'))) pollOanda();
   OStream.sync();
+  CTLive.sync();
+  if (list.some(id => srcOf(id) === 'ctrader' && !(S.tickers[id] && S.tickers[id].src === 'ctrader'))) pollCt();
   if (list.some(id => srcOf(id) === 'kraken' && !(S.tickers[id] && S.tickers[id].src === 'kraken'))) pollKraken();
   list.filter(id => srcOf(id) === 'demo' && !(S.tickers[id] && S.tickers[id].src === 'demo')).forEach(id => { const t = Demo.ticker(id); if (t) onTicker(t); });
   const td = list.filter(id => srcOf(id) === 'td');
@@ -2752,10 +2934,12 @@ async function loadChart() {
     }
     if (src === 'td') tdSeriesAt = Date.now();
     if (src === 'oanda') OANDA.syncAt = Date.now();
+    if (src === 'ctrader') CT.syncAt = Date.now();
     if (src === 'kraken') Kraken.syncAt = Date.now();
   } catch (e) {
     if (token !== S.token) return;
     if (e instanceof TDErr) { if (e.code === -1 || handleTdErr(e)) return; veil(tdMessage(e, S.symbol), true); return; }
+    if (e instanceof OErr && src === 'ctrader') { if (handleCtErr(e, S.symbol)) return; veil(e.message, true); return; }
     if (e instanceof OErr) { if (e.code === 401) { handleOandaErr(e); return; } veil(e.message, true); return; }
     veil(e && e.message && !/abort/i.test(e.message) ? e.message : `Couldn't load ${label(S.symbol)}. Check your connection.`, true);
   }
@@ -3185,10 +3369,12 @@ function renderFeed() {
     if (src === 'demo') { state = 'demo'; lbl = 'Not live'; }
     else if (src === 'binance' || src === 'paxg') { state = conn.binance === 'reconnecting' ? 'reconnecting' : 'live'; lbl = state !== 'live' ? 'Reconnecting' : src === 'paxg' ? 'Live · PAXG' : 'Live · ' + Live.name; }
     else if (src === 'oanda') { state = 'live'; lbl = 'Live · OANDA'; }
+    else if (src === 'ctrader') { state = 'live'; lbl = 'Live · cTrader'; }
     else if (src === 'metal') { state = 'live'; lbl = 'Live price'; }
     else if (src === 'kraken') { state = 'live'; lbl = S.symbol === GOLD ? 'Live · PAXG' : 'Live · Kraken'; }
     else { state = 'live'; lbl = 'Live · Twelve Data'; }
-    note.hidden = !['demo', 'paxg', 'metal', 'kraken'].includes(src);
+    note.hidden = !['demo', 'paxg', 'metal', 'kraken', 'ctrader'].includes(src);
+    if (src === 'ctrader') note.textContent = `${label(S.symbol)} from ${CT.broker}’s cTrader prices: the broker’s own price, which follows the market closely.`;
     if (src === 'paxg') note.textContent = 'Gold shown as PAX Gold (PAXG), a gold-backed token that tracks spot gold. Add a Twelve Data key for exact spot XAU/USD.';
     if (src === 'kraken') note.textContent = S.symbol === GOLD ? 'Gold shown as PAX Gold on Kraken, which trades within cents of spot gold. The spot price is on the right.' : `Live ${label(S.symbol)} from Kraken’s market, which tracks the interbank rate closely.`;
     if (src === 'metal') note.textContent = 'Live spot price from gold-api.com. Earlier candles are illustrative.';
@@ -3230,6 +3416,15 @@ function renderSources() {
     : "None of Binance, OKX or Bybit can be reached from here, so crypto shows the saved prices listed below."));
   body.append(cb);
   // stocks & forex
+  // forex, indices and commodities from a cTrader broker
+  if (CT.configured() && CT.state !== 'off') {
+    const xb = el('div', 'src'), xh = el('div', 'src-h');
+    xh.append(el('b', null, `Forex, indices & commodities · cTrader${CT.broker ? ' (' + CT.broker + ')' : ''}`), CT.active() ? stateChip(CTLive.ws && !CTLive.live ? 'Connecting' : 'Connected', CTLive.ws && !CTLive.live ? 'warn' : 'ok') : stateChip("Can't reach cTrader", 'warn'));
+    xb.append(xh, el('p', 'fine', CT.active()
+      ? `Live prices for ${Object.keys(CT.map).length} of the site’s markets come from ${CT.broker}’s cTrader feed, through the site’s own helper. These are the broker’s prices, which follow the market closely.`
+      : 'The site’s cTrader prices aren’t answering right now, so these markets use the sources below. They come back by themselves.'));
+    body.append(xb);
+  }
   // forex & gold from OANDA
   const ob = el('div', 'src'), oh = el('div', 'src-h');
   const oChip = { ok: ['Connected', 'ok'], bad: ['Token rejected', 'bad'], offline: ["Can't reach OANDA", 'warn'], off: ['Not connected', 'warn'] }[OANDA.state];
@@ -6593,8 +6788,9 @@ async function boot() {
   Ideas.boot();
   { const v = readViewFromUrl(); if (v !== 'chart') setView(v); }
   const oandaUp = OANDA.configured() ? OANDA.connect().then(() => true, e => { OANDA.state = e.code === 401 ? 'bad' : 'offline'; return false; }) : Promise.resolve(false);
-  const [bin, tdOk, goldOk, oaOk, krOk] = await Promise.all([Live.probe(), probeTD(), GoldApi.price('XAU').then(q => { S.spot.XAU = q; return true; }, () => false), oandaUp, Kraken.probe()]);
-  S.binance = bin; S.tdReach = tdOk; S.goldApi = goldOk; S.sandbox = !bin && !tdOk && !goldOk && !oaOk && !krOk;
+  const ctUp = CT.configured() ? CT.connect().then(() => true, e => { if (e.code === 0 || e.code >= 500) { CT.state = 'offline'; retryCt(15000); } return false; }) : Promise.resolve(false);
+  const [bin, tdOk, goldOk, oaOk, krOk, ctOk] = await Promise.all([Live.probe(), probeTD(), GoldApi.price('XAU').then(q => { S.spot.XAU = q; return true; }, () => false), oandaUp, Kraken.probe(), ctUp]);
+  S.binance = bin; S.tdReach = tdOk; S.goldApi = goldOk; S.sandbox = !bin && !tdOk && !goldOk && !oaOk && !krOk && !ctOk;
   if (OANDA.state === 'offline') retryOanda(8000);
   if (goldOk) setInterval(pollMetals, 10000);
   TD.state = !tdOk ? 'offline' : TD.key ? 'ok' : 'nokey';

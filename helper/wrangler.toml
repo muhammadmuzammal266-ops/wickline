@@ -1,0 +1,15 @@
+# RealChart helper. Cloudflare deploys this folder by itself once the Worker is connected to the
+# repository (Worker → Settings → Build: root directory "helper"). Secrets are set in the dashboard, never here.
+name = "wickline-oanda"
+main = "oanda-worker.js"
+compatibility_date = "2026-09-01"
+keep_vars = true   # keep ALLOWED_ORIGIN and the other settings made in the dashboard
+
+# One shared cTrader connection for every visitor (Spotware allows one per server).
+[[durable_objects.bindings]]
+name = "CT_HUB"
+class_name = "CTHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CTHub"]   # SQLite storage: the kind the free plan offers
