@@ -114,6 +114,9 @@ select option{background:var(--panel);color:var(--fg)}
 .credit{margin:0 0 2px;text-align:center;font-size:10.5px;color:var(--faint)}
 .credit a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 .credit a:hover{color:var(--muted)}
+.risk-note{margin:0 0 4px;font-size:10.5px;line-height:1.45;color:var(--faint);text-align:center;text-wrap:pretty}
+.risk-note b{color:var(--muted);font-weight:600}
+.h-foot .risk-note{font-size:12px;max-width:72ch;margin:0 auto}
 @media (max-width: 640px){.chart-wrap.replaying .wm-brand{display:none}}
 .legend{position:absolute;left:10px;top:7px;z-index:4;pointer-events:none;display:flex;flex-direction:column;gap:1px;max-width:calc(100% - 96px)}
 .lg-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;font-family:var(--font-data);font-size:12px;font-variant-numeric:tabular-nums;margin-bottom:2px}
@@ -1146,6 +1149,7 @@ a.h-btn.primary{color:var(--panel)}
         <p class="fine">Alerts check prices while this page is open.</p>
       </form>
     </section>
+    <p class="risk-note" id="riskChart"><b>Risk warning:</b> leveraged trading (CFDs, forex) carries a high risk of losing money rapidly. Not financial advice.</p>
     <p class="credit"><a href="privacy.html" target="_blank" rel="noopener">Privacy</a> · Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></p>
   </aside>
 
@@ -1181,7 +1185,7 @@ a.h-btn.primary{color:var(--panel)}
       <div class="h-feats" id="hFeats"></div>
     </section>
     <footer class="h-foot">
-      <p>RealChart is for information and practice only. It isn't financial advice, and paper trading uses virtual money.</p>
+      <p class="risk-note" id="riskHome"><b>Risk warning:</b> trading CFDs, forex and other leveraged products carries a high risk of losing money rapidly. Only trade with money you can afford to lose. RealChart is for information and practice only and isn’t financial advice. Paper trading uses virtual money.</p>
       <p><a href="privacy.html" target="_blank" rel="noopener">Privacy</a> · <a href="rules.html" target="_blank" rel="noopener">Community rules</a> · Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></p>
     </footer>
   </section>
@@ -1264,7 +1268,8 @@ a.h-btn.primary{color:var(--panel)}
       <div class="i-grid" id="iGrid" aria-live="polite"></div>
       <div class="j-empty" id="iEmpty" hidden></div>
       <button class="ghost j-more" id="iMore" type="button" hidden>Show more ideas</button>
-      <p class="credit" style="margin-top:10px"><a href="rules.html" target="_blank" rel="noopener">Community rules</a> · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a></p>
+      <p class="risk-note" id="riskIdeas" style="margin-top:12px"><b>Risk warning:</b> trading CFDs, forex and other leveraged products carries a high risk of losing money rapidly. Only trade with money you can afford to lose. RealChart is for information and practice only and isn’t financial advice.</p>
+      <p class="credit"><a href="rules.html" target="_blank" rel="noopener">Community rules</a> · <a href="privacy.html" target="_blank" rel="noopener">Privacy</a></p>
     </div>
     <div class="i-detail" id="iDetail" hidden></div>
     <div class="i-mod" id="iMod" hidden></div>
