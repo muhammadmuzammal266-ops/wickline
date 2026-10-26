@@ -896,6 +896,39 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
   .tp-acct{max-width:170px}
   .tp-sum{gap:2px 12px}
 }
+
+/* prop challenge */
+.pn-chk{display:flex;gap:9px;align-items:flex-start;cursor:pointer}
+.pn-chk input{margin-top:3px}
+.pn-chk span{display:flex;flex-direction:column;gap:2px}
+.pn-chk small{font-size:12px;color:var(--muted);font-weight:400}
+.pn-chbox{margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);display:flex;flex-direction:column;gap:10px}
+.pn-chp{flex-wrap:wrap}
+.pn-chg{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px}
+.pn-chg label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted);min-width:0}
+.pn-chg label.w{grid-column:1/-1}
+.pn-chbox .fine{margin:0}
+#ptNewDlg .dlg-body{max-height:calc(100dvh - 120px);overflow:auto}
+.tp-ch{margin:10px 10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}
+.tp-ch.passed{border-color:color-mix(in srgb,var(--up) 50%,var(--line))}
+.tp-ch.failed{border-color:color-mix(in srgb,var(--down) 50%,var(--line))}
+.tp-ch-h{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
+.tp-ch-h .muted{font-size:12px;color:var(--muted)}
+.chip.ok{color:var(--up-ink);border-color:color-mix(in srgb,var(--up) 45%,var(--line))}
+.chip.bad{color:var(--down-ink);border-color:color-mix(in srgb,var(--down) 45%,var(--line))}
+.tp-ch-why{margin:8px 0 0;font-size:13px}
+.tp-ch-rows{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px 18px;margin-top:10px}
+.tp-ch-row{display:flex;flex-direction:column;gap:4px;min-width:0}
+.tp-ch-top{display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px 8px;font-size:12px}
+.tp-ch-top .k{white-space:nowrap}
+.tp-ch-top .k{color:var(--muted)}
+.tp-ch-top .v{font-family:var(--font-data);font-weight:600;white-space:nowrap}
+.tp-ch-row .s{font-size:11px;color:var(--faint);line-height:1.35}
+.tp-ch-bar{height:6px;border-radius:999px;background:color-mix(in srgb,var(--fg) 10%,transparent);overflow:hidden}
+.tp-ch-bar i{display:block;height:100%;border-radius:inherit;background:var(--accent)}
+.tp-ch-bar.good i{background:var(--up)}
+.tp-ch-bar.risk i{background:var(--down)}
+.tp-ch-bar.time i{background:var(--muted)}
 /* home page */
 a.brand{color:inherit;text-decoration:none;border-radius:6px}
 a.brand:hover{opacity:.85}
@@ -1435,6 +1468,20 @@ a.h-btn.primary{color:var(--panel)}
     <label class="t-f"><span>Name</span><input class="field" id="pnName" maxlength="30" autocomplete="off" spellcheck="false"></label>
     <div class="t-f"><span>Starting balance (US dollars)</span><div class="pn-sizes" id="pnSizes"></div><input class="field" id="pnBal" inputmode="decimal" autocomplete="off" aria-label="Starting balance"></div>
     <div class="t-f"><span>Trades on</span><div class="seg pn-kind" id="pnKind" role="radiogroup" aria-label="Trades on"><button type="button" class="btn" role="radio" data-kind="live">Live prices</button><button type="button" class="btn" role="radio" data-kind="replay">Bar replay</button></div><p class="fine" id="pnKindNote"></p></div>
+    <div class="t-f pn-ch" id="pnChWrap">
+      <label class="pn-chk"><input type="checkbox" id="pnCh"> <span><b>Make it a prop challenge</b><small>Reach a profit target without breaking the loss limits, like a prop firm's evaluation.</small></span></label>
+      <div class="pn-chbox" id="pnChBox" data-preset="p1" hidden>
+        <div class="seg pn-chp" id="pnChPreset" role="radiogroup" aria-label="Challenge rules"></div>
+        <div class="pn-chg">
+          <label><span>Profit target (%)</span><input class="field" id="pnChT" inputmode="decimal" autocomplete="off"></label>
+          <label><span>Daily loss limit (%)</span><input class="field" id="pnChD" inputmode="decimal" autocomplete="off"></label>
+          <label><span>Maximum loss (%)</span><input class="field" id="pnChM" inputmode="decimal" autocomplete="off"></label>
+          <label><span>Minimum trading days</span><input class="field" id="pnChN" inputmode="numeric" autocomplete="off"></label>
+          <label class="w"><span>Time limit in days (leave empty for none)</span><input class="field" id="pnChL" inputmode="numeric" autocomplete="off"></label>
+        </div>
+        <p class="fine">Losses count your open trades. The daily limit is measured from your equity at the start of each day (00:00 UTC). Breaking a limit closes your positions and ends the challenge.</p>
+      </div>
+    </div>
     <fieldset class="r-list"><legend class="t-q">Add this account's closed trades to your Journal?</legend>
       <label><input type="radio" name="pnj" value="yes"> Yes, add them (tagged Paper)</label>
       <label><input type="radio" name="pnj" value="no"> No, keep them separate</label>
@@ -1513,7 +1560,7 @@ a.h-btn.primary{color:var(--panel)}
 <script src="vendor/lightweight-charts-5.1.0.js"></script>
 <script src="vendor/supabase-js-2.117.2.js"></script>
 <script src="config.js"></script>
-<script src="app.js?v=cb6fed340c"></script>
+<script src="app.js?v=7b4b3a5f1c"></script>
 
 </body>
 </html>

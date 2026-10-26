@@ -5401,15 +5401,42 @@ const PT_LEV_DEF = { crypto: 2, stock: 4, fund: 4, forex: 50, index: 20, futures
 const PT_MKTS = [['crypto', 'Crypto'], ['stock', 'US stocks'], ['fund', 'Funds (ETFs)'], ['forex', 'Forex and metals'], ['index', 'Indices'], ['futures', 'Commodities'], ['bond', 'Bonds']];
 const PT_LEVS = [1, 2, 3, 4, 5, 10, 20, 30, 50, 100, 200, 500];
 const PT_TYPES = { market: 'Market', limit: 'Limit', stop: 'Stop', stoplimit: 'Stop limit' };
-const PT_WHY = { tp: 'Take profit', sl: 'Stop loss', trail: 'Trailing stop', close: 'Closed by you', stopout: 'Margin call', reverse: 'Reversed', order: 'Order', replay: 'Replay ended' };
+const PT_WHY = { tp: 'Take profit', sl: 'Stop loss', trail: 'Trailing stop', close: 'Closed by you', stopout: 'Margin call', reverse: 'Reversed', order: 'Order', replay: 'Replay ended', rule: 'Challenge rule' };
 const PT_FIX = { HKD: 0.1286, SGD: 0.775, BRL: 0.18 };   // rough rates for the few currencies with no live pair here
 const PT_SIZES = [1000, 5000, 10000, 25000, 50000, 100000, 250000, 1000000];
 const PT_MAX_ACCTS = 8;
+// ----- prop challenge: a live-price account with a prop firm's evaluation rules -----
+const PT_CH_PRESETS = [
+  ['p1', 'Two-step · phase 1', { target: 10, daily: 5, max: 10, minDays: 4, days: null }],
+  ['p2', 'Two-step · phase 2', { target: 5, daily: 5, max: 10, minDays: 4, days: null }],
+  ['one', 'One-step', { target: 10, daily: 4, max: 6, minDays: 3, days: null }],
+  ['custom', 'Custom', null],
+];
+const PT_DAYMS = 86400000;
+const ptDayKey = ms => new Date(ms).toISOString().slice(0, 10);   // challenge days run 00:00 to 24:00 UTC
+const ptChName = c => (PT_CH_PRESETS.find(x => x[0] === c.preset) || [0, 'Custom'])[1];
+function ptChNew(r, preset) {
+  return { preset: preset || 'custom', target: r.target, daily: r.daily, max: r.max, minDays: r.minDays, days: r.days || null, st: 'active', why: '', at: Date.now(), dayKey: '', dayEq: null, tdays: [], endAt: null };
+}
+function ptChClean(c) {
+  if (!c || typeof c !== 'object' || Array.isArray(c)) return null;
+  const num = (v, lo, hi) => (typeof v === 'number' && isFinite(v) && v >= lo && v <= hi ? v : null);
+  const target = num(c.target, 0.1, 1000), daily = num(c.daily, 0.1, 100), max = num(c.max, 0.1, 100), minDays = num(c.minDays, 0, 365);
+  if (target == null || daily == null || max == null || minDays == null) return null;
+  const o = ptChNew({ target, daily, max, minDays: Math.round(minDays), days: num(c.days, 1, 3650) }, PT_CH_PRESETS.some(x => x[0] === c.preset) ? c.preset : 'custom');
+  o.st = ['active', 'passed', 'failed'].includes(c.st) ? c.st : 'active';
+  o.why = typeof c.why === 'string' ? c.why.replace(/[\u0000-\u001f]/g, ' ').slice(0, 200) : '';
+  o.at = num(c.at, 1e11, 9e12) || Date.now(); o.endAt = num(c.endAt, 1e11, 9e12);
+  o.dayKey = typeof c.dayKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(c.dayKey) ? c.dayKey : '';
+  o.dayEq = num(c.dayEq, -1e13, 1e13);
+  o.tdays = Array.isArray(c.tdays) ? [...new Set(c.tdays.filter(k => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k)))].slice(-400) : [];
+  return o;
+}
 const ptNum = v => { if (v == null || v === '') return null; const n = Number(String(v).replace(/[,\s$]/g, '').replace('−', '-')); return isFinite(n) ? n : null; };
 const ptUiDefaults = () => ({ qt: true, one: false, lines: true, exec: true, sound: true });
 const ptSetDefaults = () => ({ lev: Object.assign({}, PT_LEV_DEF), comm: 0, journal: null });   // journal: null until the person chooses
 function ptNewAcct(name, start, kind, journal) {
-  const a = { id: uid(), name, kind: kind === 'replay' ? 'replay' : 'live', start, bal: start, pos: [], ord: [], hist: [], log: [], set: ptSetDefaults(), at: Date.now() };
+  const a = { id: uid(), name, kind: kind === 'replay' ? 'replay' : 'live', start, bal: start, pos: [], ord: [], hist: [], log: [], set: ptSetDefaults(), at: Date.now(), ch: null };
   a.set.journal = journal === true || journal === false ? journal : null;
   return a;
 }
@@ -5446,6 +5473,7 @@ function ptCleanAcct(d, fallback) {   // one account, checked before it's used
     const c = num(s.comm, 0, 5); if (c != null) o.set.comm = c;
     if (typeof s.journal === 'boolean' && f.keepJournal !== false) o.set.journal = s.journal;
   }
+  o.ch = o.kind === 'live' ? ptChClean(d.ch) : null;
   return o;
 }
 function ptClean(d) {   // the whole paper trading store, from anywhere (this browser, the account, another tab)
@@ -5602,6 +5630,7 @@ function ptExec(a, o, px, when, tag) {   // fill an order at a price. Returns fa
     if (o.tp) p.tp = o.tp; if (o.sl) p.sl = o.sl; if (o.trail) p.trail = o.trail;
   } else p.qty = nw;   // a partial close
   o.st = 'filled'; o.fill = px; o.fillAt = when; o.upd = when; if (tag) o.tag = tag;
+  if (a.ch && a.ch.st === 'active') { const k = ptDayKey(when); if (!a.ch.tdays.includes(k)) a.ch.tdays.push(k); }   // a trading day for the challenge
   const q = ptFmtQty(sym, o.qty), at = ptPx(sym, px), where = PT.s.accts.length > 1 ? ` (${a.name})` : '';
   ptLog(a, `Filled: ${ptSideWord(o.side)} ${q} ${label(sym)} at ${at}${closedTrade ? ` · ${usd(closedTrade.pnl, true)}` : ''}${tag && tag !== 'order' ? ` (${PT_WHY[tag]})` : ''}`, 'fill');
   if (tag === 'tp' || tag === 'sl' || tag === 'trail') ptNotice(a, `${PT_WHY[tag]} hit: ${label(sym)} closed at ${at}, ${usd(closedTrade.pnl, true)}${where}`);
@@ -5697,9 +5726,47 @@ function ptStats(a) {
   return { n: h.length, win: h.length ? w / h.length : null, pf: gl < 0 ? gw / -gl : gw > 0 ? Infinity : null, net: h.reduce((s, x) => s + x.pnl, 0) };
 }
 
+// ----- the challenge rules, checked as prices move -----
+function ptChInfo(a, m, now) {
+  const c = a.ch; m = m || ptMetrics(a); now = now || Date.now();
+  const dayEq = c.dayKey === ptDayKey(now) && c.dayEq != null ? c.dayEq : Math.max(a.bal, m.equity);
+  const dailyAmt = a.start * c.daily / 100, maxAmt = a.start * c.max / 100, targetAmt = a.start * c.target / 100;
+  return { c, m, dayEq, dailyAmt, maxAmt, targetAmt, dailyFloor: dayEq - dailyAmt, maxFloor: a.start - maxAmt,
+    profit: a.bal - a.start, live: m.equity - a.start, dailyUsed: Math.max(0, dayEq - m.equity), maxUsed: Math.max(0, a.start - m.equity),
+    tdays: c.tdays.length, left: c.days ? c.at + c.days * PT_DAYMS - now : null };
+}
+function ptChCheck(a, now) {   // returns true if something changed
+  const c = a.ch; if (!c || c.st !== 'active' || a.kind !== 'live') return false;
+  if (a.pos.some(p => !ptQuoteFor(a, p.sym))) return false;   // judge equity only with a price for every position
+  const m = ptMetrics(a), key = ptDayKey(now); let changed = false;
+  if (c.dayKey !== key) { c.dayKey = key; c.dayEq = Math.max(a.bal, m.equity); changed = true; }   // a new day: the daily limit counts from here
+  const i = ptChInfo(a, m, now);
+  if (m.equity <= i.maxFloor + 1e-9) { ptChEnd(a, 'failed', `Maximum loss reached: equity fell to ${usd(m.equity)}, below ${usd(i.maxFloor)} (a ${c.max}% loss).`, now); return true; }
+  if (m.equity <= i.dailyFloor + 1e-9) { ptChEnd(a, 'failed', `Daily loss limit reached: equity fell to ${usd(m.equity)}, more than ${usd(i.dailyAmt)} below today's start of ${usd(i.dayEq)}.`, now); return true; }
+  if (c.days && now > c.at + c.days * PT_DAYMS) { ptChEnd(a, 'failed', `Time ran out: the ${c.days}-day limit ended before the target was reached.`, now); return true; }
+  if (!a.pos.length && i.profit >= i.targetAmt - 1e-9 && i.tdays >= c.minDays) { ptChEnd(a, 'passed', `Profit target reached: ${usd(i.profit, true)} (${c.target}%) over ${i.tdays} trading day${i.tdays === 1 ? '' : 's'}.`, now); return true; }
+  return changed;
+}
+function ptChEnd(a, st, why, now) {
+  if (st === 'failed') for (const p of a.pos.slice()) { const q = ptQuoteFor(a, p.sym); if (q) ptClosePos(a, p, p.qty > 0 ? q.bid : q.ask, now, 'rule'); }
+  a.ord.filter(o => o.st === 'working').forEach(o => ptCancel(a, o, 'Challenge ended'));
+  Object.assign(a.ch, { st, why, endAt: now });
+  ptLog(a, (st === 'passed' ? 'Challenge passed. ' : 'Challenge failed. ') + why, st === 'passed' ? 'info' : 'warn');
+  ptNotice(a, st === 'passed' ? `${a.name}: challenge passed! ${why}` : `${a.name}: challenge failed. ${why}`, st === 'passed' ? null : 'warn');
+}
+function ptChRestart(a, preset) {   // start the challenge again from the beginning, or with another phase's rules
+  const p = preset && PT_CH_PRESETS.find(x => x[0] === preset);
+  const rules = p && p[2] ? p[2] : a.ch;
+  Object.assign(a, { bal: a.start, pos: [], ord: [], hist: [], log: [] });
+  a.ch = ptChNew(rules, p ? preset : a.ch.preset);
+  ptLog(a, `Challenge started: ${ptChName(a.ch)}, ${a.ch.target}% target, ${a.ch.daily}% daily loss limit, ${a.ch.max}% maximum loss.`, 'info');
+  Paper.changed(); toast(`${a.name}: ${ptChName(a.ch)} challenge started with ${usd(a.start)}.`);
+}
+
 // ----- placing, changing and cancelling -----
 function ptCheckOrder(a, spec) {   // returns a reason the order can't be placed, or ''
   const id = spec.sym;
+  if (a.ch && a.ch.st !== 'active') return a.ch.st === 'passed' ? `${a.name} passed its challenge, so it takes no new trades. Start again or start the next phase in the Account tab.` : `${a.name}'s challenge has ended: ${a.ch.why.split(':')[0].toLowerCase()}. Start again in the Account tab.`;
   if (a.kind === 'live' && R.on) return 'Bar replay is on, so orders go to a replay account. Leave replay to trade on live prices.';
   if (a.kind === 'replay') {
     if (!R.on) return 'Start a bar replay to trade in a replay account.';
@@ -5791,6 +5858,7 @@ function ptNewAcctDlg(kind) {
   const n = PT.s.accts.length + 1;
   $('#pnName').value = `Account ${n}`; $('#pnBal').value = '10000'; $('#pnErr').hidden = true;
   dlg.querySelectorAll('input[name="pnj"]').forEach(r => { r.checked = false; });
+  $('#pnCh').checked = false; ptChPreset('p1');
   ptNewRender(); dlg.showModal(); setTimeout(() => $('#pnName').select(), 30);
 }
 function ptNewRender() {
@@ -5798,17 +5866,40 @@ function ptNewRender() {
   dlg.querySelectorAll('#pnKind .btn').forEach(b => { const on = b.dataset.kind === kind; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
   dlg.querySelectorAll('#pnSizes button').forEach(b => b.classList.toggle('on', +b.dataset.v === bal));
   $('#pnKindNote').textContent = kind === 'replay' ? 'Trades in a bar replay: start a replay, then buy and sell as the bars play.' : 'Trades on live prices, like a real account.';
+  $('#pnChWrap').hidden = kind === 'replay'; $('#pnChBox').hidden = !$('#pnCh').checked || kind === 'replay';
+  const cur = $('#pnChBox').dataset.preset;
+  dlg.querySelectorAll('#pnChPreset .btn').forEach(b => { const on = b.dataset.p === cur; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); });
+  $('#pnGo').textContent = $('#pnCh').checked && kind !== 'replay' ? 'Start challenge' : 'Create account';
+}
+function ptChPreset(key) {   // fill in a preset's rules
+  const p = PT_CH_PRESETS.find(x => x[0] === key); $('#pnChBox').dataset.preset = key;
+  if (p && p[2]) { $('#pnChT').value = String(p[2].target); $('#pnChD').value = String(p[2].daily); $('#pnChM').value = String(p[2].max); $('#pnChN').value = String(p[2].minDays); $('#pnChL').value = p[2].days ? String(p[2].days) : ''; }
+  ptNewRender();
+}
+function ptChRead() {   // the rules typed in the dialog, or an error
+  const t = ptNum($('#pnChT').value), d = ptNum($('#pnChD').value), mx = ptNum($('#pnChM').value), n = ptNum($('#pnChN').value), lim = $('#pnChL').value.trim() === '' ? null : ptNum($('#pnChL').value);
+  if (!(t >= 0.5 && t <= 100)) return { err: 'The profit target must be between 0.5% and 100%.' };
+  if (!(d >= 0.5 && d <= 50)) return { err: 'The daily loss limit must be between 0.5% and 50%.' };
+  if (!(mx >= 0.5 && mx <= 100)) return { err: 'The maximum loss must be between 0.5% and 100%.' };
+  if (d > mx) return { err: 'The daily loss limit can\'t be bigger than the maximum loss.' };
+  if (!(n >= 0 && n <= 60 && Number.isInteger(n))) return { err: 'Minimum trading days must be a whole number from 0 to 60.' };
+  if (lim != null && !(lim >= 1 && lim <= 365 && Number.isInteger(lim) && lim >= n)) return { err: 'The time limit must be a whole number of days from 1 to 365, and at least the minimum trading days.' };
+  return { rules: { target: t, daily: d, max: mx, minDays: n, days: lim } };
 }
 function ptNewSubmit() {
   const dlg = $('#ptNewDlg'), name = $('#pnName').value.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 30), bal = ptNum($('#pnBal').value), j = dlg.querySelector('input[name="pnj"]:checked');
   const err = !name ? 'Give the account a name.' : !(bal >= 100 && bal <= 1e9) ? 'The starting balance must be between $100 and $1,000,000,000.' : !j ? 'Choose whether its trades go into your Journal.' : PT.s.accts.some(a => a.name.toLowerCase() === name.toLowerCase()) ? 'You already have an account with that name.' : '';
-  if (err) { $('#pnErr').textContent = err; $('#pnErr').hidden = false; return; }
+  const chOn = $('#pnCh').checked && dlg.dataset.kind !== 'replay', ch = chOn ? ptChRead() : null;
+  const err2 = err || (ch && ch.err) || '';
+  if (err2) { $('#pnErr').textContent = err2; $('#pnErr').hidden = false; return; }
   const kind = dlg.dataset.kind, a = ptNewAcct(name, Math.round(bal * 100) / 100, kind, j.value === 'yes'), cur = ptA();
+  if (ch) { const p = $('#pnChBox').dataset.preset, pr = PT_CH_PRESETS.find(x => x[0] === p); const same = pr && pr[2] && ['target', 'daily', 'max', 'minDays', 'days'].every(k2 => (pr[2][k2] || null) === (ch.rules[k2] || null)); a.ch = ptChNew(ch.rules, same ? p : 'custom'); }
   a.set.lev = Object.assign({}, cur.set.lev); a.set.comm = cur.set.comm;   // the same trading settings as the account in use
   PT.s.accts.push(a); if (kind === 'live') PT.s.cur = a.id; else PT.s.rcur = a.id;
   ptLog(a, `Account opened with ${usd(a.start)}.`, 'info');
+  if (a.ch) ptLog(a, `Challenge started: ${ptChName(a.ch)}, ${a.ch.target}% target, ${a.ch.daily}% daily loss limit, ${a.ch.max}% maximum loss, ${a.ch.minDays} trading days${a.ch.days ? `, ${a.ch.days}-day limit` : ''}.`, 'info');
   dlg.close(); if ($('#ordDlg').open) $('#ordDlg').close();
-  Paper.changed(); toast(`${a.name} is ready with ${usd(a.start)}${kind === 'replay' && !R.on ? '. Start a bar replay to trade in it.' : '.'}`);
+  Paper.changed(); toast(a.ch ? `${a.name}: challenge started with ${usd(a.start)}. Reach ${usd(a.start * a.ch.target / 100, true)} without breaking the loss limits.` : `${a.name} is ready with ${usd(a.start)}${kind === 'replay' && !R.on ? '. Start a bar replay to trade in it.' : '.'}`);
 }
 function ptDeleteAcct(a) {
   const same = PT.s.accts.filter(x => x.kind === a.kind && x !== a);
@@ -5869,7 +5960,7 @@ const Paper = {
     const now = Date.now();
     if (PT.leader && S.ready) {
       let changed = false;
-      for (const a of ptLiveAccts()) { if (ptExpire(a, now)) changed = true; if (ptMarginCheck(a, now)) changed = true; }
+      for (const a of ptLiveAccts()) { if (ptExpire(a, now)) changed = true; if (ptMarginCheck(a, now)) changed = true; if (ptChCheck(a, now)) changed = true; }
       if (changed) this.changed();
       else if (PT.trailMoved && now - PT.trailMoved > 8000) { PT.trailMoved = 0; this.save(); }
       if (!PT.catching.size && (!this.seenAt || now - this.seenAt > 10000)) { this.seenAt = now; store.raw('ptSeen', now); }
@@ -6213,6 +6304,9 @@ function ptUiInit() {
   PT_SIZES.forEach(v => { const b = el('button', 'pn-size', usd(v, false, true).replace('.0', '')); b.type = 'button'; b.dataset.v = String(v); b.onclick = () => { $('#pnBal').value = String(v); ptNewRender(); }; $('#pnSizes').append(b); });
   nd.querySelectorAll('#pnKind .btn').forEach(b => { b.onclick = () => { nd.dataset.kind = b.dataset.kind; ptNewRender(); }; });
   $('#pnBal').addEventListener('input', ptNewRender);
+  PT_CH_PRESETS.forEach(([key, name]) => { const b = el('button', 'btn', name); b.type = 'button'; b.dataset.p = key; b.setAttribute('role', 'radio'); b.onclick = () => ptChPreset(key); $('#pnChPreset').append(b); });
+  $('#pnCh').addEventListener('change', ptNewRender);
+  ['#pnChT', '#pnChD', '#pnChM', '#pnChN', '#pnChL'].forEach(sel => $(sel).addEventListener('input', () => { $('#pnChBox').dataset.preset = 'custom'; ptNewRender(); }));
   $('#pnForm').addEventListener('submit', e => { e.preventDefault(); ptNewSubmit(); });
   // the right-click menu and the chart lines
   document.addEventListener('pointerdown', e => { const m = $('#ctxMenu'); if (!m.hidden && !m.contains(e.target)) m.hidden = true; }, true);
@@ -6247,7 +6341,7 @@ function ptAcctMenu() {   // the account switcher: the accounts for live prices,
   PT.s.accts.filter(a => a.kind === kind).forEach(a => {
     const b = el('button', 'tp-menu-i' + (a === cur ? ' on' : '')); b.type = 'button'; b.setAttribute('role', 'menuitemradio'); b.setAttribute('aria-checked', String(a === cur));
     const eq = ptMetrics(a).equity;
-    b.append(el('span', 'nm', a.name), el('span', 'eq ' + (eq > a.start ? 'up-t' : eq < a.start ? 'dn-t' : ''), usd(eq)), el('span', 'st', `started ${usd(a.start, false, true)}`));
+    b.append(el('span', 'nm', a.name), el('span', 'eq ' + (eq > a.start ? 'up-t' : eq < a.start ? 'dn-t' : ''), usd(eq)), el('span', 'st', a.ch ? `challenge · ${a.ch.st === 'active' ? 'in progress' : a.ch.st}` : `started ${usd(a.start, false, true)}`));
     b.onclick = () => { m.hidden = true; if (a !== cur) ptSwitch(a.id); };
     m.append(b);
   });
@@ -6278,9 +6372,14 @@ function ptRenderSummary(a, m) {
   item('Balance', usd(a.bal), null, 2); item('Equity', usd(m.equity));
   item('Open P&L', usd(m.upl, true), m.upl > 0 ? 'up-t' : m.upl < 0 ? 'dn-t' : null);
   item('Margin', usd(m.margin), null, 2); item('Available', usd(m.avail), m.avail < 0 ? 'dn-t' : null, 1);
+  if (a.ch) {
+    const i = ptChInfo(a, m), c = a.ch;
+    item('Challenge', c.st === 'passed' ? 'Passed' : c.st === 'failed' ? 'Failed' : `${Math.max(0, Math.round((i.profit / i.targetAmt) * 100))}% of target · ${usd(Math.max(0, i.dailyAmt - i.dailyUsed))} left today`,
+      c.st === 'passed' ? 'up-t' : c.st === 'failed' ? 'dn-t' : i.dailyUsed > i.dailyAmt * 0.75 ? 'dn-t' : null);
+  }
   const np = a.pos.length, no = a.ord.filter(o => o.st === 'working').length;
   $('#tpNPos').textContent = np ? String(np) : ''; $('#tpNOrd').textContent = no ? String(no) : '';
-  $('#tpAcctName').textContent = a.name; $('#tpAcctKind').textContent = a.kind === 'replay' ? 'Replay' : 'Paper';
+  $('#tpAcctName').textContent = a.name; $('#tpAcctKind').textContent = a.kind === 'replay' ? 'Replay' : a.ch ? 'Challenge' : 'Paper';
   $('#tpAcct').classList.toggle('replay', a.kind === 'replay'); $('#tp').classList.toggle('replay', a.kind === 'replay');
   $('#tpAcct').title = `${a.name}: ${a.kind === 'replay' ? 'bar replay' : 'live-price'} paper account, started with ${usd(a.start)}. Click to switch or add accounts.`;
 }
@@ -6289,7 +6388,7 @@ function ptRenderPanel(full) {
   const a = ptA(), m = ptMetrics(a); ptRenderSummary(a, m);
   $('#tp').querySelectorAll('.tp-tab').forEach(b => b.setAttribute('aria-selected', String(PT.open && b.dataset.tab === PT.tab)));
   if (!PT.open) return;
-  const sig = a.id + '|' + PT.tab + '|' + PT.ordView + '|' + PT.histView + '|' + a.pos.map(p => [p.id, p.qty, p.tp, p.sl, !!p.trail].join()).join(';') + '|' + a.ord.map(o => o.id + o.st + o.trig + o.qty + o.lim + o.stp + o.tp + o.sl).join(';') + '|' + a.hist.length + '|' + a.log.length + '|' + JSON.stringify(a.set) + '|' + a.start + '|' + a.name + '|' + JSON.stringify(PT.s.ui) + '|' + PT.s.accts.length;
+  const sig = a.id + '|' + PT.tab + '|' + PT.ordView + '|' + PT.histView + '|' + a.pos.map(p => [p.id, p.qty, p.tp, p.sl, !!p.trail].join()).join(';') + '|' + a.ord.map(o => o.id + o.st + o.trig + o.qty + o.lim + o.stp + o.tp + o.sl).join(';') + '|' + a.hist.length + '|' + a.log.length + '|' + JSON.stringify(a.set) + '|' + (a.ch ? [a.ch.st, a.ch.preset, a.ch.target, a.ch.daily, a.ch.max, a.ch.minDays, a.ch.days].join() : '') + '|' + a.start + '|' + a.name + '|' + JSON.stringify(PT.s.ui) + '|' + PT.s.accts.length;
   if (!full && sig === PT.sig) { ptLiveCells(m); return; }
   PT.sig = sig; box.replaceChildren();
   if (PT.tab === 'pos') ptRenderPositions(box, a, m);
@@ -6304,6 +6403,7 @@ function ptLiveCells(m) {
     set('last', ptPx(r.p.sym, r.mark)); set('pl', usd(r.pl, true), r.pl > 0 ? 'up-t' : r.pl < 0 ? 'dn-t' : ''); set('pct', fmtPct(r.pct), r.pct > 0 ? 'up-t' : r.pct < 0 ? 'dn-t' : ''); set('val', usd(r.value));
   });
   const tot = $('#tpBody [data-f="tot"]'); if (tot) { tot.textContent = usd(m.upl, true); tot.className = m.upl > 0 ? 'up-t' : m.upl < 0 ? 'dn-t' : ''; }
+  const a = ptA(), rows = $('#tpBody .tp-ch-rows'); if (rows && a.ch) rows.replaceWith(ptChRows(a, m));
 }
 function ptEmpty(box, text, action) { const d = el('div', 'tp-empty'); d.append(el('p', null, text)); if (action) d.append(action); box.append(d); }
 function ptRenderPositions(box, a, m) {
@@ -6381,6 +6481,37 @@ function ptRenderHistory(box, a) {
   });
   box.append(tb);
 }
+function ptChRows(a, m) {
+  const c = a.ch, i = ptChInfo(a, m), rows = el('div', 'tp-ch-rows');
+  const row = (key, f, text, frac, kind, note) => {
+    const r = el('div', 'tp-ch-row'); r.dataset.f = f;
+    const top = el('div', 'tp-ch-top'); top.append(el('span', 'k', key), el('span', 'v', text)); r.append(top);
+    if (frac != null) { const bar = el('div', 'tp-ch-bar ' + kind), fill = el('i'); fill.style.width = Math.round(clamp(isFinite(frac) ? frac : 0, 0, 1) * 100) + '%'; bar.append(fill); r.append(bar); }
+    if (note) r.append(el('span', 's', note));
+    rows.append(r);
+  };
+  row('Profit target', 'target', `${usd(i.profit, true)} of ${usd(i.targetAmt, true)}`, i.profit / i.targetAmt, 'good',
+    `${c.target}% · closed trades count${a.pos.length ? ` · with open trades ${usd(i.live, true)}` : ''}${c.st === 'active' && i.profit >= i.targetAmt && i.tdays < c.minDays ? ` · trade on ${c.minDays - i.tdays} more day${c.minDays - i.tdays === 1 ? '' : 's'} to pass` : ''}`);
+  row('Daily loss', 'daily', `${usd(i.dailyUsed)} of ${usd(i.dailyAmt)} used`, i.dailyUsed / i.dailyAmt, 'risk', `${c.daily}% · from today's start of ${usd(i.dayEq)} · resets at 00:00 UTC`);
+  row('Maximum loss', 'max', `${usd(i.maxUsed)} of ${usd(i.maxAmt)} used`, i.maxUsed / i.maxAmt, 'risk', `${c.max}% · equity must stay above ${usd(i.maxFloor)}`);
+  row('Trading days', 'days', `${i.tdays} of ${c.minDays}`, c.minDays ? i.tdays / c.minDays : 1, 'good', 'Days with at least one trade');
+  row('Time limit', 'time', !c.days ? 'No limit' : c.st !== 'active' ? 'Ended' : `${Math.max(0, Math.ceil(i.left / PT_DAYMS))} day${Math.ceil(i.left / PT_DAYMS) === 1 ? '' : 's'} left`,
+    c.days ? 1 - Math.max(0, i.left) / (c.days * PT_DAYMS) : null, 'time', c.days ? `${c.days} days in all` : 'Take as long as you need');
+  return rows;
+}
+function ptChCard(a, m) {
+  const c = a.ch, card = el('div', 'tp-ch ' + c.st), h = el('div', 'tp-ch-h');
+  h.append(el('b', null, 'Prop challenge'), el('span', 'chip ' + (c.st === 'active' ? 'live' : c.st === 'passed' ? 'ok' : 'bad'), c.st === 'active' ? 'In progress' : c.st === 'passed' ? 'Passed' : 'Failed'),
+    el('span', 'muted', `${ptChName(c)} · started ${new Date(c.at).toLocaleDateString()}`), el('span', 'spacer'));
+  const again = () => ptConfirm(`Start ${a.name}'s challenge again?`, `This closes all positions, cancels all orders and clears the history, then starts the challenge again with ${usd(a.start)}. Trades already added to your Journal stay there.`, 'Start again', () => ptChRestart(a));
+  if (c.st === 'passed' && c.preset === 'p1') h.append(ptBtn('Start phase 2', 'primary sm', () => ptConfirm(`Start phase 2 in ${a.name}?`, `Phase 2 has a 5% profit target with the same loss limits. The account starts again with ${usd(a.start)}.`, 'Start phase 2', () => ptChRestart(a, 'p2'))));
+  if (c.st !== 'active') h.append(ptBtn('Start again', 'ghost sm', again));
+  else h.append(ptBtn('End challenge…', 'ghost sm', () => ptConfirm(`End ${a.name}'s challenge?`, 'The account carries on as a normal paper account, without the challenge rules.', 'End challenge', () => { a.ch = null; ptLog(a, 'Challenge ended by you.', 'info'); Paper.changed(); })));
+  card.append(h);
+  if (c.st !== 'active') card.append(el('p', 'tp-ch-why ' + (c.st === 'passed' ? 'up-t' : 'dn-t'), c.why));
+  card.append(ptChRows(a, m));
+  return card;
+}
 function ptRenderAccount(box, a, m) {
   const st = ptStats(a);
   // which account, and the others
@@ -6391,6 +6522,7 @@ function ptRenderAccount(box, a, m) {
   head.append(nm, el('span', 'chip' + (a.kind === 'replay' ? ' live' : ''), a.kind === 'replay' ? 'Bar replay' : 'Live prices'), el('span', 'muted', `Started with ${usd(a.start)} · opened ${new Date(a.at).toLocaleDateString()}`), el('span', 'spacer'),
     ptBtn('New account…', 'ghost sm', () => ptNewAcctDlg(a.kind)));
   box.append(head);
+  if (a.ch) box.append(ptChCard(a, m));
   const k = el('div', 'tp-kpis');
   const tile = (key, v, cls, sub) => { const d = el('div', 'tp-tile'); d.append(el('p', 'k', key), el('p', 'v ' + (cls || ''), v)); if (sub) d.append(el('p', 's', sub)); k.append(d); };
   tile('Equity', usd(m.equity), null, `Started with ${usd(a.start)}`);
@@ -6408,7 +6540,7 @@ function ptRenderAccount(box, a, m) {
     PT.s.accts.forEach(x => {
       const mx = ptMetrics(x), tr = el('tr'); if (x === a) tr.className = 'cur';
       const nc = el('td', 'nm'); nc.append(el('b', null, x.name)); if (x === a) nc.append(el('span', 'chip live', 'In use')); tr.append(nc);
-      ptCell(tr, x.kind === 'replay' ? 'Bar replay' : 'Live prices'); ptCell(tr, usd(x.start), 'num'); ptCell(tr, usd(mx.equity), 'num');
+      ptCell(tr, x.kind === 'replay' ? 'Bar replay' : x.ch ? `Challenge · ${x.ch.st === 'active' ? 'in progress' : x.ch.st}` : 'Live prices'); ptCell(tr, usd(x.start), 'num'); ptCell(tr, usd(mx.equity), 'num');
       const ret = ((mx.equity - x.start) / x.start) * 100; ptCell(tr, fmtPct(ret), 'num ' + (ret > 0 ? 'up-t' : ret < 0 ? 'dn-t' : '')); ptCell(tr, String(x.hist.length), 'num');
       ptCell(tr, x.set.journal === true ? 'Added' : x.set.journal === false ? 'Separate' : 'Not chosen', 'muted');
       const acts = el('td', 'act'), g = el('div', 'tp-acts');
@@ -6448,7 +6580,8 @@ function ptRenderAccount(box, a, m) {
       : 'Paper trading uses virtual money on live prices. Orders fill while RealChart is open; when you come back, orders and stops that would have filled while it was closed are filled from the price history. Real trading can fill differently (slippage, spreads, partial fills).'),
     ptBtn('Reset account…', 'danger', () => ptConfirm(`Reset ${a.name}`, 'This closes all positions, cancels all orders and clears the history, then starts again with the balance below. Trades already added to your Journal stay there.', 'Reset account', () => {
       const v = ptNum($('#pcBal').value), start = v >= 100 && v <= 1e9 ? Math.round(v * 100) / 100 : a.start;
-      Object.assign(a, { start, bal: start, pos: [], ord: [], hist: [], log: [] }); ptLog(a, `Account reset with ${usd(start)}.`, 'info'); Paper.changed(); toast(`${a.name} reset to ${usd(start)}.`);
+      Object.assign(a, { start, bal: start, pos: [], ord: [], hist: [], log: [] }); if (a.ch) a.ch = ptChNew(a.ch, a.ch.preset);
+      ptLog(a, `Account reset with ${usd(start)}${a.ch ? '; the challenge starts again' : ''}.`, 'info'); Paper.changed(); toast(`${a.name} reset to ${usd(start)}.`);
     }, a.start)));
   set.append(lev, opts, reset); box.append(set);
 }
