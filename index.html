@@ -204,6 +204,41 @@ body:is([data-view="journal"],[data-view="ideas"],[data-view="home"]) .top>:is(#
 .j-day.sel{box-shadow:inset 0 0 0 2px var(--fg)}
 .j-day:not(.empty):hover{filter:brightness(.97)}
 .j-bars{display:flex;flex-direction:column;gap:2px;padding:2px 12px 0}
+
+/* Journal Pro */
+.jp-habits{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;padding:2px 12px 0}
+.jp-h{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:8px;background:var(--panel-2);min-width:0}
+.jp-h .k{font-size:11px;color:var(--muted)}
+.jp-h b{font-family:var(--font-data);font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jp-h .s{font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jp-tw{overflow-x:auto;padding:0 12px}
+.jp-t{width:100%;border-collapse:collapse;font-size:12.5px}
+.jp-t th{text-align:left;font-weight:600;font-size:11px;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.jp-t td{padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.jp-t .num{text-align:right;font-family:var(--font-data);font-variant-numeric:tabular-nums}
+.jp-t tr:last-child td{border-bottom:0}
+.jp-report{display:none}
+@media print {
+  @page{margin:14mm}
+  body.jp-printing > *:not(#jReport){display:none !important}
+  body.jp-printing{background:#fff !important;color:#111 !important}
+  body.jp-printing #jReport{display:block !important;color:#111;font:12px/1.45 var(--font-body)}
+  #jReport h1{font-size:20px;margin:0 0 4px}
+  #jReport h2{font-size:14px;margin:18px 0 6px}
+  #jReport .muted{color:#666}
+  #jReport .jp-rh p{margin:0}
+  #jReport .jp-rk{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:14px}
+  #jReport .jp-rk div{border:1px solid #ddd;border-radius:6px;padding:6px 8px;display:flex;flex-direction:column}
+  #jReport .jp-rk span{font-size:10px;color:#666}
+  #jReport .jp-rk b{font-size:13px}
+  #jReport .up-t{color:#0a7d4f}
+  #jReport .dn-t{color:#b42318}
+  #jReport .jp-tw{padding:0;overflow:visible}
+  #jReport .jp-t th,#jReport .jp-t td{border-bottom:1px solid #e5e5e5;color:#111;padding:4px 6px}
+  #jReport .jp-rs{break-inside:avoid}
+  #jReport .jp-rs:last-of-type{break-inside:auto}
+  #jReport .jp-rf{margin-top:16px;font-size:10px;color:#666}
+}
 .j-bar{display:grid;grid-template-columns:minmax(64px,30%) minmax(0,1fr) auto;align-items:center;gap:10px;min-height:28px;border-radius:6px;padding:0 4px}
 .j-bar:hover,.j-bar:focus-visible{background:var(--panel-2);outline:none}
 .j-bar .nm{font-family:var(--font-data);font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1229,6 +1264,7 @@ a.h-btn.primary{color:var(--panel)}
       <div class="j-actions">
         <button class="ghost" id="jImport" type="button">Import CSV</button>
         <button class="ghost" id="jExport" type="button">Export CSV</button>
+        <button class="ghost" id="jReportBtn" type="button" title="A printable report of the trades shown. Choose Save as PDF in the Print window.">Report (PDF)</button>
         <button class="primary" id="jNew" type="button">+ New trade</button>
         <input type="file" id="jFile" accept=".csv,text/csv" hidden>
       </div>
@@ -1267,6 +1303,14 @@ a.h-btn.primary{color:var(--panel)}
         </div>
         <div class="card j-card"><div class="card-h">Results by symbol</div><div class="j-bars" id="jBySym"></div></div>
         <div class="card j-card"><div class="card-h">Results by strategy</div><div class="j-bars" id="jByStrat"></div></div>
+        <div class="card j-card"><div class="card-h">Long and short</div><div class="j-bars" id="jBySide"></div></div>
+        <div class="card j-card"><div class="card-h">Habits</div><div class="jp-habits" id="jHabits"></div></div>
+        <div class="card j-card"><div class="card-h">By day of the week <span class="count">closed</span></div><div class="j-bars" id="jByDay"></div></div>
+        <div class="card j-card"><div class="card-h">By session <span class="count">opened, UTC</span></div><div class="j-bars" id="jBySess"></div></div>
+      </div>
+      <div class="card j-card" style="margin-top:6px">
+        <div class="card-h">Monthly report</div>
+        <div id="jMonths"></div>
       </div>
       <div class="card j-card" style="margin-top:6px">
         <div class="card-h">Trades <span class="count" id="jCount"></span></div>
@@ -1560,7 +1604,7 @@ a.h-btn.primary{color:var(--panel)}
 <script src="vendor/lightweight-charts-5.1.0.js"></script>
 <script src="vendor/supabase-js-2.117.2.js"></script>
 <script src="config.js"></script>
-<script src="app.js?v=7b4b3a5f1c"></script>
+<script src="app.js?v=26a4a00d8d"></script>
 
 </body>
 </html>

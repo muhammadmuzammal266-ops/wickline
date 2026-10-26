@@ -4041,6 +4041,136 @@ function jTipHide() { const t = $('#jTip'); if (t) t.hidden = true; }
 const tipLine = (tip, strong, text, cls) => { const row = el('div'); const b = el('b', cls || null, strong); row.append(b); if (text) row.append(document.createTextNode(' '), el('span', null, text)); tip.append(row); };
 const signCls = v => (v > 0 ? 'up-t' : v < 0 ? 'dn-t' : null);
 
+/* ---------- Journal Pro: long vs short, days, sessions, habits, a monthly report and a PDF report ---------- */
+const JP_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const JP_SESS = [['Asia', 0, 7], ['London', 7, 12], ['London + New York', 12, 16], ['New York', 16, 21], ['Late', 21, 24]];   // by the hour a trade opened, UTC
+const jpWeekday = ms => JP_DAYS[(new Date(ms).getDay() + 6) % 7];
+const jpSess = ms => { const h = new Date(ms).getUTCHours(), s = JP_SESS.find(([, a, b]) => h >= a && h < b); return `${s[0]} · ${pad(s[1])}–${pad(s[2])} UTC`; };
+const jpSessOrder = JP_SESS.map(([n, a, b]) => `${n} · ${pad(a)}–${pad(b)} UTC`);
+function jpHeld(sec) {
+  if (sec == null || !isFinite(sec) || sec < 0) return '—';
+  if (sec < 3600) return `${Math.max(1, Math.round(sec / 60))}m`;
+  if (sec < 86400) { const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return m ? `${h}h ${m}m` : `${h}h`; }
+  const d = Math.floor(sec / 86400), h = Math.round((sec % 86400) / 3600); return h ? `${d}d ${h}h` : `${d}d`;
+}
+function jpGroup(closed, keyFn) {   // closed: [{ t, c }]
+  const g = {};
+  for (const { t, c } of closed) { const k = keyFn(t); if (k == null) continue; const o = (g[k] = g[k] || { net: 0, n: 0, w: 0, gw: 0, gl: 0, best: null, worst: null }); o.net += c.net; o.n++; if (c.net > 0) { o.w++; o.gw += c.net; } else if (c.net < 0) o.gl += c.net; if (o.best == null || c.net > o.best) o.best = c.net; if (o.worst == null || c.net < o.worst) o.worst = c.net; }
+  return g;
+}
+const jpPf = v => (v.gl < 0 ? (v.gw / -v.gl).toFixed(2) : v.gw > 0 ? 'No losses' : '—');
+function jpHabits(closed) {
+  let run = 0, bestRun = 0, worstRun = 0;
+  for (const { c } of closed) {
+    if (c.net > 0) run = run > 0 ? run + 1 : 1; else if (c.net < 0) run = run < 0 ? run - 1 : -1; else run = 0;
+    bestRun = Math.max(bestRun, run); worstRun = Math.min(worstRun, run);
+  }
+  const avg = a => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
+  const heldW = avg(closed.filter(x => x.c.net > 0 && x.c.held != null).map(x => x.c.held)), heldL = avg(closed.filter(x => x.c.net < 0 && x.c.held != null).map(x => x.c.held));
+  const days = jpGroup(closed, t => jDayKey(Date.parse(t.closed_at))), dk = Object.entries(days);
+  const best = dk.length ? dk.reduce((a, b) => (b[1].net > a[1].net ? b : a)) : null, worst = dk.length ? dk.reduce((a, b) => (b[1].net < a[1].net ? b : a)) : null;
+  const greens = dk.filter(([, v]) => v.net > 0).length;
+  return { run, bestRun, worstRun: -worstRun, heldW, heldL, best, worst, days: dk.length, greens, perDay: dk.length ? closed.length / dk.length : null };
+}
+const jpDay = key => { const [y, m, d] = key.split('-').map(Number); return `${d} ${MON[m - 1]} ${y}`; };
+const jpMonth = key => { const [y, m] = key.split('-').map(Number); return `${MON[m - 1]} ${y}`; };
+
+const JPro = {
+  render(list) {
+    const closed = list.filter(t => t.exit != null).map(t => ({ t, c: jCalc(t) })).sort((a, b) => Date.parse(a.t.closed_at) - Date.parse(b.t.closed_at));
+    this.ordered('#jBySide', closed, t => (t.side === 'long' ? 'Long' : 'Short'), ['Long', 'Short']);
+    this.ordered('#jByDay', closed, t => jpWeekday(Date.parse(t.closed_at)), JP_DAYS);
+    this.ordered('#jBySess', closed, t => (t.opened_at ? jpSess(Date.parse(t.opened_at)) : null), jpSessOrder);
+    this.habits('#jHabits', closed);
+    this.months('#jMonths', closed);
+  },
+  ordered(sel, closed, keyFn, order) {   // bars in a fixed order (weekdays, sessions), skipping the empty ones
+    const box = $(sel); if (!box) return; box.replaceChildren();
+    const g = jpGroup(closed, keyFn), rows = order.filter(k => g[k]).map(k => [k, g[k]]);
+    if (!rows.length) { box.append(el('p', 'j-none', 'No closed trades here yet.')); return; }
+    const max = Math.max(1e-9, ...rows.map(([, v]) => Math.abs(v.net)));
+    for (const [name, v] of rows) {
+      const row = el('div', 'j-bar'); row.tabIndex = 0;
+      const tr = el('span', 'tr'), bar = el('i', v.net >= 0 ? 'up' : 'dn'); bar.style.width = `calc(${(Math.abs(v.net) / max) * 49}% - 1px)`;
+      if (v.net !== 0) tr.append(bar);
+      row.append(el('span', 'nm', name.replace(/ · .*/, '')), tr, el('span', 'val', money(v.net, true)));
+      row.setAttribute('aria-label', `${name}: ${money(v.net, true)} from ${v.n} trades, ${Math.round((v.w / v.n) * 100)}% won`);
+      jTip(row, tip => { tipLine(tip, money(v.net, true), name, signCls(v.net)); tipLine(tip, `${v.n}`, `trade${v.n === 1 ? '' : 's'} · ${Math.round((v.w / v.n) * 100)}% won · profit factor ${jpPf(v)}`); });
+      box.append(row);
+    }
+  },
+  habits(sel, closed) {
+    const box = $(sel); if (!box) return; box.replaceChildren();
+    if (!closed.length) { box.append(el('p', 'j-none', 'No closed trades here yet.')); return; }
+    const h = jpHabits(closed);
+    const item = (k, v, s, cls) => { const d = el('div', 'jp-h'); d.append(el('span', 'k', k), el('b', cls || null, v)); if (s) d.append(el('span', 's', s)); box.append(d); };
+    item('Current streak', h.run > 0 ? `${h.run} win${h.run === 1 ? '' : 's'}` : h.run < 0 ? `${-h.run} loss${h.run === -1 ? '' : 'es'}` : '—', null, h.run > 0 ? 'up-t' : h.run < 0 ? 'dn-t' : null);
+    item('Longest streaks', `${h.bestRun} won · ${h.worstRun} lost`, 'In a row');
+    item('Time in a trade', `${jpHeld(h.heldW)} · ${jpHeld(h.heldL)}`, 'Average for winners · losers');
+    item('Best day', h.best ? money(h.best[1].net, true) : '—', h.best ? jpDay(h.best[0]) : '', h.best && h.best[1].net > 0 ? 'up-t' : null);
+    item('Worst day', h.worst ? money(h.worst[1].net, true) : '—', h.worst ? jpDay(h.worst[0]) : '', h.worst && h.worst[1].net < 0 ? 'dn-t' : null);
+    item('Trading days', `${h.days}`, `${h.greens} green · ${h.perDay == null ? '—' : h.perDay.toFixed(1)} trades a day`);
+  },
+  months(sel, closed) {
+    const box = $(sel); if (!box) return; box.replaceChildren();
+    const g = jpGroup(closed, t => jDayKey(Date.parse(t.closed_at)).slice(0, 7)), rows = Object.entries(g).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+    if (!rows.length) { box.append(el('p', 'j-none', 'No closed trades here yet.')); return; }
+    box.append(this.table(['Month', ['Trades', 'num'], ['Win rate', 'num'], ['Net result', 'num'], ['Profit factor', 'num'], ['Best trade', 'num'], ['Worst trade', 'num']],
+      rows.map(([k, v]) => [jpMonth(k), [String(v.n), 'num'], [Math.round((v.w / v.n) * 100) + '%', 'num'], [money(v.net, true), 'num ' + (signCls(v.net) || '')], [jpPf(v), 'num'], [money(v.best, true), 'num'], [money(v.worst, true), 'num']])));
+  },
+  table(heads, rows) {
+    const t = el('table', 'jp-t'), th = el('thead'), hr = el('tr');
+    heads.forEach(h => { const [txt, cls] = Array.isArray(h) ? h : [h, null]; hr.append(el('th', cls, txt)); });
+    th.append(hr); t.append(th);
+    const tb = el('tbody');
+    rows.forEach(r => { const tr = el('tr'); r.forEach(c => { const [txt, cls] = Array.isArray(c) ? c : [c, null]; tr.append(el('td', cls || null, txt)); }); tb.append(tr); });
+    t.append(tb);
+    const w = el('div', 'jp-tw'); w.append(t); return w;
+  },
+  // ----- a printable report: the browser's Print window saves it as a PDF -----
+  report() {
+    const list = jFiltered(), st = jStats(list);
+    if (!st.n) { toast('Close a trade first: the report covers closed trades.'); return; }
+    let r = $('#jReport');
+    if (!r) { r = el('section', 'jp-report'); r.id = 'jReport'; r.setAttribute('aria-hidden', 'true'); document.body.append(r); }
+    r.replaceChildren();
+    const f = JR.f, closed = st.closed, h = jpHabits(closed);
+    const filt = [{ all: 'All time', week: 'This week', month: 'This month', 30: 'Last 30 days', 90: 'Last 90 days', year: 'This year' }[f.range] || 'All time',
+      f.side === 'all' ? 'long and short' : f.side, f.result !== 'all' ? { win: 'winners', loss: 'losers', open: 'open trades' }[f.result] : '', f.strategy ? `strategy ${f.strategy}` : '', f.day ? jpDay(f.day) : ''].filter(Boolean).join(' · ');
+    const head = el('header', 'jp-rh');
+    head.append(el('h1', null, `${CFG.siteName} · Trade journal report`), el('p', null, `${filt} · ${closed.length} closed trade${closed.length === 1 ? '' : 's'} · ${jset().ccy}`),
+      el('p', 'muted', `Made ${new Date().toLocaleString()} · ${location.host}`));
+    r.append(head);
+    const k = el('div', 'jp-rk');
+    const kv = (key, v, cls) => { const d = el('div'); d.append(el('span', null, key), el('b', cls || null, v)); k.append(d); };
+    kv('Net result', money(st.net, true), signCls(st.net)); kv('Win rate', st.winRate == null ? '—' : Math.round(st.winRate * 100) + '%');
+    kv('Profit factor', st.pf == null ? '—' : st.pf === Infinity ? 'No losses' : st.pf.toFixed(2)); kv('Per trade', money(st.exp, true));
+    kv('Average win', money(st.avgWin)); kv('Average loss', money(st.avgLoss)); kv('Average R', fmtR(st.avgR)); kv('Largest drawdown', money(st.maxDD));
+    kv('Longest streaks', `${h.bestRun} won · ${h.worstRun} lost`); kv('Trading days', `${h.days} (${h.greens} green)`);
+    r.append(k);
+    const sec = (title, node) => { const s = el('section', 'jp-rs'); s.append(el('h2', null, title), node); r.append(s); };
+    const grpRows = (g, order) => (order ? order.filter(x => g[x]).map(x => [x, g[x]]) : Object.entries(g).sort((a, b) => b[1].net - a[1].net)).map(([name, v]) =>
+      [name, [String(v.n), 'num'], [Math.round((v.w / v.n) * 100) + '%', 'num'], [money(v.net, true), 'num'], [jpPf(v), 'num']]);
+    const gh = name => [name, ['Trades', 'num'], ['Win rate', 'num'], ['Net result', 'num'], ['Profit factor', 'num']];
+    const mg = jpGroup(closed, t => jDayKey(Date.parse(t.closed_at)).slice(0, 7));
+    sec('By month', this.table(gh('Month'), Object.entries(mg).sort((a, b) => (a[0] < b[0] ? 1 : -1)).map(([key, v]) => [jpMonth(key), [String(v.n), 'num'], [Math.round((v.w / v.n) * 100) + '%', 'num'], [money(v.net, true), 'num'], [jpPf(v), 'num']])));
+    sec('By symbol', this.table(gh('Symbol'), grpRows(jpGroup(closed, t => label(t.symbol))).slice(0, 25)));
+    sec('Long and short', this.table(gh('Side'), grpRows(jpGroup(closed, t => (t.side === 'long' ? 'Long' : 'Short')), ['Long', 'Short'])));
+    sec('By day of the week (closed)', this.table(gh('Day'), grpRows(jpGroup(closed, t => jpWeekday(Date.parse(t.closed_at))), JP_DAYS)));
+    sec('By session (opened)', this.table(gh('Session'), grpRows(jpGroup(closed, t => (t.opened_at ? jpSess(Date.parse(t.opened_at)) : null)), jpSessOrder)));
+    const sg = jpGroup(closed, t => t.strategy || 'No strategy');
+    if (Object.keys(sg).length > 1 || !sg['No strategy']) sec('By strategy', this.table(gh('Strategy'), grpRows(sg)));
+    const recent = closed.slice(-200).reverse();
+    sec(`Trades${closed.length > 200 ? ' (the latest 200)' : ''}`, this.table(['Closed', 'Symbol', 'Side', ['Entry', 'num'], ['Exit', 'num'], ['Net', 'num'], ['R', 'num']],
+      recent.map(({ t, c }) => [jpDay(jDayKey(Date.parse(t.closed_at))), label(t.symbol), t.side === 'long' ? 'Long' : 'Short', [String(+t.entry), 'num'], [String(+t.exit), 'num'], [money(c.net, true), 'num'], [fmtR(c.r), 'num']])));
+    r.append(el('p', 'jp-rf', 'Results are from your own journal entries. For your records only: not financial advice. Trading leveraged products carries a high risk of losing money rapidly.'));
+    document.body.classList.add('jp-printing');
+    const done = () => { document.body.classList.remove('jp-printing'); window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done);
+    setTimeout(() => { try { window.print(); } catch (e) { done(); } }, 60);
+  },
+};
+
 // ----- rendering -----
 const Journal = {
   init() {
@@ -4069,7 +4199,7 @@ const Journal = {
       sub.append(b, document.createTextNode(' to keep it in your account and use it on any device.'));
     } else sub.textContent = 'Saved in this browser.';
     const any = JR.trades.length > 0;
-    $('#jEmpty').hidden = any; $('#jBody').hidden = !any; $('.j-filters').hidden = !any; $('#jExport').hidden = !any;
+    $('#jEmpty').hidden = any; $('#jBody').hidden = !any; $('.j-filters').hidden = !any; $('#jExport').hidden = !any; $('#jReportBtn').hidden = !any;
     // strategy filter options
     const ss = $('#jStrategy'), cur = JR.f.strategy, strategies = Array.from(new Set(JR.trades.map(t => t.strategy).filter(Boolean))).sort();
     ss.replaceChildren(el('option', null, 'All strategies')); ss.firstChild.value = '';
@@ -4083,7 +4213,7 @@ const Journal = {
     }
     if (!any) return;
     const list = jFiltered(), st = jStats(list);
-    this.kpis(st); this.equity(st); this.calendar(jFiltered(true)); this.bars('#jBySym', list, t => label(t.symbol)); this.bars('#jByStrat', list, t => t.strategy || 'No strategy');
+    this.kpis(st); this.equity(st); this.calendar(jFiltered(true)); this.bars('#jBySym', list, t => label(t.symbol)); this.bars('#jByStrat', list, t => t.strategy || 'No strategy'); JPro.render(list);
     this.table(list);
   },
   kpis(st) {
@@ -4422,6 +4552,7 @@ function focusChart() {
 $('#jNew').onclick = () => Journal.open(null);
 $('#jFirst').onclick = () => Journal.open(null);
 $('#jExport').onclick = () => Journal.exportCsv();
+$('#jReportBtn').onclick = () => JPro.report();
 $('#jImport').onclick = () => $('#jFile').click();
 $('#jFile').onchange = e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; Journal.importCsv(f); };
 $('#jRange').onchange = e => { JR.f.range = e.target.value; JR.f.day = ''; Journal.render(); };
