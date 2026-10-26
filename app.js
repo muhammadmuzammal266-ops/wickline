@@ -1899,10 +1899,10 @@ function onTicker(t) {
   S.tickers[t.sym] = t;
   updateWatchRow(t.sym, prev);
   if (t.sym === S.symbol) renderDetails();
-  Home.onTicker(t);
+  Home.onTicker(t); MC.onTicker(t);
   if (!t.stand) { checkAlerts(t.sym, t.last); Paper.onPrice(t.sym); }   // a saved stand-in price never sets off an alert or fills an order
 }
-function tickerSet() { const set = new Set(S.watch); set.add(S.symbol); S.alerts.forEach(a => { if (!a.hit) set.add(a.sym); }); Paper.symbols().forEach(id => set.add(id)); Home.symbols().forEach(id => set.add(id)); return Array.from(set); }
+function tickerSet() { const set = new Set(S.watch); set.add(S.symbol); S.alerts.forEach(a => { if (!a.hit) set.add(a.sym); }); Paper.symbols().forEach(id => set.add(id)); Home.symbols().forEach(id => set.add(id)); MC.symbols().forEach(id => set.add(id)); return Array.from(set); }
 
 /* ---------- network helpers ---------- */
 function fetchT(url, ms, opts) {
@@ -3191,7 +3191,7 @@ setInterval(clockTick, 1000);
 const sDlg = $('#searchDlg'), sInput = $('#searchInput'), sList = $('#searchList');
 let sMode = 'open', sTab = 'all', sIdx = 0, sItems = [], sReq = 0;
 function openSearch(mode, seed) {
-  sMode = mode; $('#searchTitle').textContent = mode === 'add' ? 'Add to watchlist' : 'Symbol search';
+  sMode = mode; $('#searchTitle').textContent = mode === 'add' ? 'Add to watchlist' : mode === 'pane' ? 'Symbol for this chart' : 'Symbol search';
   sInput.value = seed || ''; if (!sDlg.open) sDlg.showModal(); sInput.focus();
   runSearch();
 }
@@ -3274,7 +3274,7 @@ function renderSearch(q) {
     li.append(main, tag, star); sList.append(li);
   });
 }
-function choose(id) { if (sMode === 'add') addWatch(id); sDlg.close(); if (curView() !== 'chart') { setView('chart', true); window.scrollTo(0, 0); } setSymbol(id); }
+function choose(id) { if (sMode === 'pane') { sDlg.close(); MC.setSym(MC.picking, id); return; } if (sMode === 'add') addWatch(id); sDlg.close(); if (curView() !== 'chart') { setView('chart', true); window.scrollTo(0, 0); } setSymbol(id); }
 sInput.addEventListener('input', runSearch);
 sInput.addEventListener('keydown', e => {
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -3639,7 +3639,7 @@ function applyTheme() {
     JR.eqSeries.applyOptions({ topLineColor: C.up, topFillColor1: alpha(C.up, 0.14), topFillColor2: alpha(C.up, 0.02), bottomLineColor: C.down, bottomFillColor1: alpha(C.down, 0.02), bottomFillColor2: alpha(C.down, 0.14) });
   }
   syncTradeMarks();
-  ideasRetheme();
+  ideasRetheme(); MC.retheme();
 }
 new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 if (mq.addEventListener) mq.addEventListener('change', applyTheme);
@@ -3647,7 +3647,7 @@ if (mq.addEventListener) mq.addEventListener('change', applyTheme);
 /* ---------- accounts: sign in with Google, profile, and syncing the setup across devices ----------
    Supabase keeps the accounts. The browser only ever holds the public "publishable" key; the database rules
    (row level security) let each person read and change only their own profile and saved setup. */
-const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset', 'paper'];
+const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset', 'paper', 'layout'];
 function cleanState(d) {   // saved data is checked before it's used, whatever is in the database
   const o = {}; if (!d || typeof d !== 'object' || Array.isArray(d)) return o;
   const isId = v => typeof v === 'string' && v.length <= 40 && /^[A-Z0-9.:/_-]+$/.test(v);
@@ -3655,8 +3655,8 @@ function cleanState(d) {   // saved data is checked before it's used, whatever i
   if (Array.isArray(d.watch)) o.watch = d.watch.filter(isId).slice(0, 300);
   if (Array.isArray(d.wlFold)) o.wlFold = d.wlFold.filter(v => typeof v === 'string' && /^[a-z]{3,8}$/.test(v)).slice(0, 10);
   if (isObj(d.drawings)) { o.drawings = {}; for (const [k, v] of Object.entries(d.drawings)) if (isId(k) && Array.isArray(v)) o.drawings[k] = v.filter(x => isObj(x) && typeof x.type === 'string' && x.type.length < 12).slice(0, 500); }
-  if (Array.isArray(d.ind)) o.ind = d.ind.filter(x => isObj(x) && typeof x.type === 'string').slice(0, 30);
-  if (Array.isArray(d.alerts)) o.alerts = d.alerts.filter(x => isObj(x) && isId(x.sym) && typeof x.price === 'number' && isFinite(x.price) && (x.dir === 'above' || x.dir === 'below')).slice(0, 200);
+  if (Array.isArray(d.ind)) o.ind = d.ind.filter(x => isObj(x) && typeof x.type === 'string').slice(0, 50);
+  if (Array.isArray(d.alerts)) o.alerts = d.alerts.filter(x => isObj(x) && isId(x.sym) && typeof x.price === 'number' && isFinite(x.price) && (x.dir === 'above' || x.dir === 'below')).slice(0, 500);
   if (isId(d.symbol)) o.symbol = d.symbol;
   if (TFS.some(t => t.id === d.tf)) o.tf = d.tf;
   if (['candles', 'bars', 'heikin', 'line', 'area'].includes(d.type)) o.type = d.type;
@@ -3666,6 +3666,7 @@ function cleanState(d) {   // saved data is checked before it's used, whatever i
   if (d.theme === 'light' || d.theme === 'dark') o.theme = d.theme;
   if (isObj(d.jset) && typeof d.jset.ccy === 'string' && /^[A-Z]{3}$/.test(d.jset.ccy)) o.jset = { ccy: d.jset.ccy };
   if (isObj(d.paper)) o.paper = ptClean(d.paper);
+  if (isObj(d.layout) && [1, 2, 4].includes(d.layout.n)) o.layout = { n: d.layout.n, panes: (Array.isArray(d.layout.panes) ? d.layout.panes : []).filter(p => isObj(p) && isId(p.sym)).slice(0, 3).map(p => ({ sym: p.sym, tf: TFS.some(t => t.id === p.tf) ? p.tf : null })) };
   return o;
 }
 const safeAvatar = u => (typeof u === 'string' && /^https:\/\/[a-z0-9.-]+\.googleusercontent\.com\/[^\s"'<>]*$/i.test(u) ? u : '');
@@ -5535,7 +5536,7 @@ const PT_TYPES = { market: 'Market', limit: 'Limit', stop: 'Stop', stoplimit: 'S
 const PT_WHY = { tp: 'Take profit', sl: 'Stop loss', trail: 'Trailing stop', close: 'Closed by you', stopout: 'Margin call', reverse: 'Reversed', order: 'Order', replay: 'Replay ended', rule: 'Challenge rule' };
 const PT_FIX = { HKD: 0.1286, SGD: 0.775, BRL: 0.18 };   // rough rates for the few currencies with no live pair here
 const PT_SIZES = [1000, 5000, 10000, 25000, 50000, 100000, 250000, 1000000];
-const PT_MAX_ACCTS = 8;
+const PT_MAX_ACCTS = 20;
 // ----- prop challenge: a live-price account with a prop firm's evaluation rules -----
 const PT_CH_PRESETS = [
   ['p1', 'Two-step · phase 1', { target: 10, daily: 5, max: 10, minDays: 4, days: null }],
@@ -7039,6 +7040,160 @@ async function probeTD() {
   try { await fetchT('https://api.twelvedata.com/time_series?symbol=AAPL&interval=1day&outputsize=1&apikey=demo', 4500); return true; }
   catch (e) { return false; }
 }
+/* ---------- multi-chart layouts: the main chart plus up to three more, each with its own symbol and timeframe ---------- */
+const MC_LAYOUTS = [[1, 'One chart'], [2, 'Two charts'], [4, 'Four charts']];
+const MC_ICON = { 1: '<rect x="4" y="5" width="16" height="14" rx="2"/>', 2: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M12 5v14"/>', 4: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M12 5v14M4 12h16"/>' };
+const MC = {
+  n: 1, panes: [], charts: [], picking: -1,
+  load() {
+    const v = store.get('layout', null);
+    this.n = v && [1, 2, 4].includes(v.n) ? v.n : 1;
+    this.panes = (v && Array.isArray(v.panes) ? v.panes : []).map(p => ({ sym: p && typeof p.sym === 'string' ? parseSymbol(p.sym) : null, tf: p && TFS.some(t => t.id === p.tf) ? p.tf : null })).filter(p => p.sym).slice(0, 3);
+  },
+  save() { store.set('layout', { n: this.n, panes: this.panes.map(p => ({ sym: p.sym, tf: p.tf })) }); },
+  symbols() { return this.n > 1 ? this.panes.slice(0, this.n - 1).map(p => p.sym) : []; },   // their prices stream with the watchlist's
+  ready() { this.load(); this.build(); if (this.n > 1) ensureTickerSubs(); },
+  defaults() {   // markets for new charts: the watchlist first, minus what's already showing
+    const used = new Set([S.symbol, ...this.panes.map(p => p.sym)]), out = [];
+    for (const id of S.watch.concat(['BINANCE:ETHUSDT', 'FX:EUR/USD', 'FX:XAU/USD', 'BINANCE:SOLUSDT', 'US:AAPL'])) if (!used.has(id)) { used.add(id); out.push(id); }
+    return out;
+  },
+  setLayout(n) {
+    if (![1, 2, 4].includes(n)) return;
+    this.n = n;
+    const more = this.defaults();
+    while (this.panes.length < n - 1) this.panes.push({ sym: more.shift() || 'BINANCE:ETHUSDT', tf: null });
+    this.save(); this.build(); ensureTickerSubs();
+  },
+  build() {   // make the extra charts match the layout
+    const box = $('#charts'); if (!box) return;
+    box.dataset.n = String(this.n);
+    while (this.charts.length > this.n - 1) { const c = this.charts.pop(); try { c.ch.remove(); } catch (e) { /* gone */ } c.root.remove(); }
+    for (let i = this.charts.length; i < this.n - 1; i++) this.charts.push(this.make(i));
+    this.charts.forEach((c, i) => { if (c.id !== this.panes[i].sym || c.tfv !== this.tfOf(i)) this.loadPane(i); });
+    const b = $('#layoutBtn'); if (b) { b.classList.toggle('on', this.n > 1); b.querySelector('svg').innerHTML = MC_ICON[this.n]; b.setAttribute('aria-label', `Chart layout: ${MC_LAYOUTS.find(x => x[0] === this.n)[1].toLowerCase()}`); }
+  },
+  tfOf(i) { return this.panes[i].tf || S.tf; },
+  opts() {
+    return { layout: { background: { type: 'solid', color: C.panel }, textColor: C.muted }, grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
+      crosshair: { vertLine: { color: C.faint, labelBackgroundColor: C.crossLabel }, horzLine: { color: C.faint, labelBackgroundColor: C.crossLabel } }, rightPriceScale: { borderColor: C.line }, timeScale: { borderColor: C.line } };
+  },
+  candle() { return { upColor: C.up, downColor: C.down, borderUpColor: C.up, borderDownColor: C.down, wickUpColor: C.up, wickDownColor: C.down }; },
+  make(i) {
+    const root = el('div', 'mc'); root.dataset.i = String(i);
+    const bar = el('div', 'mc-bar');
+    const symBtn = el('button', 'mc-sym'); symBtn.type = 'button'; symBtn.title = "Change this chart's symbol";
+    symBtn.onclick = () => { this.picking = +root.dataset.i; openSearch('pane'); };
+    const tfw = el('span', 'selwrap mc-tfw'), tf = el('select', 'mc-tf'); tf.setAttribute('aria-label', 'Timeframe');
+    TFS.forEach(t => { const o = el('option', null, t.label); o.value = t.id; tf.append(o); });
+    tf.onchange = () => { const k = +root.dataset.i; this.panes[k].tf = tf.value; this.save(); this.loadPane(k); };
+    tfw.append(tf);
+    const px = el('span', 'mc-px', '—'), chg = el('span', 'mc-chg'), note = el('span', 'mc-note');
+    const main = el('button', 'icon-btn mc-main'); main.type = 'button'; main.title = 'Show on the main chart'; main.setAttribute('aria-label', 'Show on the main chart');
+    main.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg>';
+    main.onclick = () => this.toMain(+root.dataset.i);
+    bar.append(symBtn, tfw, px, chg, note, el('span', 'spacer'), main);
+    const cbox = el('div', 'mc-chart');
+    root.append(bar, cbox); $('#charts').append(root);
+    const o = this.opts();
+    o.autoSize = true;
+    o.crosshair.mode = CrosshairMode.Normal;
+    Object.assign(o.timeScale, { timeVisible: true, secondsVisible: false, rightOffset: 5, barSpacing: 6, minBarSpacing: 1, tickMarkFormatter: (t, ty, loc) => tickFmt(t, ty, loc, this.tfOf(+root.dataset.i)) });
+    o.localization = { timeFormatter: t => fmtTime(t, this.tfOf(+root.dataset.i)) };
+    Object.assign(o.layout, { fontSize: 11, fontFamily: FONT_DATA, attributionLogo: false });
+    const ch = createChart(cbox, o);
+    const series = ch.addSeries(CandlestickSeries, Object.assign({ lastValueVisible: true, priceLineVisible: true }, this.candle()));
+    series.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: 0.18 } });
+    const vol = ch.addSeries(HistogramSeries, { priceScaleId: 'mcv', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
+    ch.priceScale('mcv').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 }, visible: false });
+    cbox.addEventListener('dblclick', () => this.toMain(+root.dataset.i));
+    return { root, symBtn, tf, px, chg, note, ch, series, vol, bars: [], id: null, tfv: null, token: 0, loadedAt: 0 };
+  },
+  volPt: b => ({ time: b.time, value: b.volume || 0, color: alpha(b.close >= b.open ? C.up : C.down, 0.35) }),
+  async loadPane(i, quiet) {
+    const c = this.charts[i], p = this.panes[i]; if (!c || !p) return;
+    const id = p.sym, tf = this.tfOf(i), token = ++c.token;
+    c.id = id; c.tfv = tf; c.root.dataset.sym = id;
+    c.symBtn.textContent = label(id); c.symBtn.setAttribute('aria-label', `${label(id)}: change this chart's symbol`); c.tf.value = tf;
+    if (!quiet) { c.bars = []; c.series.setData([]); c.vol.setData([]); c.note.textContent = 'Loading…'; }
+    this.price(i);
+    try {
+      const bars = await feedFor(id).klines(id, tf);
+      if (token !== c.token) return;
+      if (!bars.length) throw new Error('none');
+      c.bars = bars.slice(-1500).map(b => Object.assign({}, b));
+      c.series.applyOptions({ priceFormat: pricePF(precFor(id, c.bars[c.bars.length - 1].close)) });
+      c.series.setData(c.bars.map(b => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
+      c.vol.setData(c.bars.map(this.volPt));
+      if (!quiet) c.ch.timeScale().setVisibleLogicalRange({ from: c.bars.length - 120, to: c.bars.length + 4 });
+      c.note.textContent = srcOf(id) === 'demo' ? 'Saved price' : ''; c.loadedAt = Date.now();
+      this.price(i);
+    } catch (e) {
+      if (token !== c.token) return;
+      c.note.textContent = "Couldn't load"; c.loadedAt = Date.now();
+    }
+  },
+  price(i) {
+    const c = this.charts[i]; if (!c) return;
+    const t = S.tickers[c.id];
+    if (!t || t.last == null) { c.px.textContent = '—'; c.chg.textContent = ''; return; }
+    c.px.textContent = fmtP(t.last, t.prec != null ? t.prec : precFor(c.id, t.last));
+    const ref = t.ref != null ? t.ref : t.prevClose;
+    if (ref) { const pct = ((t.last - ref) / ref) * 100; c.chg.textContent = fmtPct(pct); c.chg.className = 'mc-chg ' + (pct > 0 ? 'up' : pct < 0 ? 'down' : ''); } else c.chg.textContent = '';
+  },
+  onTicker(t) {   // a live price: move the last candle of every extra chart showing this market
+    this.charts.forEach((c, i) => {
+      if (c.id !== t.sym) return;
+      this.price(i);
+      if (t.stand || t.src === 'demo' || !c.bars.length || !isFinite(t.last) || !openNow(c.id)) return;
+      const sec = tfOf(c.tfv).sec, last = c.bars[c.bars.length - 1], now = Date.now() / 1000, px = t.last;
+      if (now < last.time) return;
+      const k = Math.floor((now - last.time) / sec);
+      if (k >= 1) c.bars.push({ time: last.time + k * sec, open: px, high: px, low: px, close: px, volume: 0 });
+      else { last.high = Math.max(last.high, px); last.low = Math.min(last.low, px); last.close = px; }
+      const b = c.bars[c.bars.length - 1];
+      try { c.series.update({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }); if (k >= 1) c.vol.update(this.volPt(b)); } catch (e) { /* out of order */ }
+    });
+  },
+  tick() {   // every few minutes, line the candles up with the source again (not Twelve Data, whose free allowance is small)
+    this.charts.forEach((c, i) => { if (c.id && Date.now() - c.loadedAt > 180000 && !['td', 'demo'].includes(srcOf(c.id)) && !document.hidden) this.loadPane(i, true); });
+  },
+  setSym(i, id) {
+    if (!this.panes[i]) return;
+    this.panes[i].sym = id; this.save(); this.loadPane(i); ensureTickerSubs();
+  },
+  toMain(i) {   // swap: this chart's market goes to the main chart, and the main chart's market comes here
+    const p = this.panes[i]; if (!p) return;
+    const mainSym = S.symbol, mainTf = S.tf, tf = this.tfOf(i);
+    this.panes[i] = { sym: mainSym, tf: mainTf };
+    this.save();
+    if (p.sym === mainSym) { if (tf !== mainTf) setTf(tf); }
+    else { if (tf !== mainTf) { S.tf = tf; store.set('tf', tf); renderTfState(); } setSymbol(p.sym); }
+    this.loadPane(i); ensureTickerSubs();
+  },
+  retheme() {
+    this.charts.forEach(c => { try { c.ch.applyOptions(this.opts()); c.series.applyOptions(this.candle()); c.vol.setData(c.bars.map(this.volPt)); } catch (e) { /* gone */ } });
+  },
+  menu() {
+    const m = $('#layoutMenu'); m.replaceChildren();
+    m.append(el('div', 'tp-menu-h', 'Chart layout'));
+    MC_LAYOUTS.forEach(([n, name]) => {
+      const b = el('button', 'mc-li' + (n === this.n ? ' on' : '')); b.type = 'button'; b.setAttribute('role', 'menuitemradio'); b.setAttribute('aria-checked', String(n === this.n)); b.dataset.n = String(n);
+      b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${MC_ICON[n]}</svg>`; b.append(el('span', null, name));
+      b.onclick = () => { m.hidden = true; this.setLayout(n); };
+      m.append(b);
+    });
+    m.append(el('div', 'tp-menu-note', 'Each extra chart has its own symbol and timeframe. Double-click one to show it on the main chart.'));
+    m.hidden = false;
+    const r = $('#layoutBtn').getBoundingClientRect(), w = m.offsetWidth;
+    m.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px'; m.style.top = (r.bottom + 6) + 'px';
+  },
+};
+setInterval(() => MC.tick(), 30000);
+$('#layoutBtn').onclick = e => { e.stopPropagation(); const m = $('#layoutMenu'); if (!m.hidden) { m.hidden = true; return; } MC.menu(); };
+document.addEventListener('pointerdown', e => { const m = $('#layoutMenu'); if (!m.hidden && !m.contains(e.target) && !$('#layoutBtn').contains(e.target)) m.hidden = true; }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#layoutMenu').hidden = true; });
+
 async function boot() {
   $('.brand .word').textContent = CFG.siteName; $('.brand').setAttribute('aria-label', CFG.siteName); $('#wmWord').textContent = CFG.siteName;
   renderTools(); renderTf(); renderAlerts(); clockTick();
@@ -7068,6 +7223,7 @@ async function boot() {
   ensureTickerSubs();
   Paper.ready();
   Home.ready();
+  MC.ready();
   await first;
 }
 boot();
