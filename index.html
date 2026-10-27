@@ -75,6 +75,37 @@ svg{display:block}
 .seg .btn{padding:0 8px;font-family:var(--font-data);font-size:12.5px;color:var(--muted)}
 .seg .btn:hover{color:var(--fg)}
 .seg .btn.on{color:var(--accent);background:var(--accent-soft);font-weight:600}
+
+/* chart type settings */
+#ctGear svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7}
+.ct-form{display:flex;flex-direction:column;gap:6px;padding:4px 10px 8px;min-width:250px}
+.ct-row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px}
+.ct-row input,.ct-row select{width:120px;height:30px}
+.ct-note{font-size:11.5px;color:var(--faint);line-height:1.4}
+.ct-acts{display:flex;justify-content:flex-end;padding-top:4px}
+
+/* timeframes */
+.seg .btn.tf-more{padding:0 5px}
+.seg .btn.tf-more svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2}
+.tf-menu{min-width:250px;overflow-y:auto}
+.tf-gh{font-size:11px;font-weight:600;color:var(--muted);padding:8px 10px 3px}
+.tf-row{display:flex;align-items:center;border-radius:6px}
+.tf-row:hover{background:var(--panel-2)}
+.tf-li{flex:1;text-align:left;padding:6px 10px;font-size:13px}
+.tf-row.on .tf-li{color:var(--accent);font-weight:600}
+.tf-star svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.6}
+.tf-star{color:var(--faint)}
+.tf-star.on{color:var(--accent)}
+.tf-star.on svg{fill:currentColor}
+.tf-del svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2}
+.tf-add{padding:2px 0 4px}
+.tf-addrow{display:flex;gap:6px;padding:2px 8px}
+.tf-addrow input{width:70px;height:30px}
+.tf-addrow .selwrap{flex:1}
+.tf-addrow select{width:100%;height:30px}
+.tf-addrow .primary{height:30px;padding:0 12px}
+.tf-msg{font-size:11.5px;color:var(--down-ink);padding:2px 10px;min-height:0}
+.tf-msg:empty{display:none}
 .vsep{width:1px;height:20px;background:var(--line);margin-inline:2px}
 .selwrap{position:relative;display:inline-flex}
 .selwrap select{appearance:none;-webkit-appearance:none;height:30px;border:0;border-radius:6px;background:transparent;padding:0 26px 0 10px;cursor:pointer}
@@ -111,6 +142,15 @@ select option{background:var(--panel);color:var(--fg)}
 .charts{position:relative;flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:1px;background:var(--line)}
 .charts[data-n="2"]{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .charts[data-n="4"]{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
+.charts[data-n="3"]{grid-template-columns:repeat(3,minmax(0,1fr))}
+.charts[data-n="6"]{grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr))}
+.charts[data-n="8"]{grid-template-columns:repeat(4,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr))}
+.charts[data-n="16"]{grid-template-columns:repeat(4,minmax(0,1fr));grid-template-rows:repeat(4,minmax(0,1fr))}
+.charts[data-n="8"] .mc-bar,.charts[data-n="16"] .mc-bar{gap:5px;height:28px}
+.charts[data-n="8"] .mc-note,.charts[data-n="16"] .mc-note,.charts[data-n="16"] .mc-chg{display:none}
+.charts[data-n="16"] .mc-tfw select{padding:0 18px 0 5px}
+/* the main chart is small in the big grids: just its name, no quick-trade box */
+.charts[data-n="6"] #qt,.charts[data-n="8"] #qt,.charts[data-n="16"] #qt,.charts[data-n="6"] #ohlc,.charts[data-n="8"] #ohlc,.charts[data-n="16"] #ohlc,.charts[data-n="8"] #lgRows,.charts[data-n="16"] #lgRows,.charts[data-n="8"] #lgFold,.charts[data-n="16"] #lgFold{display:none !important}
 .charts>.chart-wrap{background:var(--panel);min-width:0}
 .mc{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel)}
 .mc-bar{display:flex;align-items:center;gap:8px;height:32px;flex:none;padding:0 4px 0 6px;border-bottom:1px solid var(--line);font-size:12px;white-space:nowrap;overflow:hidden}
@@ -130,7 +170,7 @@ select option{background:var(--panel);color:var(--fg)}
 .mc-li.on{color:var(--accent)}
 .mc-li svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7}
 @media (max-width: 880px){
-  .charts,.charts[data-n="2"],.charts[data-n="4"]{display:flex;flex-direction:column;flex:none}
+  .charts,.charts[data-n]{display:flex;flex-direction:column;flex:none}
   .mc{height:300px;flex:none}
 }
 #chart{position:absolute;inset:0}
@@ -1116,14 +1156,9 @@ a.h-btn.primary{color:var(--panel)}
     <span class="vsep"></span>
     <div class="seg" id="tfSeg" role="group" aria-label="Timeframe"></div>
     <span class="vsep"></span>
-    <span class="selwrap"><select id="typeSel" aria-label="Chart type">
-      <option value="candles">Candles</option>
-      <option value="bars">Bars</option>
-      <option value="heikin">Heikin Ashi</option>
-      <option value="line">Line</option>
-      <option value="area">Area</option>
-    </select></span>
-    <button class="btn" id="layoutBtn" title="Chart layout: 1, 2 or 4 charts" aria-haspopup="menu" aria-label="Chart layout"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/></svg><span class="rp-btn-lbl">Layout</span></button>
+    <span class="selwrap"><select id="typeSel" aria-label="Chart type"><optgroup label="Bars"><option value="bars">Bars</option><option value="candles">Candles</option><option value="hollow">Hollow candles</option><option value="heikin">Heikin Ashi</option><option value="columns">Columns</option></optgroup><optgroup label="Lines"><option value="line">Line</option><option value="markers">Line with markers</option><option value="step">Step line</option><option value="area">Area</option><option value="baseline">Baseline</option></optgroup><optgroup label="Price only (no time)"><option value="renko">Renko</option><option value="linebreak">Line break</option><option value="kagi">Kagi</option><option value="pnf">Point &amp; figure</option></optgroup></select></span>
+    <button class="icon-btn" id="ctGear" type="button" hidden title="Box size and other settings for this chart type" aria-label="Chart type settings" aria-haspopup="menu"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+    <button class="btn" id="layoutBtn" title="Chart layout: up to 16 charts" aria-haspopup="menu" aria-label="Chart layout"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/></svg><span class="rp-btn-lbl">Layout</span></button>
     <button class="btn" id="indBtn"><svg viewBox="0 0 24 24"><path d="M3 17c3 0 4-10 7-10s3 10 6 10 3-6 5-6"/></svg>Indicators</button>
     <button class="btn" id="replayBtn" aria-pressed="false" title="Bar replay: replay the market from a past bar"><svg viewBox="0 0 24 24"><path d="M11.5 7l-6 5 6 5z"/><path d="M19.5 7l-6 5 6 5z"/></svg><span class="rp-btn-lbl">Replay</span></button>
     <button class="btn" id="ideaBtn" title="Publish your view of this chart as an idea"><svg viewBox="0 0 24 24"><path d="M9.5 18h5M10.5 21h3"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></svg><span class="rp-btn-lbl">Publish idea</span></button>
@@ -1630,12 +1665,14 @@ a.h-btn.primary{color:var(--panel)}
 <div class="ctx-menu" id="ctxMenu" hidden role="menu" aria-label="Chart menu"></div>
 <div class="ctx-menu tp-menu" id="tpMenu" hidden role="menu" aria-label="Paper trading accounts"></div>
 <div class="ctx-menu tp-menu mc-menu" id="layoutMenu" hidden role="menu" aria-label="Chart layout"></div>
+<div class="ctx-menu tp-menu tf-menu" id="tfMenu" hidden role="menu" aria-label="Timeframes"></div>
+<div class="ctx-menu tp-menu" id="ctMenu" hidden role="dialog" aria-label="Chart type settings"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
 <script src="vendor/lightweight-charts-5.1.0.js"></script>
 <script src="vendor/supabase-js-2.117.2.js"></script>
 <script src="config.js"></script>
-<script src="app.js?v=503002a930"></script>
+<script src="app.js?v=1c267f4bcb"></script>
 
 </body>
 </html>

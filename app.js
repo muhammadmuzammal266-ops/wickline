@@ -65,13 +65,410 @@ CFG.siteName = String(CFG.siteName || 'RealChart').slice(0, 40);
 CFG.twelveDataKey = String(CFG.twelveDataKey || '').trim();
 
 /* ---------- market vocabulary ---------- */
-const TFS = [
-  { id: '1m', label: '1m', sec: 60 }, { id: '5m', label: '5m', sec: 300 }, { id: '15m', label: '15m', sec: 900 }, { id: '30m', label: '30m', sec: 1800 },
-  { id: '1h', label: '1h', sec: 3600 }, { id: '4h', label: '4h', sec: 14400 },
-  { id: '1d', label: '1D', sec: 86400 }, { id: '1w', label: '1W', sec: 604800 },
-];
-const tfOf = id => TFS.find(t => t.id === id) || TFS[3];
+const TFS = ['1m', '3m', '5m', '15m', '30m', '45m', '1h', '2h', '3h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M'].map(id => ({ id }));   // filled in by tfOf
 const DAY = 86400, WEEK = 604800, YEAR = 31536000;
+/* ---------- timeframes beyond the price sources' own (1m … 1W): built from their candles ----------
+   Each source serves 1m, 5m, 15m, 30m, 1h, 4h, 1D and 1W. Any other timeframe (3m, 45m, 2h, 12h, 3D, 1M, or one a
+   person types) is made by joining the source's candles: 45m from 15m, 12h from 4h, 1M from days. Live updates keep
+   the source's candles inside the newest bar, so that bar is rebuilt exactly as each one changes. */
+const TF_NATIVE = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
+const TF_UNIT = { m: 60, h: 3600, d: DAY, w: WEEK, M: 2629746 };
+const TF_WORD = { m: ['minute', 'minutes'], h: ['hour', 'hours'], d: ['day', 'days'], w: ['week', 'weeks'], M: ['month', 'months'] };
+const TF_MAX = { m: 1440, h: 168, d: 365, w: 52, M: 12 };
+const WEEK_OFF = 345600;   // weeks start on Monday 00:00 UTC
+function tfParse(id) {
+  const m = /^([1-9]\d{0,3})([mhdwM])$/.exec(String(id == null ? '' : id)); if (!m) return null;
+  let n = +m[1], u = m[2];
+  if (n > TF_MAX[u]) return null;
+  // one name per length: 60m is 1h, 24h is 1D, 7D is 1W
+  if (u === 'm' && n % 60 === 0) { n /= 60; u = 'h'; }
+  if (u === 'h' && n % 24 === 0) { n /= 24; u = 'd'; }
+  if (u === 'd' && n % 7 === 0) { n /= 7; u = 'w'; }
+  return { n, u, id: n + u };
+}
+const tfValid = id => { const p = tfParse(id); return !!p && p.id === id; };
+const tfNative = id => TF_NATIVE.includes(id);
+const TF_CACHE = {};
+function tfOf(id) {
+  if (TF_CACHE[id]) return TF_CACHE[id];
+  const p = tfParse(id);
+  if (!p || p.id !== id) return tfOf('30m');
+  const t = { id, label: p.n + (p.u === 'd' ? 'D' : p.u === 'w' ? 'W' : p.u), sec: p.n * TF_UNIT[p.u], n: p.n, u: p.u };
+  if (tfNative(id)) t.base = id;
+  else if (p.u === 'M' || p.u === 'd') t.base = '1d';
+  else if (p.u === 'w') t.base = '1w';
+  else { const min = t.sec / 60; t.base = [['4h', 240], ['1h', 60], ['30m', 30], ['15m', 15], ['5m', 5], ['1m', 1]].find(([, k]) => min % k === 0)[0]; }
+  return (TF_CACHE[id] = t);
+}
+const tfBase = id => tfOf(id).base;
+function tfName(id) { const t = tfOf(id); return `${t.n} ${TF_WORD[t.u][t.n === 1 ? 0 : 1]}`; }
+function tfBucket(tf, t) {   // start of the bar that holds the moment t
+  const f = tfOf(tf);
+  if (f.u === 'M') { const d = new Date(t * 1000), k = d.getUTCFullYear() * 12 + d.getUTCMonth(), b = Math.floor(k / f.n) * f.n; return Date.UTC(Math.floor(b / 12), b % 12, 1) / 1000; }
+  if (f.u === 'w') return Math.floor((t - WEEK_OFF) / f.sec) * f.sec + WEEK_OFF;
+  return Math.floor(t / f.sec) * f.sec;
+}
+function tfNext(tf, t) {   // start of the bar after the one that starts at t
+  const f = tfOf(tf);
+  if (f.u === 'M') { const d = new Date(t * 1000); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + f.n, 1) / 1000; }
+  return t + f.sec;
+}
+function tfResample(bars, tf, cls) {
+  const f = tfOf(tf), out = [];
+  const session = cls === 'stock' && f.sec < DAY;   // US stocks: intraday bars count from each day's first bar
+  let cur = null, day = null, open0 = 0;
+  for (const b of bars) {
+    let k;
+    if (session) { const dk = Math.floor(b.time / DAY); if (dk !== day) { day = dk; open0 = b.time; } k = open0 + Math.floor((b.time - open0) / f.sec) * f.sec; }
+    else k = tfBucket(tf, b.time);
+    if (!cur || k !== cur.time) { if (cur) out.push(cur); cur = { time: k, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume || 0 }; }
+    else { if (b.high > cur.high) cur.high = b.high; if (b.low < cur.low) cur.low = b.low; cur.close = b.close; cur.volume += b.volume || 0; }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+const TF_TAIL = new Map();   // "symbol|timeframe" -> the source's candles inside the newest bar
+async function tfKlines(feed, id, tf, before) {
+  if (tfNative(tf)) return feed.klines(id, tf, before);
+  const f = tfOf(tf), base = f.base, k = Math.max(1, Math.round(f.sec / tfOf(base).sec));
+  // enough of the source's candles for about 500 bars; one page from the sources with small allowances
+  const pages = feed === TDFeed || feed === Kraken ? 1 : clamp(Math.ceil((k * 500) / 1000), 1, 4);
+  let bars = await feed.klines(id, base, before);
+  for (let p = 1; p < pages && bars.length; p++) {
+    let older; try { older = await feed.klines(id, base, bars[0].time); } catch (e) { break; }
+    const add = (older || []).filter(b => b.time < bars[0].time); if (!add.length) break;
+    bars = add.concat(bars);
+  }
+  if (before) bars = bars.filter(b => b.time < before);
+  if (!bars.length) return [];
+  let out = tfResample(bars, tf, classOf(id));
+  if (out.length > 1 && out[0].time < bars[0].time) out.shift();   // the first bar would be cut short by where the history starts
+  if (!before && out.length) { const lt = out[out.length - 1].time; TF_TAIL.set(id + '|' + tf, bars.filter(b => b.time >= lt)); }
+  return out;
+}
+function onFeedBar(b) {   // a candle at the price source's own timeframe, for the main chart
+  if (tfNative(S.tf)) { onBar(b); return; }
+  const arr = R.on ? R.full : (S.raw || S.bars), n = arr.length; if (!n) return;
+  const last = arr[n - 1], f = tfOf(S.tf), key = S.symbol + '|' + S.tf;
+  if (b.time < last.time) return;
+  let start;
+  if (b.time < tfNext(S.tf, last.time)) start = last.time;
+  else start = classOf(S.symbol) === 'stock' && f.sec < DAY ? last.time + Math.floor((b.time - last.time) / f.sec) * f.sec : tfBucket(S.tf, b.time);
+  let tail = (TF_TAIL.get(key) || []).filter(x => x.time >= start && x.time < tfNext(S.tf, start));
+  if (!tail.length && start === last.time) {   // nothing kept for this bar: fold the candle into it
+    if (b.time === start) TF_TAIL.set(key, [b]); else TF_TAIL.delete(key);
+    onBar({ time: last.time, open: last.open, high: Math.max(last.high, b.high), low: Math.min(last.low, b.low), close: b.close, volume: b.time === start ? b.volume || 0 : last.volume });
+    return;
+  }
+  const j = tail.findIndex(x => x.time === b.time);
+  if (j >= 0) tail[j] = b; else { tail.push(b); tail.sort((x, y) => x.time - y.time); }
+  TF_TAIL.set(key, tail);
+  let hi = -Infinity, lo = Infinity, vol = 0;
+  for (const x of tail) { if (x.high > hi) hi = x.high; if (x.low < lo) lo = x.low; vol += x.volume || 0; }
+  onBar({ time: start, open: tail[0].open, high: hi, low: lo, close: tail[tail.length - 1].close, volume: vol });
+}
+
+/* ----- the timeframe bar: favourites as buttons, everything else in a menu ----- */
+function tfFavs() { const v = store.get('tffav', null); return Array.isArray(v) ? Array.from(new Set(v.filter(tfValid))) : TF_NATIVE.slice(); }
+function tfCustoms() { const v = store.get('tfcustom', []); return Array.isArray(v) ? Array.from(new Set(v.filter(id => tfValid(id) && !TFS.some(t => t.id === id)))) : []; }
+const tfSorted = ids => ids.slice().sort((a, b) => tfOf(a).sec - tfOf(b).sec);
+function tfAll() { return tfSorted(Array.from(new Set(TFS.map(t => t.id).concat(tfCustoms())))); }
+function tfSegIds() { const f = tfFavs(); return tfSorted(f.includes(S.tf) ? f : f.concat([S.tf])); }
+function renderTf() {
+  const seg = $('#tfSeg'); seg.replaceChildren();
+  for (const id of tfSegIds()) { const b = el('button', 'btn', tfOf(id).label); b.type = 'button'; b.dataset.tf = id; b.title = `${tfName(id)} bars`; b.onclick = () => setTf(id); seg.append(b); }
+  const more = el('button', 'btn tf-more'); more.id = 'tfMore'; more.type = 'button'; more.title = 'More timeframes'; more.setAttribute('aria-label', 'More timeframes'); more.setAttribute('aria-haspopup', 'menu');
+  more.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+  more.onclick = e => { e.stopPropagation(); const m = $('#tfMenu'); if (!m.hidden) { m.hidden = true; return; } tfMenu(); };
+  seg.append(more);
+  renderTfState();
+}
+function renderTfState() {
+  const have = [...document.querySelectorAll('#tfSeg .btn[data-tf]')].map(b => b.dataset.tf);
+  if (have.join() !== tfSegIds().join()) { renderTf(); return; }
+  document.querySelectorAll('#tfSeg .btn[data-tf]').forEach(b => { const on = b.dataset.tf === S.tf; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+}
+function tfSetFav(id, on) {
+  let f = tfFavs(); f = on ? Array.from(new Set(f.concat([id]))) : f.filter(x => x !== id);
+  store.set('tffav', tfSorted(f)); renderTf();
+}
+function tfAddCustom(id) {
+  if (!tfValid(id)) return false;
+  if (!TFS.some(t => t.id === id)) store.set('tfcustom', tfSorted(Array.from(new Set(tfCustoms().concat([id])))).slice(-30));
+  return true;
+}
+function tfMenu() {
+  const m = $('#tfMenu'); m.replaceChildren();
+  m.append(el('div', 'tp-menu-h', 'Timeframe'));
+  const favs = tfFavs(), customs = tfCustoms();
+  const groups = [['Minutes', id => tfOf(id).u === 'm'], ['Hours', id => tfOf(id).u === 'h'], ['Days, weeks and months', id => 'dwM'.includes(tfOf(id).u)]];
+  for (const [name, test] of groups) {
+    const ids = tfAll().filter(test); if (!ids.length) continue;
+    m.append(el('div', 'tf-gh', name));
+    for (const id of ids) {
+      const row = el('div', 'tf-row' + (id === S.tf ? ' on' : ''));
+      const b = el('button', 'tf-li', tfName(id)); b.type = 'button'; b.dataset.tf = id; b.setAttribute('role', 'menuitemradio'); b.setAttribute('aria-checked', String(id === S.tf));
+      b.onclick = () => { m.hidden = true; setTf(id); };
+      const fav = favs.includes(id), star = el('button', 'icon-btn tf-star' + (fav ? ' on' : '')); star.type = 'button';
+      star.title = fav ? 'Remove from the timeframe bar' : 'Add to the timeframe bar'; star.setAttribute('aria-label', `${tfName(id)}: ${star.title.toLowerCase()}`); star.setAttribute('aria-pressed', String(fav));
+      star.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>';
+      star.onclick = e => { e.stopPropagation(); tfSetFav(id, !fav); tfMenu(); };
+      row.append(b, star);
+      if (customs.includes(id)) {
+        const x = el('button', 'icon-btn tf-del'); x.type = 'button'; x.title = 'Remove this timeframe'; x.setAttribute('aria-label', `Remove ${tfName(id)}`);
+        x.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+        x.onclick = e => { e.stopPropagation(); store.set('tfcustom', tfCustoms().filter(c => c !== id)); if (favs.includes(id)) tfSetFav(id, false); tfMenu(); };
+        row.append(x);
+      }
+      m.append(row);
+    }
+  }
+  // a timeframe of your own
+  const form = el('form', 'tf-add'); form.noValidate = true;
+  const num = el('input'); num.id = 'tfNum'; num.type = 'number'; num.min = '1'; num.max = '1440'; num.step = '1'; num.placeholder = '45'; num.setAttribute('aria-label', 'Length');
+  const unit = el('select'); unit.id = 'tfUnit'; unit.setAttribute('aria-label', 'Unit');
+  [['m', 'minutes'], ['h', 'hours'], ['d', 'days'], ['w', 'weeks'], ['M', 'months']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; unit.append(o); });
+  const uw = el('span', 'selwrap'); uw.append(unit);
+  const add = el('button', 'primary', 'Add'); add.type = 'submit';
+  const msg = el('div', 'tf-msg'); msg.id = 'tfMsg';
+  form.append(el('div', 'tf-gh', 'Your own timeframe'), el('div', 'tf-addrow'), msg);
+  form.querySelector('.tf-addrow').append(num, uw, add);
+  form.onsubmit = e => {
+    e.preventDefault();
+    const n = Math.floor(+num.value), u = unit.value;
+    if (!(n >= 1) || n > TF_MAX[u]) { msg.textContent = `Pick a number from 1 to ${TF_MAX[u]}.`; num.focus(); return; }
+    const p = tfParse(n + u); if (!p) { msg.textContent = "That timeframe isn't available."; return; }
+    tfAddCustom(p.id); m.hidden = true; setTf(p.id);
+  };
+  m.append(form);
+  m.append(el('div', 'tp-menu-note', 'Star a timeframe to keep it on the bar. Timeframes the price source doesn\'t offer are built from its shorter candles.'));
+  m.hidden = false;
+  const r = $('#tfMore').getBoundingClientRect(), w = m.offsetWidth;
+  m.style.left = clamp(r.left - w + r.width, 8, innerWidth - w - 8) + 'px'; m.style.top = (r.bottom + 6) + 'px';
+  m.style.maxHeight = Math.max(240, innerHeight - r.bottom - 20) + 'px';
+}
+document.addEventListener('pointerdown', e => { const m = $('#tfMenu'); if (m && !m.hidden && !m.contains(e.target) && !(e.target.closest && e.target.closest('#tfMore'))) m.hidden = true; }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#tfMenu')) $('#tfMenu').hidden = true; });
+TFS.forEach(t => Object.assign(t, tfOf(t.id)));
+/* ---------- chart types: more time-based styles, and Renko, Line break, Kagi and Point & figure ----------
+   The four "brick" types ignore time: a new brick, line, segment or column only appears when the price moves far
+   enough. For those, S.raw keeps the real candles from the price source and S.bars holds the bricks, so the
+   indicators, the legend and the crosshair all work on what is drawn. */
+const CHART_TYPES = [
+  ['Bars', [['bars', 'Bars'], ['candles', 'Candles'], ['hollow', 'Hollow candles'], ['heikin', 'Heikin Ashi'], ['columns', 'Columns']]],
+  ['Lines', [['line', 'Line'], ['markers', 'Line with markers'], ['step', 'Step line'], ['area', 'Area'], ['baseline', 'Baseline']]],
+  ['Price only (no time)', [['renko', 'Renko'], ['linebreak', 'Line break'], ['kagi', 'Kagi'], ['pnf', 'Point & figure']]],
+];
+const TYPE_IDS = CHART_TYPES.flatMap(g => g[1].map(x => x[0]));
+const typeName = t => (CHART_TYPES.flatMap(g => g[1]).find(x => x[0] === t) || [, t])[1];
+const BRICK_TYPES = ['renko', 'linebreak', 'kagi', 'pnf'];
+const isBrick = t => BRICK_TYPES.includes(t);
+const VALUE_TYPES = ['line', 'area', 'step', 'markers', 'baseline', 'columns', 'kagi'];
+const isValueType = t => VALUE_TYPES.includes(t);
+function ctSet() {
+  const v = store.get('ctset', {}) || {};
+  return { box: v.box > 0 ? +v.box : 0, rev: [1, 2, 3, 4, 5].includes(v.rev) ? v.rev : 3, lines: [2, 3, 4, 5].includes(v.lines) ? v.lines : 3 };
+}
+function brickBox(raw) {   // the brick size: set by hand, or the average true range of the last 14 candles
+  const cs = ctSet(); if (cs.box > 0) return cs.box;
+  const n = raw.length; if (!n) return 1;
+  let atr = 0, k = 0;
+  for (let i = Math.max(1, n - 14); i < n; i++) { const b = raw[i], pc = raw[i - 1].close; atr += Math.max(b.high - b.low, Math.abs(b.high - pc), Math.abs(b.low - pc)); k++; }
+  atr = k ? atr / k : raw[n - 1].close * 0.005;
+  if (!(atr > 0)) atr = raw[n - 1].close * 0.005 || 1;
+  const step = Math.pow(10, -Math.min(8, S.prec));
+  return Math.max(step, Math.round(atr / step) * step);
+}
+function brickPusher(out) {   // bricks need their own times: the candle that made each one, plus a second per extra brick
+  let lastT = -Infinity, vol = 0;
+  return {
+    add(v) { vol += v || 0; },
+    push(t, o, c, extra) { const time = Math.max(t, lastT + 1); lastT = time; out.push(Object.assign({ time, open: o, high: Math.max(o, c), low: Math.min(o, c), close: c, volume: vol }, extra || {})); vol = 0; },
+    flush() { if (out.length) out[out.length - 1].volume += vol; vol = 0; },
+  };
+}
+function renkoOf(raw, box) {
+  const out = []; if (!raw.length) return out;
+  const P = brickPusher(out);
+  let top = Math.round(raw[0].close / box) * box, bot = top, dir = 0;
+  for (const b of raw) {
+    P.add(b.volume); const p = b.close;
+    for (let guard = 0; guard < 5000; guard++) {
+      if (dir >= 0 && p >= top + box) { P.push(b.time, top, top + box); bot = top; top += box; dir = 1; }
+      else if (dir <= 0 && p <= bot - box) { P.push(b.time, bot, bot - box); top = bot; bot -= box; dir = -1; }
+      else if (dir === 1 && p <= bot - box) { P.push(b.time, bot, bot - box); top = bot; bot -= box; dir = -1; }
+      else if (dir === -1 && p >= top + box) { P.push(b.time, top, top + box); bot = top; top += box; dir = 1; }
+      else break;
+    }
+  }
+  P.flush();
+  return out;
+}
+function lineBreakOf(raw, n) {
+  const out = []; if (!raw.length) return out;
+  const P = brickPusher(out);
+  P.add(raw[0].volume); P.push(raw[0].time, raw[0].open, raw[0].close === raw[0].open ? raw[0].close + 1e-12 : raw[0].close);
+  for (let i = 1; i < raw.length; i++) {
+    const b = raw[i], p = b.close, last = out[out.length - 1], up = last.close > last.open;
+    P.add(b.volume);
+    const recent = out.slice(-n), hi = Math.max(...recent.map(x => x.high)), lo = Math.min(...recent.map(x => x.low));
+    if (up) { if (p > last.close) P.push(b.time, last.close, p); else if (p < lo) P.push(b.time, last.open, p); }
+    else { if (p < last.close) P.push(b.time, last.close, p); else if (p > hi) P.push(b.time, last.open, p); }
+  }
+  P.flush();
+  return out;
+}
+function kagiOf(raw, rev) {   // turning points; thick (yang) above the last shoulder, thin (yin) below the last waist
+  const out = []; if (!raw.length) return out;
+  const P = brickPusher(out);
+  let dir = 0, ext = raw[0].close, shoulder = null, waist = null, yang = true;
+  P.add(raw[0].volume); P.push(raw[0].time, ext, ext, { yang });
+  const extend = (b, p) => { const l = out[out.length - 1]; ext = p; l.close = p; l.high = Math.max(l.open, p); l.low = Math.min(l.open, p); l.time = Math.max(l.time, b.time); };
+  for (let i = 1; i < raw.length; i++) {
+    const b = raw[i], p = b.close; P.add(b.volume);
+    if (dir === 0) {
+      if (p >= ext + rev || p <= ext - rev) { dir = p > ext ? 1 : -1; P.push(b.time, ext, p, { yang }); ext = p; }
+      else continue;
+    } else if (dir === 1) {
+      if (p > ext) extend(b, p);
+      else if (p <= ext - rev) { shoulder = ext; dir = -1; P.push(b.time, ext, p, { yang }); ext = p; }
+    } else {
+      if (p < ext) extend(b, p);
+      else if (p >= ext + rev) { waist = ext; dir = 1; P.push(b.time, ext, p, { yang }); ext = p; }
+    }
+    if (dir === 1 && shoulder != null && ext > shoulder) yang = true;
+    if (dir === -1 && waist != null && ext < waist) yang = false;
+    out[out.length - 1].yang = yang;
+  }
+  P.flush();
+  return out;
+}
+function pnfOf(raw, box, rev) {   // columns of X (rising) and O (falling) boxes
+  const out = []; if (!raw.length) return out;
+  const P = brickPusher(out);
+  let dir = 0, hi = Math.floor(raw[0].close / box) * box, lo = hi;
+  const set = () => { const l = out[out.length - 1]; l.open = dir === 1 ? lo : hi; l.close = dir === 1 ? hi : lo; l.high = hi; l.low = lo; l.x = dir === 1; };
+  for (const b of raw) {
+    const p = b.close; P.add(b.volume);
+    if (dir === 0) {
+      if (p >= hi + box) { dir = 1; hi += Math.floor((p - hi) / box) * box; P.push(b.time, lo, hi, { x: true }); }
+      else if (p <= lo - box) { dir = -1; lo -= Math.floor((lo - p) / box) * box; P.push(b.time, hi, lo, { x: false }); }
+    } else if (dir === 1) {
+      if (p >= hi + box) { hi += Math.floor((p - hi) / box) * box; set(); }
+      else if (p <= hi - rev * box) { dir = -1; const top = hi - box; lo = hi - Math.floor((hi - p) / box) * box; hi = top; P.push(b.time, hi, lo, { x: false }); }
+    } else {
+      if (p <= lo - box) { lo -= Math.floor((lo - p) / box) * box; set(); }
+      else if (p >= lo + rev * box) { dir = 1; const bottom = lo + box; hi = lo + Math.floor((p - lo) / box) * box; lo = bottom; P.push(b.time, lo, hi, { x: true }); }
+    }
+  }
+  P.flush();
+  S.pnfBox = box;
+  return out;
+}
+function bricksOf(raw) {   // the box size is worked out once per load (see setRaw), so live prices don't change it
+  if (!raw || !raw.length) return [];
+  const cs = ctSet();
+  if (!(S.brickBox > 0)) S.brickBox = brickBox(raw);
+  const box = S.brickBox;
+  switch (S.type) {
+    case 'renko': return renkoOf(raw, box);
+    case 'linebreak': return lineBreakOf(raw, cs.lines);
+    case 'kagi': return kagiOf(raw, box);
+    case 'pnf': return pnfOf(raw, box, cs.rev);
+    default: return raw;
+  }
+}
+function setRaw(bars) {   // a fresh set of candles from the source
+  if (isBrick(S.type)) { S.raw = bars; S.brickBox = brickBox(bars); S.bars = bricksOf(bars); } else { S.raw = null; S.bars = bars; }
+}
+function rawLast() { const a = S.raw || S.bars; return a[a.length - 1]; }
+function rebrick() {   // the real candles changed: work the bricks out again and redraw only if they changed
+  const old = S.bars, nb = bricksOf(S.raw);
+  const lo = old[old.length - 1], ln = nb[nb.length - 1];
+  S.bars = nb;
+  if (!S.main || !nb.length) return;
+  const same = old.length === nb.length && lo && ln && lo.time === ln.time && lo.open === ln.open && lo.close === ln.close && lo.high === ln.high && lo.low === ln.low;
+  if (same) return;
+  if (old.length === nb.length && old.length > 1 && old[old.length - 2].time === nb[nb.length - 2].time && old[old.length - 2].close === nb[nb.length - 2].close) {
+    S.main.update(mainPoint(nb.length - 1)); for (const rt of S.rts) updateRtLast(rt);
+  } else { setMainData(); S.rts.forEach(setRtData); }
+  if (!S.cross) updateLegend();
+  markDirty();
+}
+function rawMerge(b) {   // a live candle while a brick type is shown
+  const a = S.raw, n = a.length; if (!n) return;
+  const last = a[n - 1];
+  if (b.time < last.time) return;
+  if (b.time === last.time) a[n - 1] = b; else a.push(b);
+  rebrick();
+}
+function setChartType(t) {
+  if (!TYPE_IDS.includes(t) || t === S.type) return;
+  const was = isBrick(S.type), now = isBrick(t);
+  if (now && (R.on || R.picking)) rpExit();
+  S.type = t; store.set('type', t);
+  if ($('#typeSel').value !== t) $('#typeSel').value = t;
+  if (was && !now) { S.bars = S.raw || S.bars; S.raw = null; }
+  else if (now) { S.raw = was ? S.raw : S.bars; S.brickBox = brickBox(S.raw); S.bars = bricksOf(S.raw); }
+  try { chart.clearCrosshairPosition(); } catch (e) { /* older library */ }
+  createMain(); S.rts.forEach(setRtData);
+  if (was !== now && S.bars.length) chart.timeScale().setVisibleLogicalRange({ from: Math.max(-2, S.bars.length - 120), to: S.bars.length + 6 });
+  S.cross = null; updateLegend(); renderCtGear(); markDirty();
+}
+function renderCtGear() { const g = $('#ctGear'); if (g) g.hidden = !isBrick(S.type); }
+function ctMenu() {
+  const m = $('#ctMenu'); m.replaceChildren();
+  const cs = ctSet();
+  m.append(el('div', 'tp-menu-h', `${typeName(S.type)} settings`));
+  const f = el('form', 'ct-form'); f.noValidate = true;
+  const row = (lbl, input, note) => { const l = el('label', 'ct-row'); l.append(el('span', null, lbl), input); f.append(l); if (note) f.append(el('div', 'ct-note', note)); };
+  if (S.type !== 'linebreak') {
+    const box = el('input'); box.id = 'ctBox'; box.type = 'number'; box.min = '0'; box.step = 'any'; box.placeholder = 'Auto';
+    box.value = cs.box > 0 ? String(cs.box) : '';
+    row(S.type === 'kagi' ? 'Reversal amount' : 'Box size', box, `Leave empty for automatic: the average true range of the last 14 candles (now ${fmtP(S.brickBox || 0)}).`);
+  }
+  if (S.type === 'pnf') { const r = el('select'); r.id = 'ctRev'; [1, 2, 3, 4, 5].forEach(k => { const o = el('option', null, `${k} box${k > 1 ? 'es' : ''}`); o.value = String(k); r.append(o); }); r.value = String(cs.rev); const w = el('span', 'selwrap'); w.append(r); row('Reversal', w); }
+  if (S.type === 'linebreak') { const r = el('select'); r.id = 'ctLines'; [2, 3, 4, 5].forEach(k => { const o = el('option', null, `${k} lines`); o.value = String(k); r.append(o); }); r.value = String(cs.lines); const w = el('span', 'selwrap'); w.append(r); row('Lines to break', w); }
+  const go = el('button', 'primary', 'Apply'); go.type = 'submit';
+  const acts = el('div', 'ct-acts'); acts.append(go); f.append(acts);
+  f.onsubmit = e => {
+    e.preventDefault();
+    const v = Object.assign({}, store.get('ctset', {}) || {});
+    if ($('#ctBox')) { const x = +$('#ctBox').value; v.box = x > 0 ? x : 0; }
+    if ($('#ctRev')) v.rev = +$('#ctRev').value;
+    if ($('#ctLines')) v.lines = +$('#ctLines').value;
+    store.set('ctset', v); m.hidden = true;
+    if (S.raw) { S.brickBox = brickBox(S.raw); S.bars = bricksOf(S.raw); setMainData(); S.rts.forEach(setRtData); updateLegend(); markDirty(); }
+  };
+  m.append(f);
+  m.hidden = false;
+  const r = $('#ctGear').getBoundingClientRect(), w = m.offsetWidth;
+  m.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px'; m.style.top = (r.bottom + 6) + 'px';
+}
+function drawPnf(m, W, H) {   // the X and O boxes over the (invisible) columns
+  if (S.type !== 'pnf' || !S.bars.length || !S.pnfBox) return;
+  const box = S.pnfBox, half = Math.max(1.5, Math.min(m.sp * 0.38, 14));
+  octx.lineWidth = Math.max(1, Math.min(2, m.sp / 8));
+  for (const b of S.bars) {
+    const x = m.x(b.time); if (x == null || x < -20 || x > W + 20) continue;
+    const yTop = m.y(b.high), yBot = m.y(b.low); if (yTop == null || yBot == null) continue;
+    const boxes = Math.max(1, Math.round((b.high - b.low) / box)), bh = Math.abs(yBot - yTop) / boxes;
+    const col = b.x ? C.up : C.down;
+    octx.strokeStyle = col; octx.fillStyle = alpha(col, 0.25);
+    if (bh < 4) { octx.fillRect(x - half, Math.min(yTop, yBot), half * 2, Math.max(1, Math.abs(yBot - yTop))); continue; }
+    const r = Math.max(1, Math.min(half, bh / 2 - 1));
+    for (let k = 0; k < boxes; k++) {
+      const cy = Math.min(yTop, yBot) + bh * (k + 0.5);
+      if (cy < -bh || cy > H + bh) continue;
+      octx.beginPath();
+      if (b.x) { octx.moveTo(x - r, cy - r); octx.lineTo(x + r, cy + r); octx.moveTo(x + r, cy - r); octx.lineTo(x - r, cy + r); }
+      else octx.ellipse(x, cy, r, r, 0, 0, Math.PI * 2);
+      octx.stroke();
+    }
+  }
+}
+document.addEventListener('pointerdown', e => { const m = $('#ctMenu'); if (m && !m.hidden && !m.contains(e.target) && !(e.target.closest && e.target.closest('#ctGear'))) m.hidden = true; }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#ctMenu')) $('#ctMenu').hidden = true; });
 const COINS = { BTC: 'Bitcoin', ETH: 'Ethereum', SOL: 'Solana', BNB: 'BNB', XRP: 'XRP', DOGE: 'Dogecoin', ADA: 'Cardano', LINK: 'Chainlink', AVAX: 'Avalanche', LTC: 'Litecoin', DOT: 'Polkadot', TRX: 'TRON', TON: 'Toncoin', SUI: 'Sui', NEAR: 'NEAR Protocol', ATOM: 'Cosmos', UNI: 'Uniswap', APT: 'Aptos', ARB: 'Arbitrum', OP: 'Optimism', SHIB: 'Shiba Inu', PEPE: 'Pepe', BCH: 'Bitcoin Cash', ETC: 'Ethereum Classic', FIL: 'Filecoin', AAVE: 'Aave', INJ: 'Injective', HBAR: 'Hedera', XLM: 'Stellar', ICP: 'Internet Computer', SEI: 'Sei', TIA: 'Celestia', RENDER: 'Render', FET: 'Fetch.ai', WIF: 'dogwifhat', ENA: 'Ethena', TAO: 'Bittensor', PAXG: 'PAX Gold', WLD: 'Worldcoin', ALGO: 'Algorand', VET: 'VeChain', SAND: 'The Sandbox', CRV: 'Curve', LDO: 'Lido DAO', JUP: 'Jupiter', BONK: 'Bonk', FLOKI: 'Floki', USDC: 'USD Coin', FDUSD: 'First Digital USD' };
 const QUOTES = ['USDT', 'USDC', 'FDUSD', 'TUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'BRL', 'JPY', 'DAI'];
 const QUOTE_NAMES = { USDT: 'TetherUS', USDC: 'USD Coin', FDUSD: 'First Digital USD', BTC: 'Bitcoin', ETH: 'Ethereum', BNB: 'BNB', EUR: 'Euro', TRY: 'Turkish lira', BRL: 'Brazilian real', JPY: 'Japanese yen', TUSD: 'TrueUSD', DAI: 'Dai' };
@@ -469,8 +866,8 @@ const S = {
   token: 0, older: false, noMore: false,
   undo: {},
 };
-if (!TFS.some(t => t.id === S.tf)) S.tf = DEFAULT_TF;
-if (!['candles', 'bars', 'heikin', 'line', 'area'].includes(S.type)) S.type = 'candles';
+if (!tfValid(S.tf)) S.tf = DEFAULT_TF;
+if (!TYPE_IDS.includes(S.type)) S.type = 'candles';
 if (![0, 1, 2].includes(S.scaleMode)) S.scaleMode = 0;
 if (!Array.isArray(S.watch)) S.watch = DEFAULT_WATCH.slice();
 S.watch = Array.from(new Set(S.watch.map(migrateId)));
@@ -485,7 +882,7 @@ if (store.get('ver', 1) < 2) {   // one-time upgrade for watchlists saved before
   const s = parseSymbol((q && (q.get('s') || q.get('symbol'))) || (/^[A-Za-z0-9._-]{1,20}$/.test(h) ? h : ''));
   if (s) S.symbol = s;
   const tf = q && q.get('tf');
-  if (tf && TFS.some(t => t.id === tf)) S.tf = tf;
+  if (tf && tfValid(tf)) S.tf = tf;
 })();
 if (!Array.isArray(S.alerts)) S.alerts = [];
 S.alerts.forEach(a => { a.sym = migrateId(a.sym); });
@@ -528,6 +925,13 @@ function mainStyle() {
   const pf = pricePF(S.prec);
   switch (S.type) {
     case 'line': return [LineSeries, { color: C.draw, lineWidth: 2, priceFormat: pf }];
+    case 'markers': return [LineSeries, { color: C.draw, lineWidth: 2, priceFormat: pf, pointMarkersVisible: true, pointMarkersRadius: 2.5 }];
+    case 'step': return [LineSeries, { color: C.draw, lineWidth: 2, priceFormat: pf, lineType: 1 }];
+    case 'kagi': return [LineSeries, { color: C.up, lineWidth: 2, priceFormat: pf, lineType: 1 }];
+    case 'columns': return [HistogramSeries, { color: C.up, priceFormat: pf }];
+    case 'baseline': return [BaselineSeries, { baseValue: { type: 'price', price: 0 }, lineWidth: 2, priceFormat: pf, topLineColor: C.up, topFillColor1: alpha(C.up, 0.28), topFillColor2: alpha(C.up, 0.04), bottomLineColor: C.down, bottomFillColor1: alpha(C.down, 0.04), bottomFillColor2: alpha(C.down, 0.28) }];
+    case 'renko': case 'linebreak': return [CandlestickSeries, { upColor: C.up, downColor: C.down, borderUpColor: C.up, borderDownColor: C.down, wickVisible: false, priceFormat: pf }];
+    case 'pnf': return [CandlestickSeries, { upColor: 'rgba(0,0,0,0)', downColor: 'rgba(0,0,0,0)', borderVisible: false, wickVisible: false, lastValueVisible: false, priceLineVisible: false, priceFormat: pf }];
     case 'area': return [AreaSeries, { lineColor: C.draw, topColor: alpha(C.draw, 0.28), bottomColor: alpha(C.draw, 0.02), lineWidth: 2, priceFormat: pf }];
     case 'bars': return [BarSeries, { upColor: C.up, downColor: C.down, thinBars: false, priceFormat: pf }];
     default: return [CandlestickSeries, { upColor: C.up, downColor: C.down, borderUpColor: C.up, borderDownColor: C.down, wickUpColor: C.up, wickDownColor: C.down, priceFormat: pf }];
@@ -555,12 +959,24 @@ function haAt(i) {
 }
 function computeHA() { S.ha = new Array(S.bars.length); for (let i = 0; i < S.bars.length; i++) haAt(i); }
 function mainPoint(i) {
-  const b = S.bars[i];
-  if (S.type === 'line' || S.type === 'area') return { time: b.time, value: b.close };
-  if (S.type === 'heikin') return S.ha[i];
+  const b = S.bars[i]; if (!b) return null;
+  const t = S.type, pc = i > 0 ? S.bars[i - 1].close : b.open;
+  if (t === 'heikin') return S.ha[i];
+  if (t === 'kagi') return { time: b.time, value: b.close, color: b.yang ? C.up : C.down };
+  if (t === 'columns') return { time: b.time, value: b.close, color: alpha(b.close >= pc ? C.up : C.down, 0.7) };
+  if (isValueType(t)) return { time: b.time, value: b.close };
+  if (t === 'hollow') { const col = b.close >= pc ? C.up : C.down; return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close, color: b.close >= b.open ? 'rgba(0,0,0,0)' : col, borderColor: col, wickColor: col }; }
   return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
 }
-function setMainData() { if (S.type === 'heikin') computeHA(); S.main.setData(S.bars.map((_, i) => mainPoint(i))); }
+function setMainData() {
+  if (S.type === 'heikin') computeHA();
+  if ((S.type === 'baseline' || S.type === 'columns') && S.bars.length) {   // the baseline sits mid-range; columns rise from just under the lowest close
+    let lo = Infinity, hi = -Infinity; for (const b of S.bars.slice(-500)) { if (b.close < lo) lo = b.close; if (b.close > hi) hi = b.close; }
+    if (S.type === 'baseline') S.main.applyOptions({ baseValue: { type: 'price', price: (lo + hi) / 2 } });
+    else S.main.applyOptions({ base: lo - (hi - lo) * 0.08 });
+  }
+  S.main.setData(S.bars.map((_, i) => mainPoint(i)));
+}
 
 /* ---------- indicators ---------- */
 const IND = {
@@ -1465,6 +1881,7 @@ function drawOverlay(m) {
   const W = ps.width, H = ps.height;
   octx.save(); octx.beginPath(); octx.rect(0, 0, W, H); octx.clip();
   if (S.idea && S.idea.symbol === S.symbol) drawIdeaLayer(m, W, H);
+  drawPnf(m, W, H);
   for (const d of curDrawings()) drawShape(d, m, W, H, d.id === S.selected, false);
   if (S.draft && S.draft.type !== 'measure') drawShape(S.draft, m, W, H, false, true);
   const meas = S.draft && S.draft.type === 'measure' ? S.draft : S.measure;
@@ -1480,10 +1897,10 @@ function drawOverlay(m) {
 }
 // Time left in the live bar, shown right under the live price on the price scale (like TradingView).
 function barEnd() {
-  if (!S.ready || R.on || !S.bars.length || srcOf(S.symbol) === 'demo') return null;
+  if (!S.ready || R.on || !S.bars.length || srcOf(S.symbol) === 'demo' || isBrick(S.type)) return null;
   const cls = classOf(S.symbol), now = Date.now() / 1000;
   if (!openNow(S.symbol) && !isOpenAt(cls, now)) return null;
-  let end = S.bars[S.bars.length - 1].time + tfOf(S.tf).sec;
+  let end = tfNext(S.tf, S.bars[S.bars.length - 1].time);
   if (cls === 'stock' && tfOf(S.tf).sec < DAY) { const p = ny(now); end = Math.min(end, sessOpen(p.y, p.m, p.d) + 23400); }
   return end;
 }
@@ -1497,7 +1914,7 @@ function drawBarTimer(m, W, H) {
   const pt = mainPoint(S.bars.length - 1); if (!pt) return;
   const price = pt.close != null ? pt.close : pt.value, y = m.y(price);
   if (y == null || y < 0 || y > H) return;
-  const col = S.type === 'line' || S.type === 'area' ? C.draw : pt.close >= pt.open ? C.up : C.down;
+  const col = isValueType(S.type) ? (S.type === 'kagi' ? pt.color : C.draw) : pt.close >= pt.open ? C.up : C.down;
   octx.font = `11px ${FONT_DATA}`;
   // same width as the chart's own price label just above, so the two read as one tag
   const x = W, w = TIMER.left + 1 + octx.measureText(price.toFixed(S.prec)).width + TIMER.right;
@@ -1743,7 +2160,7 @@ function notify(title, body) {
   try { if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification(title, { body, icon: 'icon-192.png' }); }
   catch (e) { /* some phones only allow notifications from installed apps */ }
 }
-function lastPrice(id) { const t = S.tickers[id]; if (t) return t.last; const a = R.on ? R.full : S.bars; if (id === S.symbol && a.length) return a[a.length - 1].close; return null; }
+function lastPrice(id) { const t = S.tickers[id]; if (t) return t.last; const a = R.on ? R.full : (S.raw || S.bars); if (id === S.symbol && a.length) return a[a.length - 1].close; return null; }
 function createAlert(id, price) {
   const last = lastPrice(id);
   if (last == null || !isFinite(price) || price <= 0) { toast('Prices are still loading. Try again in a moment.'); return; }
@@ -2265,20 +2682,21 @@ function onTdTick(m) {
   if (id === S.symbol && S.bars.length && srcOf(id) === 'td') tickBar(price, +m.timestamp || Date.now() / 1000, dv);
 }
 function tickBar(price, ts, dv) {
-  const arr = R.on ? R.full : S.bars;
+  const arr = R.on ? R.full : (S.raw || S.bars);
   const sec = tfOf(S.tf).sec, last = arr[arr.length - 1];
   if (ts < last.time) return;
-  const k = Math.floor((ts - last.time) / sec);
-  if (k >= 1) onBar({ time: last.time + k * sec, open: price, high: price, low: price, close: price, volume: dv || 0 });
+  const k = tfOf(S.tf).u === 'M' ? (ts >= tfNext(S.tf, last.time) ? 1 : 0) : Math.floor((ts - last.time) / sec);
+  if (k >= 1 && tfOf(S.tf).u === 'M') onBar({ time: tfBucket(S.tf, ts), open: price, high: price, low: price, close: price, volume: dv || 0 });
+  else if (k >= 1) onBar({ time: last.time + k * sec, open: price, high: price, low: price, close: price, volume: dv || 0 });
   else onBar({ time: last.time, open: last.open, high: Math.max(last.high, price), low: Math.min(last.low, price), close: price, volume: last.volume + (dv || 0) });
 }
 async function pollSeries() {
   const id = S.symbol, token = S.token;
   try {
-    const j = await TD.request('/time_series', { symbol: rawOf(id), interval: TD_INT[S.tf], outputsize: 3, timezone: 'UTC', order: 'asc' }, 1, 2, () => token !== S.token);
+    const j = await TD.request('/time_series', { symbol: rawOf(id), interval: TD_INT[tfBase(S.tf)], outputsize: 3, timezone: 'UTC', order: 'asc' }, 1, 2, () => token !== S.token);
     if (token !== S.token) return;
-    tdBars(j).forEach(b => { if (S.bars.length && b.time >= S.bars[S.bars.length - 1].time) onBar(b); });
-    const t = S.tickers[id], a = R.on ? R.full : S.bars, lb = a[a.length - 1];   // the live bar, even during a replay
+    tdBars(j).forEach(b => { if (S.bars.length && b.time >= rawLast().time) onFeedBar(b); });
+    const t = S.tickers[id], a = R.on ? R.full : (S.raw || S.bars), lb = a[a.length - 1];   // the live bar, even during a replay
     if (t && lb) onTicker(Object.assign({}, t, { last: lb.close, high: Math.max(t.high, lb.close), low: Math.min(t.low, lb.close) }));
   } catch (e) { handleTdErr(e); }
 }
@@ -2439,9 +2857,9 @@ async function pollKraken() {
       if (t.sym === S.symbol && S.bars.length && openNow(t.sym)) tickBar(t.last, Date.now() / 1000, 0);
     }
     if (srcOf(S.symbol) === 'kraken' && S.bars.length && Date.now() - Kraken.syncAt > 15000) {   // keep the live candle exact
-      Kraken.syncAt = Date.now(); const token = S.token, a = R.on ? R.full : S.bars, since = a[a.length - 1].time - 1;
-      const tail = await Kraken.tail(S.symbol, S.tf, since);
-      if (token === S.token) tail.forEach(b => { if (S.bars.length && b.time >= S.bars[S.bars.length - 1].time) onBar(b); });
+      Kraken.syncAt = Date.now(); const token = S.token, a = R.on ? R.full : (S.raw || S.bars), since = a[a.length - 1].time - 1;
+      const tail = await Kraken.tail(S.symbol, tfBase(S.tf), since);
+      if (token === S.token) tail.forEach(b => { if (S.bars.length && b.time >= rawLast().time) onFeedBar(b); });
     }
   } catch (e) { /* try again on the next round */ }
   finally { Kraken.busy = false; }
@@ -2560,8 +2978,8 @@ async function pollOanda() {
     if (!streamed) { OANDA.pollAt = Date.now(); for (const p of await OANDA.prices(ids)) onOandaPrice(p, ids); }
     if (srcOf(S.symbol) === 'oanda' && S.bars.length && Date.now() - OANDA.syncAt > (OANDA.proxy ? 60000 : 10000)) {   // keep the live candle exact
       OANDA.syncAt = Date.now(); const token = S.token;
-      const tail = await OANDA.candles(S.symbol, O_GRAN[S.tf], 3);
-      if (token === S.token) tail.forEach(b => { if (S.bars.length && b.time >= S.bars[S.bars.length - 1].time) onBar(b); });
+      const tail = await OANDA.candles(S.symbol, O_GRAN[tfBase(S.tf)], 3);
+      if (token === S.token) tail.forEach(b => { if (S.bars.length && b.time >= rawLast().time) onFeedBar(b); });
     }
     OANDA.fails = 0;
   } catch (e) { handleOandaErr(e); }
@@ -2799,8 +3217,8 @@ async function pollCt() {
     if (need.length) { if (stale) CT.refsAt = Date.now(); await Promise.all(need.map(id => CT.dayRef(id).catch(() => {}))); }
     if (srcOf(S.symbol) === 'ctrader' && S.bars.length && Date.now() - CT.syncAt > 60000) {   // keep the live candle exact
       CT.syncAt = Date.now(); const token = S.token;
-      const tail = await CT.candles(S.symbol, S.tf, 3);
-      if (token === S.token) tail.forEach(b => { if (S.bars.length && b.time >= S.bars[S.bars.length - 1].time) onBar(b); });
+      const tail = await CT.candles(S.symbol, tfBase(S.tf), 3);
+      if (token === S.token) tail.forEach(b => { if (S.bars.length && b.time >= rawLast().time) onFeedBar(b); });
     }
     CT.fails = 0;
   } catch (e) { handleCtErr(e); }
@@ -2843,7 +3261,8 @@ function srcOf(id) {
   if (id === SILVER && S.goldApi) return 'metal';
   return 'demo';
 }
-const feedFor = id => ({ binance: Live, td: TDFeed, demo: Demo, paxg: PaxgFeed, metal: MetalFeed, oanda: OANDA, kraken: Kraken, ctrader: CT })[srcOf(id)];
+const feedRaw = id => ({ binance: Live, td: TDFeed, demo: Demo, paxg: PaxgFeed, metal: MetalFeed, oanda: OANDA, kraken: Kraken, ctrader: CT })[srcOf(id)];
+const feedFor = id => { const f = feedRaw(id); return f && { klines: (i, tf, before) => tfKlines(f, i, tf, before) }; };
 function onBinTicker(t) {
   onTicker(t);
   if (t.sym === 'BINANCE:PAXGUSDT' && srcOf(GOLD) === 'paxg') onTicker(Object.assign({}, t, { sym: GOLD, src: 'paxg' }));
@@ -2887,6 +3306,7 @@ function switchSources() {
 }
 function onBar(b) {
   if (R.on) { rpMerge(b); return; }
+  if (S.raw) { rawMerge(b); return; }
   const n = S.bars.length; if (!n || !S.main) return;
   const last = S.bars[n - 1];
   if (b.time < last.time) return;
@@ -2913,7 +3333,7 @@ async function loadChart() {
     const bars = await feedFor(S.symbol).klines(S.symbol, S.tf);
     if (token !== S.token) return;
     if (!bars.length) throw new Error(`No price history for ${label(S.symbol)} yet.`);
-    S.bars = bars; S.prec = precFor(S.symbol, bars[bars.length - 1].close);
+    S.prec = precFor(S.symbol, bars[bars.length - 1].close); setRaw(bars);
     if (R.on) rpRebase(bars);   // keep replaying from the same moment on the new symbol or timeframe
     S.main.applyOptions({ priceFormat: pricePF(S.prec) });
     for (const rt of S.rts) {
@@ -2929,7 +3349,7 @@ async function loadChart() {
     syncTradeMarks(); if (S.focusTime) focusChart();
     veil(null); S.cross = null; updateLegend(); renderDetails(); syncAlertLines(); markDirty(); clockTick();
     if (src === 'binance' || src === 'paxg') {
-      klineSock = Live.kline(binId(S.symbol), S.tf, onBar);
+      klineSock = Live.kline(binId(S.symbol), tfBase(S.tf), onFeedBar);
       klineSock.onReconnect = () => refreshTail(token);
     }
     if (src === 'td') tdSeriesAt = Date.now();
@@ -2946,23 +3366,25 @@ async function loadChart() {
 }
 async function refreshTail(token) {
   try {
-    const fresh = await Live.klines(binId(S.symbol), S.tf);
+    const fresh = await tfKlines(Live, binId(S.symbol), S.tf);
     if (token !== S.token || !fresh.length) return;
     const first = fresh[0].time;
     if (R.on) { R.full = R.full.filter(b => b.time < first).concat(fresh); R.idx = rpIndexFor(R.full, R.time); return; }
-    const keep = S.bars.filter(b => b.time < first);
-    S.bars = keep.concat(fresh); setMainData(); S.rts.forEach(setRtData); updateLegend(); markDirty();
+    const keep = (S.raw || S.bars).filter(b => b.time < first);
+    setRaw(keep.concat(fresh)); setMainData(); S.rts.forEach(setRtData); updateLegend(); markDirty();
   } catch (e) { /* the stream keeps retrying */ }
 }
 async function loadOlder() {
   S.older = true; const token = S.token;
   try {
-    const older = await feedFor(S.symbol).klines(S.symbol, S.tf, S.bars[0].time);
+    const src = S.raw || S.bars;
+    const older = await feedFor(S.symbol).klines(S.symbol, S.tf, src[0].time);
     if (token !== S.token) return;
-    const first = S.bars[0].time; const add = older.filter(b => b.time < first);
-    if (!add.length || S.bars.length > 12000) { S.noMore = true; return; }
+    const first = src[0].time; const add = older.filter(b => b.time < first);
+    if (!add.length || src.length > 12000) { S.noMore = true; return; }
     if (R.on) { R.full = add.concat(R.full); R.idx += add.length; }
-    S.bars = add.concat(S.bars); setMainData(); S.rts.forEach(setRtData); markDirty();
+    if (S.raw) { S.raw = add.concat(S.raw); S.bars = bricksOf(S.raw); } else S.bars = add.concat(S.bars);
+    setMainData(); S.rts.forEach(setRtData); markDirty();
   } catch (e) {
     if (e instanceof TDErr) { handleTdErr(e); if (e.code !== 429) { S.noMore = true; return; } }
     setTimeout(() => { if (token === S.token) S.older = false; }, 30000); return;
@@ -2992,6 +3414,7 @@ function rpPickIndex(x) {
   return max < 1 ? null : clamp(Math.round(m.L(x)), 1, max);
 }
 function rpStartPick() {
+  if (isBrick(S.type)) { toast(`Bar replay works with time-based chart types. Switch from ${typeName(S.type)} to candles, bars or a line to replay.`); return; }
   if (S.bars.length < 3 || !$('#veil').hidden) { toast('Wait for the chart to load, then try again.'); return; }
   if (S.tool !== 'cursor' || S.draft) finishTool();
   select(null); rpPause();
@@ -3110,14 +3533,10 @@ function setSymbol(id) {
   renderDetails(); loadChart(); ensureTickerSubs(); updateUrl();
 }
 function setTf(tf) { if (tf === S.tf) return; S.tf = tf; store.set('tf', tf); S.draft = null; S.measure = null; loadChart(); updateUrl(); }
-function renderTf() {
-  const seg = $('#tfSeg'); seg.replaceChildren();
-  for (const t of TFS) { const b = el('button', 'btn', t.label); b.dataset.tf = t.id; b.title = `${t.label} bars`; b.onclick = () => setTf(t.id); seg.append(b); }
-  renderTfState();
-}
-function renderTfState() { document.querySelectorAll('#tfSeg .btn').forEach(b => { const on = b.dataset.tf === S.tf; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }); }
 $('#typeSel').value = S.type;
-$('#typeSel').onchange = e => { S.type = e.target.value; store.set('type', S.type); createMain(); updateLegend(); markDirty(); };
+$('#typeSel').onchange = e => setChartType(e.target.value);
+$('#ctGear').onclick = e => { e.stopPropagation(); const m = $('#ctMenu'); if (!m.hidden) { m.hidden = true; return; } ctMenu(); };
+renderCtGear();
 
 /* ---------- toolbar ---------- */
 const TOOLS = [['cursor', 'Crosshair', 'Esc'], ['trend', 'Trend line', 'Alt+T'], ['ray', 'Ray', ''], ['hline', 'Horizontal line', 'Alt+H'], ['rect', 'Rectangle', 'Alt+R'], ['fib', 'Fib retracement', 'Alt+F'], ['measure', 'Measure', 'Alt+M'], ['long', 'Long position', 'Alt+L'], ['short', 'Short position', 'Alt+S'], ['alert', 'Price alert', 'Alt+A']];
@@ -3170,8 +3589,9 @@ function clockTick() {
     if (R.on) cd.append(el('b', null, 'Replay'), document.createTextNode(' · watchlist stays live'));
     else if (S.ready && srcOf(S.symbol) === 'demo') cd.append(el('b', null, 'Saved price'));
     else if (!(S.ready && openNow(S.symbol)) && !isOpenAt(cls, now)) cd.append(el('b', null, 'Market closed'));
+    else if (isBrick(S.type)) cd.append(el('b', null, typeName(S.type)), document.createTextNode(S.type === 'linebreak' ? ` · ${ctSet().lines} lines` : ` · ${S.type === 'kagi' ? 'reversal' : 'box'} ${fmtP(S.brickBox || 0)}`));
     else {
-      let end = S.bars[S.bars.length - 1].time + tfOf(S.tf).sec;
+      let end = tfNext(S.tf, rawLast().time);
       if (cls === 'stock' && tfOf(S.tf).sec < DAY) { const p = ny(now); end = Math.min(end, sessOpen(p.y, p.m, p.d) + 23400); }
       cd.append(document.createTextNode('Bar closes in '), el('b', null, fmtCountdown(end - now)));
     }
@@ -3647,7 +4067,7 @@ if (mq.addEventListener) mq.addEventListener('change', applyTheme);
 /* ---------- accounts: sign in with Google, profile, and syncing the setup across devices ----------
    Supabase keeps the accounts. The browser only ever holds the public "publishable" key; the database rules
    (row level security) let each person read and change only their own profile and saved setup. */
-const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset', 'paper', 'layout'];
+const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset', 'paper', 'layout', 'tffav', 'tfcustom', 'ctset'];
 function cleanState(d) {   // saved data is checked before it's used, whatever is in the database
   const o = {}; if (!d || typeof d !== 'object' || Array.isArray(d)) return o;
   const isId = v => typeof v === 'string' && v.length <= 40 && /^[A-Z0-9.:/_-]+$/.test(v);
@@ -3658,15 +4078,18 @@ function cleanState(d) {   // saved data is checked before it's used, whatever i
   if (Array.isArray(d.ind)) o.ind = d.ind.filter(x => isObj(x) && typeof x.type === 'string').slice(0, 50);
   if (Array.isArray(d.alerts)) o.alerts = d.alerts.filter(x => isObj(x) && isId(x.sym) && typeof x.price === 'number' && isFinite(x.price) && (x.dir === 'above' || x.dir === 'below')).slice(0, 500);
   if (isId(d.symbol)) o.symbol = d.symbol;
-  if (TFS.some(t => t.id === d.tf)) o.tf = d.tf;
-  if (['candles', 'bars', 'heikin', 'line', 'area'].includes(d.type)) o.type = d.type;
+  if (tfValid(d.tf)) o.tf = d.tf;
+  if (Array.isArray(d.tffav)) o.tffav = Array.from(new Set(d.tffav.filter(tfValid))).slice(0, 30);
+  if (Array.isArray(d.tfcustom)) o.tfcustom = Array.from(new Set(d.tfcustom.filter(tfValid))).slice(0, 30);
+  if (TYPE_IDS.includes(d.type)) o.type = d.type;
+  if (isObj(d.ctset)) o.ctset = { box: +d.ctset.box > 0 && +d.ctset.box < 1e9 ? +d.ctset.box : 0, rev: [1, 2, 3, 4, 5].includes(d.ctset.rev) ? d.ctset.rev : 3, lines: [2, 3, 4, 5].includes(d.ctset.lines) ? d.ctset.lines : 3 };
   if ([0, 1, 2].includes(d.scale)) o.scale = d.scale;
   if (typeof d.magnet === 'boolean') o.magnet = d.magnet;
   if (typeof d.rpSpeed === 'number' && d.rpSpeed > 0 && d.rpSpeed <= 50) o.rpSpeed = d.rpSpeed;
   if (d.theme === 'light' || d.theme === 'dark') o.theme = d.theme;
   if (isObj(d.jset) && typeof d.jset.ccy === 'string' && /^[A-Z]{3}$/.test(d.jset.ccy)) o.jset = { ccy: d.jset.ccy };
   if (isObj(d.paper)) o.paper = ptClean(d.paper);
-  if (isObj(d.layout) && [1, 2, 4].includes(d.layout.n)) o.layout = { n: d.layout.n, panes: (Array.isArray(d.layout.panes) ? d.layout.panes : []).filter(p => isObj(p) && isId(p.sym)).slice(0, 3).map(p => ({ sym: p.sym, tf: TFS.some(t => t.id === p.tf) ? p.tf : null })) };
+  if (isObj(d.layout) && [1, 2, 3, 4, 6, 8, 16].includes(d.layout.n)) o.layout = { n: d.layout.n, panes: (Array.isArray(d.layout.panes) ? d.layout.panes : []).filter(p => isObj(p) && isId(p.sym)).slice(0, 15).map(p => ({ sym: p.sym, tf: tfValid(p.tf) ? p.tf : null })) };
   return o;
 }
 const safeAvatar = u => (typeof u === 'string' && /^https:\/\/[a-z0-9.-]+\.googleusercontent\.com\/[^\s"'<>]*$/i.test(u) ? u : '');
@@ -4661,7 +5084,7 @@ function cleanIdea(row, full) {
   const it = {
     id: row.id.toLowerCase(), user_id: row.user_id.toLowerCase(), symbol: sym,
     market: MARKET_NAME[row.market] ? row.market : catOf(sym),
-    tf: TFS.some(t => t.id === row.tf) ? row.tf : '1h',
+    tf: row.chart && tfValid(row.chart.tf) ? row.chart.tf : row.thumb && tfValid(row.thumb.tf) ? row.thumb.tf : tfValid(row.tf) ? row.tf : '1h',
     direction: DIR_NAME[row.direction] ? row.direction : 'neutral',
     title: String(row.title || '').slice(0, 100) || 'Untitled idea',
     likes: Math.max(0, Math.floor(Number(row.likes) || 0)), comments: Math.max(0, Math.floor(Number(row.comments) || 0)), hidden: row.hidden === true,
@@ -4741,8 +5164,8 @@ function brandMark() { const w = $('#wmBrand').cloneNode(true); w.removeAttribut
 
 // ----- the chart a person is about to publish -----
 function captureIdea() {
-  const T = S.bars, n = T.length; if (n < 10 || !S.main) return null;
-  const vr = chart.timeScale().getVisibleLogicalRange(); if (!vr) return null;
+  const T = S.raw || S.bars, n = T.length; if (n < 10 || !S.main) return null;
+  const vr = S.raw ? { from: Math.max(0, n - 150), to: n - 1 } : chart.timeScale().getVisibleLogicalRange(); if (!vr) return null;
   let from = Math.max(0, Math.floor(vr.from)); const to = Math.min(n - 1, Math.ceil(vr.to));
   if (to - from < 4) return null;
   if (to - from + 1 > 600) from = to - 599;   // zoomed far out: the latest 600 bars on screen
@@ -4752,7 +5175,7 @@ function captureIdea() {
   return {
     symbol: S.symbol, tf: S.tf, price: T[n - 1].close,
     chart: {
-      v: 1, b, r: [Math.max(vr.from, from) - start, vr.to - start], ty: S.type, p: S.prec,
+      v: 1, b, r: [Math.max(vr.from, from) - start, vr.to - start], ty: { hollow: 'candles', columns: 'line', markers: 'line', step: 'line', baseline: 'area', kagi: 'line', renko: 'candles', linebreak: 'candles', pnf: 'candles' }[S.type] || S.type, p: S.prec,
       d: curDrawings().map(cleanDrawing).filter(Boolean).slice(0, 100),
       i: S.rts.filter(rt => !rt.inst.hidden).slice(0, 12).map(rt => ({ type: rt.inst.type, params: rt.inst.params, color: rt.inst.color })),
     },
@@ -5038,7 +5461,8 @@ const Pub = {
         if (Auth.profile) Auth.profile.display_name = name; Auth.render();
       }
       const cap = this.cap;
-      const row = { symbol: cap.symbol, market: catOf(cap.symbol), tf: cap.tf, direction: this.dir, title, body, price: cap.price, chart: cap.chart, thumb: thumbOf(cap.chart) };
+      const row = { symbol: cap.symbol, market: catOf(cap.symbol), tf: tfNative(cap.tf) ? cap.tf : tfBase(cap.tf), direction: this.dir, title, body, price: cap.price,
+        chart: Object.assign({}, cap.chart, { tf: cap.tf }), thumb: Object.assign(thumbOf(cap.chart), { tf: cap.tf }) };
       const { data, error } = await Auth.sb.from('ideas').insert(row).select('id').single();
       if (error) throw error;
       $('#publishDlg').close(); $('#pTitle').value = ''; $('#pBody').value = ''; this.setDir(null);
@@ -7040,29 +7464,33 @@ async function probeTD() {
   try { await fetchT('https://api.twelvedata.com/time_series?symbol=AAPL&interval=1day&outputsize=1&apikey=demo', 4500); return true; }
   catch (e) { return false; }
 }
-/* ---------- multi-chart layouts: the main chart plus up to three more, each with its own symbol and timeframe ---------- */
-const MC_LAYOUTS = [[1, 'One chart'], [2, 'Two charts'], [4, 'Four charts']];
-const MC_ICON = { 1: '<rect x="4" y="5" width="16" height="14" rx="2"/>', 2: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M12 5v14"/>', 4: '<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M12 5v14M4 12h16"/>' };
+/* ---------- multi-chart layouts: the main chart plus up to fifteen more, each with its own symbol and timeframe ---------- */
+const MC_LAYOUTS = [[1, 'One chart'], [2, 'Two charts'], [3, 'Three charts'], [4, 'Four charts'], [6, 'Six charts'], [8, 'Eight charts'], [16, 'Sixteen charts']];
+const MC_NS = MC_LAYOUTS.map(x => x[0]), MC_MAX = 16;
+const MC_BOX = '<rect x="4" y="5" width="16" height="14" rx="2"/>';
+const MC_ICON = { 1: MC_BOX, 2: MC_BOX + '<path d="M12 5v14"/>', 3: MC_BOX + '<path d="M9.33 5v14M14.67 5v14"/>', 4: MC_BOX + '<path d="M12 5v14M4 12h16"/>',
+  6: MC_BOX + '<path d="M9.33 5v14M14.67 5v14M4 12h16"/>', 8: MC_BOX + '<path d="M8 5v14M12 5v14M16 5v14M4 12h16"/>', 16: MC_BOX + '<path d="M8 5v14M12 5v14M16 5v14M4 8.5h16M4 12h16M4 15.5h16"/>' };
 const MC = {
   n: 1, panes: [], charts: [], picking: -1,
   load() {
     const v = store.get('layout', null);
-    this.n = v && [1, 2, 4].includes(v.n) ? v.n : 1;
-    this.panes = (v && Array.isArray(v.panes) ? v.panes : []).map(p => ({ sym: p && typeof p.sym === 'string' ? parseSymbol(p.sym) : null, tf: p && TFS.some(t => t.id === p.tf) ? p.tf : null })).filter(p => p.sym).slice(0, 3);
+    this.n = v && MC_NS.includes(v.n) ? v.n : 1;
+    this.panes = (v && Array.isArray(v.panes) ? v.panes : []).map(p => ({ sym: p && typeof p.sym === 'string' ? parseSymbol(p.sym) : null, tf: p && tfValid(p.tf) ? p.tf : null })).filter(p => p.sym).slice(0, MC_MAX - 1);
   },
   save() { store.set('layout', { n: this.n, panes: this.panes.map(p => ({ sym: p.sym, tf: p.tf })) }); },
   symbols() { return this.n > 1 ? this.panes.slice(0, this.n - 1).map(p => p.sym) : []; },   // their prices stream with the watchlist's
   ready() { this.load(); this.build(); if (this.n > 1) ensureTickerSubs(); },
   defaults() {   // markets for new charts: the watchlist first, minus what's already showing
     const used = new Set([S.symbol, ...this.panes.map(p => p.sym)]), out = [];
-    for (const id of S.watch.concat(['BINANCE:ETHUSDT', 'FX:EUR/USD', 'FX:XAU/USD', 'BINANCE:SOLUSDT', 'US:AAPL'])) if (!used.has(id)) { used.add(id); out.push(id); }
+    for (const id of S.watch.concat(['BINANCE:ETHUSDT', 'FX:EUR/USD', 'FX:XAU/USD', 'BINANCE:SOLUSDT', 'FX:GBP/USD', 'BINANCE:XRPUSDT', 'FX:USD/JPY', 'BINANCE:BNBUSDT', 'FX:XAG/USD', 'BINANCE:DOGEUSDT', 'FX:AUD/USD', 'BINANCE:ADAUSDT', 'FX:USD/CAD', 'BINANCE:LINKUSDT', 'FX:EUR/GBP', 'US:AAPL'])) if (!used.has(id)) { used.add(id); out.push(id); }
     return out;
   },
   setLayout(n) {
-    if (![1, 2, 4].includes(n)) return;
+    if (!MC_NS.includes(n)) return;
     this.n = n;
     const more = this.defaults();
     while (this.panes.length < n - 1) this.panes.push({ sym: more.shift() || 'BINANCE:ETHUSDT', tf: null });
+    this.panes = this.panes.slice(0, MC_MAX - 1);
     this.save(); this.build(); ensureTickerSubs();
   },
   build() {   // make the extra charts match the layout
@@ -7085,7 +7513,7 @@ const MC = {
     const symBtn = el('button', 'mc-sym'); symBtn.type = 'button'; symBtn.title = "Change this chart's symbol";
     symBtn.onclick = () => { this.picking = +root.dataset.i; openSearch('pane'); };
     const tfw = el('span', 'selwrap mc-tfw'), tf = el('select', 'mc-tf'); tf.setAttribute('aria-label', 'Timeframe');
-    TFS.forEach(t => { const o = el('option', null, t.label); o.value = t.id; tf.append(o); });
+    tfAll().forEach(id => { const o = el('option', null, tfOf(id).label); o.value = id; tf.append(o); });
     tf.onchange = () => { const k = +root.dataset.i; this.panes[k].tf = tf.value; this.save(); this.loadPane(k); };
     tfw.append(tf);
     const px = el('span', 'mc-px', '—'), chg = el('span', 'mc-chg'), note = el('span', 'mc-note');
@@ -7114,7 +7542,9 @@ const MC = {
     const c = this.charts[i], p = this.panes[i]; if (!c || !p) return;
     const id = p.sym, tf = this.tfOf(i), token = ++c.token;
     c.id = id; c.tfv = tf; c.root.dataset.sym = id;
-    c.symBtn.textContent = label(id); c.symBtn.setAttribute('aria-label', `${label(id)}: change this chart's symbol`); c.tf.value = tf;
+    c.symBtn.textContent = label(id); c.symBtn.setAttribute('aria-label', `${label(id)}: change this chart's symbol`);
+    if (![...c.tf.options].some(o => o.value === tf)) { const o = el('option', null, tfOf(tf).label); o.value = tf; c.tf.append(o); }
+    c.tf.value = tf;
     if (!quiet) { c.bars = []; c.series.setData([]); c.vol.setData([]); c.note.textContent = 'Loading…'; }
     this.price(i);
     try {
@@ -7148,8 +7578,8 @@ const MC = {
       if (t.stand || t.src === 'demo' || !c.bars.length || !isFinite(t.last) || !openNow(c.id)) return;
       const sec = tfOf(c.tfv).sec, last = c.bars[c.bars.length - 1], now = Date.now() / 1000, px = t.last;
       if (now < last.time) return;
-      const k = Math.floor((now - last.time) / sec);
-      if (k >= 1) c.bars.push({ time: last.time + k * sec, open: px, high: px, low: px, close: px, volume: 0 });
+      const mo = tfOf(c.tfv).u === 'M', k = mo ? (now >= tfNext(c.tfv, last.time) ? 1 : 0) : Math.floor((now - last.time) / sec);
+      if (k >= 1) c.bars.push({ time: mo ? tfBucket(c.tfv, now) : last.time + k * sec, open: px, high: px, low: px, close: px, volume: 0 });
       else { last.high = Math.max(last.high, px); last.low = Math.min(last.low, px); last.close = px; }
       const b = c.bars[c.bars.length - 1];
       try { c.series.update({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }); if (k >= 1) c.vol.update(this.volPt(b)); } catch (e) { /* out of order */ }
@@ -7183,7 +7613,7 @@ const MC = {
       b.onclick = () => { m.hidden = true; this.setLayout(n); };
       m.append(b);
     });
-    m.append(el('div', 'tp-menu-note', 'Each extra chart has its own symbol and timeframe. Double-click one to show it on the main chart.'));
+    m.append(el('div', 'tp-menu-note', 'Each extra chart has its own symbol and timeframe. Double-click one to show it on the main chart. The drawing tools, indicators and trading work on the main chart.'));
     m.hidden = false;
     const r = $('#layoutBtn').getBoundingClientRect(), w = m.offsetWidth;
     m.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px'; m.style.top = (r.bottom + 6) + 'px';
