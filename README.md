@@ -80,6 +80,10 @@ Before showing a broker's prices to the public, get the broker's written permiss
 
 The timeframe bar has 1m to 1W. The arrow at its end opens every timeframe: 3m, 45m, 2h, 3h, 6h, 8h, 12h, 3D, 1M and more, plus any length typed in (for example 90 minutes or 2 weeks). A star keeps a timeframe on the bar. Timeframes a price source doesn't offer are built from its shorter candles (45m from 15m, 1M from days), and the newest bar is rebuilt exactly as each live candle changes.
 
+Crypto charts from Binance also have seconds: 1s, 5s, 15s, 30s, or any number of seconds typed in. They're built from Binance's 1-second candles. Other markets' sources start at 1 minute, so a seconds chart switches to 1m when you open one of them.
+
+The download button next to the camera saves the chart's bars, with the values of the indicators on it, as a CSV file. It works for crypto charts; the price sources for other markets don't allow their prices to be downloaded.
+
 The chart type menu has 14 types: bars, candles, hollow candles, Heikin Ashi, columns, line, line with markers, step line, area, baseline, and four that ignore time: Renko, Line break, Kagi and Point & figure. Their box size is automatic (the average true range of the last 14 candles) or set with the gear button next to the menu. Indicators are worked out on what is drawn. Bar replay needs a time-based type.
 
 ## Chart layouts

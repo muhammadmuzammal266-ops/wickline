@@ -89,6 +89,8 @@ svg{display:block}
 .seg .btn.tf-more svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2}
 .tf-menu{min-width:250px;overflow-y:auto}
 .tf-gh{font-size:11px;font-weight:600;color:var(--muted);padding:8px 10px 3px}
+.tf-row.off .tf-li{opacity:.45;cursor:not-allowed}
+.icon-btn.dim{opacity:.5}
 .tf-row{display:flex;align-items:center;border-radius:6px}
 .tf-row:hover{background:var(--panel-2)}
 .tf-li{flex:1;text-align:left;padding:6px 10px;font-size:13px}
@@ -1193,6 +1195,7 @@ a.h-btn.primary{color:var(--panel)}
     <span class="spacer"></span>
     <button class="feed" id="feedBtn" data-state="connecting" title="Data sources"><span class="dot"></span><span class="lbl" id="feedLbl">Connecting</span></button>
     <button class="icon-btn" id="snapBtn" hidden aria-label="Save the chart as an image" title="Save chart image"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+    <button class="icon-btn" id="dataBtn" hidden aria-label="Download chart data as a CSV file" title="Download chart data (CSV)"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg></button>
     <button class="icon-btn" id="linkBtn" hidden aria-label="Copy a link to this chart" title="Copy link to this chart"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg></button>
     <button class="icon-btn" id="fsBtn" aria-label="Full screen" title="Full screen" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
     <button class="icon-btn" id="helpBtn" aria-label="Shortcuts and tips" title="Shortcuts and tips (?)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.4v.6"/><circle cx="12" cy="17" r=".7" style="fill:currentColor"/></svg></button>
@@ -1712,7 +1715,7 @@ a.h-btn.primary{color:var(--panel)}
 <script src="vendor/lightweight-charts-5.1.0.js"></script>
 <script src="vendor/supabase-js-2.117.2.js"></script>
 <script src="config.js"></script>
-<script src="app.js?v=fb54db8ce0"></script>
+<script src="app.js?v=1ca8c28e6b"></script>
 
 </body>
 </html>

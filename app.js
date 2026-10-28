@@ -109,14 +109,15 @@ const DAY = 86400, WEEK = 604800, YEAR = 31536000;
    person types) is made by joining the source's candles: 45m from 15m, 12h from 4h, 1M from days. Live updates keep
    the source's candles inside the newest bar, so that bar is rebuilt exactly as each one changes. */
 const TF_NATIVE = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
-const TF_UNIT = { m: 60, h: 3600, d: DAY, w: WEEK, M: 2629746 };
-const TF_WORD = { m: ['minute', 'minutes'], h: ['hour', 'hours'], d: ['day', 'days'], w: ['week', 'weeks'], M: ['month', 'months'] };
-const TF_MAX = { m: 1440, h: 168, d: 365, w: 52, M: 12 };
+const TF_UNIT = { s: 1, m: 60, h: 3600, d: DAY, w: WEEK, M: 2629746 };
+const TF_WORD = { s: ['second', 'seconds'], m: ['minute', 'minutes'], h: ['hour', 'hours'], d: ['day', 'days'], w: ['week', 'weeks'], M: ['month', 'months'] };
+const TF_MAX = { s: 59, m: 1440, h: 168, d: 365, w: 52, M: 12 };
 const WEEK_OFF = 345600;   // weeks start on Monday 00:00 UTC
 function tfParse(id) {
-  const m = /^([1-9]\d{0,3})([mhdwM])$/.exec(String(id == null ? '' : id)); if (!m) return null;
+  const m = /^([1-9]\d{0,3})([smhdwM])$/.exec(String(id == null ? '' : id)); if (!m) return null;
   let n = +m[1], u = m[2];
-  if (n > TF_MAX[u]) return null;
+  if (n > TF_MAX[u] && !(u === 's' && n % 60 === 0 && n / 60 <= TF_MAX.m)) return null;
+  if (u === 's' && n % 60 === 0) { n /= 60; u = 'm'; }
   // one name per length: 60m is 1h, 24h is 1D, 7D is 1W
   if (u === 'm' && n % 60 === 0) { n /= 60; u = 'h'; }
   if (u === 'h' && n % 24 === 0) { n /= 24; u = 'd'; }
@@ -125,6 +126,8 @@ function tfParse(id) {
 }
 const tfValid = id => { const p = tfParse(id); return !!p && p.id === id; };
 const tfNative = id => TF_NATIVE.includes(id);
+const TF_SECS = ['1s', '5s', '15s', '30s'];
+const tfDirect = id => TF_NATIVE.includes(id) || id === '1s';   // asked of the source as it is
 const TF_CACHE = {};
 function tfOf(id) {
   if (TF_CACHE[id]) return TF_CACHE[id];
@@ -134,6 +137,7 @@ function tfOf(id) {
   if (tfNative(id)) t.base = id;
   else if (p.u === 'M' || p.u === 'd') t.base = '1d';
   else if (p.u === 'w') t.base = '1w';
+  else if (p.u === 's') t.base = '1s';
   else { const min = t.sec / 60; t.base = [['4h', 240], ['1h', 60], ['30m', 30], ['15m', 15], ['5m', 5], ['1m', 1]].find(([, k]) => min % k === 0)[0]; }
   return (TF_CACHE[id] = t);
 }
@@ -166,10 +170,10 @@ function tfResample(bars, tf, cls) {
 }
 const TF_TAIL = new Map();   // "symbol|timeframe" -> the source's candles inside the newest bar
 async function tfKlines(feed, id, tf, before) {
-  if (tfNative(tf)) return feed.klines(id, tf, before);
+  if (tfDirect(tf)) return feed.klines(id, tf, before);
   const f = tfOf(tf), base = f.base, k = Math.max(1, Math.round(f.sec / tfOf(base).sec));
   // enough of the source's candles for about 500 bars; one page from the sources with small allowances
-  const pages = feed === TDFeed || feed === Kraken ? 1 : clamp(Math.ceil((k * 500) / 1000), 1, 4);
+  const pages = feed === TDFeed || feed === Kraken ? 1 : clamp(Math.ceil((k * 500) / 1000), 1, base === '1s' ? 8 : 4);
   let bars = await feed.klines(id, base, before);
   for (let p = 1; p < pages && bars.length; p++) {
     let older; try { older = await feed.klines(id, base, bars[0].time); } catch (e) { break; }
@@ -184,7 +188,7 @@ async function tfKlines(feed, id, tf, before) {
   return out;
 }
 function onFeedBar(b) {   // a candle at the price source's own timeframe, for the main chart
-  if (tfNative(S.tf)) { onBar(b); return; }
+  if (tfDirect(S.tf)) { onBar(b); return; }
   const arr = R.on ? R.full : (S.raw || S.bars), n = arr.length; if (!n) return;
   const last = arr[n - 1], f = tfOf(S.tf), key = S.symbol + '|' + S.tf;
   if (b.time < last.time) return;
@@ -207,9 +211,9 @@ function onFeedBar(b) {   // a candle at the price source's own timeframe, for t
 
 /* ----- the timeframe bar: favourites as buttons, everything else in a menu ----- */
 function tfFavs() { const v = store.get('tffav', null); return Array.isArray(v) ? Array.from(new Set(v.filter(tfValid))) : TF_NATIVE.slice(); }
-function tfCustoms() { const v = store.get('tfcustom', []); return Array.isArray(v) ? Array.from(new Set(v.filter(id => tfValid(id) && !TFS.some(t => t.id === id)))) : []; }
+function tfCustoms() { const v = store.get('tfcustom', []); return Array.isArray(v) ? Array.from(new Set(v.filter(id => tfValid(id) && !TFS.some(t => t.id === id) && !TF_SECS.includes(id)))) : []; }
 const tfSorted = ids => ids.slice().sort((a, b) => tfOf(a).sec - tfOf(b).sec);
-function tfAll() { return tfSorted(Array.from(new Set(TFS.map(t => t.id).concat(tfCustoms())))); }
+function tfAll() { return tfSorted(Array.from(new Set(TFS.map(t => t.id).concat(TF_SECS, tfCustoms())))); }
 function tfSegIds() { const f = tfFavs(); return tfSorted(f.includes(S.tf) ? f : f.concat([S.tf])); }
 function renderTf() {
   const seg = $('#tfSeg'); seg.replaceChildren();
@@ -231,14 +235,14 @@ function tfSetFav(id, on) {
 }
 function tfAddCustom(id) {
   if (!tfValid(id)) return false;
-  if (!TFS.some(t => t.id === id)) store.set('tfcustom', tfSorted(Array.from(new Set(tfCustoms().concat([id])))).slice(-30));
+  if (!TFS.some(t => t.id === id) && !TF_SECS.includes(id)) store.set('tfcustom', tfSorted(Array.from(new Set(tfCustoms().concat([id])))).slice(-30));
   return true;
 }
 function tfMenu() {
   const m = $('#tfMenu'); m.replaceChildren();
   m.append(el('div', 'tp-menu-h', 'Timeframe'));
   const favs = tfFavs(), customs = tfCustoms();
-  const groups = [['Minutes', id => tfOf(id).u === 'm'], ['Hours', id => tfOf(id).u === 'h'], ['Days, weeks and months', id => 'dwM'.includes(tfOf(id).u)]];
+  const groups = [['Seconds', id => tfOf(id).u === 's'], ['Minutes', id => tfOf(id).u === 'm'], ['Hours', id => tfOf(id).u === 'h'], ['Days, weeks and months', id => 'dwM'.includes(tfOf(id).u)]];
   for (const [name, test] of groups) {
     const ids = tfAll().filter(test); if (!ids.length) continue;
     m.append(el('div', 'tf-gh', name));
@@ -246,6 +250,7 @@ function tfMenu() {
       const row = el('div', 'tf-row' + (id === S.tf ? ' on' : ''));
       const b = el('button', 'tf-li', tfName(id)); b.type = 'button'; b.dataset.tf = id; b.setAttribute('role', 'menuitemradio'); b.setAttribute('aria-checked', String(id === S.tf));
       b.onclick = () => { m.hidden = true; setTf(id); };
+      if (isSecTf(id) && !secOk(S.symbol)) { b.disabled = true; b.title = 'Seconds charts are for crypto from Binance'; row.classList.add('off'); }
       const fav = favs.includes(id), star = el('button', 'icon-btn tf-star' + (fav ? ' on' : '')); star.type = 'button';
       star.title = fav ? 'Remove from the timeframe bar' : 'Add to the timeframe bar'; star.setAttribute('aria-label', `${tfName(id)}: ${star.title.toLowerCase()}`); star.setAttribute('aria-pressed', String(fav));
       star.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>';
@@ -264,7 +269,8 @@ function tfMenu() {
   const form = el('form', 'tf-add'); form.noValidate = true;
   const num = el('input'); num.id = 'tfNum'; num.type = 'number'; num.min = '1'; num.max = '1440'; num.step = '1'; num.placeholder = '45'; num.setAttribute('aria-label', 'Length');
   const unit = el('select'); unit.id = 'tfUnit'; unit.setAttribute('aria-label', 'Unit');
-  [['m', 'minutes'], ['h', 'hours'], ['d', 'days'], ['w', 'weeks'], ['M', 'months']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; unit.append(o); });
+  [['s', 'seconds'], ['m', 'minutes'], ['h', 'hours'], ['d', 'days'], ['w', 'weeks'], ['M', 'months']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; unit.append(o); });
+  unit.value = 'm';
   const uw = el('span', 'selwrap'); uw.append(unit);
   const add = el('button', 'primary', 'Add'); add.type = 'submit';
   const msg = el('div', 'tf-msg'); msg.id = 'tfMsg';
@@ -275,10 +281,11 @@ function tfMenu() {
     const n = Math.floor(+num.value), u = unit.value;
     if (!(n >= 1) || n > TF_MAX[u]) { msg.textContent = `Pick a number from 1 to ${TF_MAX[u]}.`; num.focus(); return; }
     const p = tfParse(n + u); if (!p) { msg.textContent = "That timeframe isn't available."; return; }
+    if (isSecTf(p.id) && !secOk(S.symbol)) { msg.textContent = 'Seconds charts are for crypto from Binance.'; return; }
     tfAddCustom(p.id); m.hidden = true; setTf(p.id);
   };
   m.append(form);
-  m.append(el('div', 'tp-menu-note', 'Star a timeframe to keep it on the bar. Timeframes the price source doesn\'t offer are built from its shorter candles.'));
+  m.append(el('div', 'tp-menu-note', 'Star a timeframe to keep it on the bar. Timeframes the price source doesn\'t offer are built from its shorter candles. Seconds charts are for crypto from Binance.'));
   m.hidden = false;
   const r = $('#tfMore').getBoundingClientRect(), w = m.offsetWidth;
   m.style.left = clamp(r.left - w + r.width, 8, innerWidth - w - 8) + 'px'; m.style.top = (r.bottom + 6) + 'px';
@@ -756,7 +763,8 @@ function dparts(sec, tf) {
 function fmtTime(sec, tf) {
   const p = dparts(sec, tf);
   const day = `${DOW[p.w]} ${p.d} ${MON[p.mo]} '${String(p.y).slice(2)}`;
-  return tfOf(tf || S.tf).sec < DAY ? `${day}  ${pad(p.h)}:${pad(p.mi)}` : day;
+  const f = tfOf(tf || S.tf);
+  return f.sec < DAY ? `${day}  ${pad(p.h)}:${pad(p.mi)}${f.sec < 60 ? ':' + pad(p.s) : ''}` : day;
 }
 function tickFmt(time, type, locale, tf) {
   const p = dparts(time, tf);
@@ -4127,7 +4135,10 @@ function veil(text, retry) {
 }
 $('#veilRetry').onclick = () => loadChart();
 async function loadChart() {
+  secGuard();
   const token = ++S.token; S.noMore = false; S.older = false;
+  try { chart.applyOptions({ timeScale: { secondsVisible: isSecTf(S.tf) } }); } catch (e) { /* older library */ }
+  renderDataBtn();
   setTitle(); updateWatermark(); renderTfState(); renderFeed();
   const src = srcOf(S.symbol);
   veil(`Loading ${label(S.symbol)} · ${tfOf(S.tf).label}`);
@@ -6278,7 +6289,7 @@ const Pub = {
         if (Auth.profile) Auth.profile.display_name = name; Auth.render();
       }
       const cap = this.cap;
-      const row = { symbol: cap.symbol, market: catOf(cap.symbol), tf: tfNative(cap.tf) ? cap.tf : tfBase(cap.tf), direction: this.dir, title, body, price: cap.price,
+      const row = { symbol: cap.symbol, market: catOf(cap.symbol), tf: ideaDbTf(cap.tf), direction: this.dir, title, body, price: cap.price,
         chart: Object.assign({}, cap.chart, { tf: cap.tf }), thumb: Object.assign(thumbOf(cap.chart), { tf: cap.tf }) };
       const { data, error } = await Auth.sb.from('ideas').insert(row).select('id').single();
       if (error) throw error;
@@ -8318,7 +8329,7 @@ const MC = {
     this.charts.forEach((c, i) => { if (c.id !== this.panes[i].sym || c.tfv !== this.tfOf(i)) this.loadPane(i); });
     const b = $('#layoutBtn'); if (b) { b.classList.toggle('on', this.n > 1); b.querySelector('svg').innerHTML = MC_ICON[this.n]; b.setAttribute('aria-label', `Chart layout: ${MC_LAYOUTS.find(x => x[0] === this.n)[1].toLowerCase()}`); }
   },
-  tfOf(i) { return this.panes[i].tf || S.tf; },
+  tfOf(i) { const t = this.panes[i].tf || S.tf; return isSecTf(t) && !secOk(this.panes[i].sym) ? '1m' : t; },
   opts() {
     return { layout: { background: { type: 'solid', color: C.panel }, textColor: C.muted }, grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
       crosshair: { vertLine: { color: C.faint, labelBackgroundColor: C.crossLabel }, horzLine: { color: C.faint, labelBackgroundColor: C.crossLabel } }, rightPriceScale: { borderColor: C.line }, timeScale: { borderColor: C.line } };
@@ -8359,6 +8370,7 @@ const MC = {
     const c = this.charts[i], p = this.panes[i]; if (!c || !p) return;
     const id = p.sym, tf = this.tfOf(i), token = ++c.token;
     c.id = id; c.tfv = tf; c.root.dataset.sym = id;
+    try { c.ch.applyOptions({ timeScale: { secondsVisible: isSecTf(tf) } }); } catch (e) { /* gone */ }
     c.symBtn.textContent = label(id); c.symBtn.setAttribute('aria-label', `${label(id)}: change this chart's symbol`);
     if (![...c.tf.options].some(o => o.value === tf)) { const o = el('option', null, tfOf(tf).label); o.value = tf; c.tf.append(o); }
     c.tf.value = tf;
@@ -8441,6 +8453,51 @@ $('#layoutBtn').onclick = e => { e.stopPropagation(); const m = $('#layoutMenu')
 document.addEventListener('pointerdown', e => { const m = $('#layoutMenu'); if (!m.hidden && !m.contains(e.target) && !$('#layoutBtn').contains(e.target)) m.hidden = true; }, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#layoutMenu').hidden = true; });
 
+/* ---------- seconds charts (crypto from Binance) and chart data download ---------- */
+// Binance serves 1-second candles; 5s, 15s and 30s are joined from them. The other sources start at 1 minute.
+const secOk = id => srcOf(id) === 'binance' && Live.name === 'Binance';
+const isSecTf = tf => tfOf(tf).u === 's';
+function ideaDbTf(tf) { return tfNative(tf) ? tf : tfNative(tfBase(tf)) ? tfBase(tf) : '1m'; }   // the database keeps one of the eight standard timeframes
+function secGuard() {
+  if (!isSecTf(S.tf) || secOk(S.symbol)) return;
+  S.tf = '1m'; store.set('tf', '1m'); updateUrl();
+  toast(`Seconds charts are for crypto from Binance, so ${label(S.symbol)} shows 1-minute bars.`);
+}
+
+// Data download: the candles on the chart, and the values of the indicators on it, as a CSV file.
+const DATA_SRC_OK = ['binance', 'paxg', 'demo'];
+const csvNum = v => (v == null || !isFinite(v) ? '' : String(+(+v).toPrecision(12)));
+const csvCell = s => (/[",\n]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : String(s));
+function chartCsv() {
+  const bars = S.bars, cols = ['time (UTC)', 'open', 'high', 'low', 'close', 'volume'], extra = [];
+  for (const rt of S.rts) {
+    if (rt.inst.hidden || !rt.out || rt.inst.type === 'vol') continue;   // volume is already a column
+    const def = IND[rt.inst.type], nm = def.short(rt.inst.params);
+    rt.out.forEach((arr, k) => {
+      if (!Array.isArray(arr) || arr.length !== bars.length || !arr.some(v => v != null && isFinite(v))) return;
+      const sp = specOf(rt.inst.type, k), part = sp && sp.name ? sp.name : rt.out.length > 1 ? String(k + 1) : '';
+      cols.push(part && part !== nm ? `${nm} ${part}` : nm); extra.push(arr);
+    });
+  }
+  const lines = [cols.map(csvCell).join(',')];
+  bars.forEach((b, i) => {
+    const t = new Date(b.time * 1000).toISOString().replace('.000Z', 'Z');
+    lines.push([t, csvNum(b.open), csvNum(b.high), csvNum(b.low), csvNum(b.close), csvNum(b.volume)].concat(extra.map(a => csvNum(a[i]))).join(','));
+  });
+  return { text: lines.join('\n') + '\n', rows: bars.length, cols: cols.length };
+}
+function downloadChartData() {
+  if (!S.bars.length) { toast('Wait for the chart to load first.'); return; }
+  if (!DATA_SRC_OK.includes(srcOf(S.symbol))) { toast(`Data download is for crypto charts. The price source for ${label(S.symbol)} doesn't allow its prices to be downloaded.`); return; }
+  const c = chartCsv(), d = new Date();
+  const a = el('a'); a.href = URL.createObjectURL(new Blob([c.text], { type: 'text/csv' }));
+  a.download = `${label(S.symbol).replace(/[^A-Za-z0-9]+/g, '')}-${S.tf}${S.type !== 'candles' ? '-' + S.type : ''}-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.csv`;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast(`Saved ${c.rows.toLocaleString('en-GB')} bars${c.cols > 6 ? ' with the indicators' : ''} to your downloads.`);
+}
+$('#dataBtn').onclick = downloadChartData;
+function renderDataBtn() { const ok = DATA_SRC_OK.includes(srcOf(S.symbol)); $('#dataBtn').classList.toggle('dim', !ok); $('#dataBtn').title = ok ? 'Download chart data (CSV)' : 'Data download is for crypto charts'; }
+
 async function boot() {
   $('.brand .word').textContent = CFG.siteName; $('.brand').setAttribute('aria-label', CFG.siteName); $('#wmWord').textContent = CFG.siteName;
   renderTools(); renderTf(); renderAlerts(); clockTick();
@@ -8461,7 +8518,7 @@ async function boot() {
   if (goldOk) setInterval(pollMetals, 10000);
   TD.state = !tdOk ? 'offline' : TD.key ? 'ok' : 'nokey';
   S.ready = true;
-  $('#snapBtn').hidden = S.sandbox; $('#linkBtn').hidden = S.sandbox;
+  $('#snapBtn').hidden = S.sandbox; $('#linkBtn').hidden = S.sandbox; $('#dataBtn').hidden = S.sandbox;
   updateUrl();
   lastOpenState = ['stock', 'forex'].map(c => isOpenAt(c, Date.now() / 1000)).join();
   renderWatch(); renderDetails(); renderFeed();
