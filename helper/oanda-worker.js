@@ -81,9 +81,26 @@ const TD_DATE = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/;
 
 // ---------- cTrader: the routes visitors call; the connection itself lives in CTHub below ----------
 const CT_TF = { '1m': ['M1', 60], '5m': ['M5', 300], '15m': ['M15', 900], '30m': ['M30', 1800], '1h': ['H1', 3600], '4h': ['H4', 14400], '1d': ['D1', 86400], '1w': ['W1', 604800] };
+// Countries that must not see the broker's prices (FP Markets' list: its restricted countries, the European Economic Area,
+// and places on the FATF and EU/UN sanctions lists; T1 is Tor and XX unknown). CT_BLOCK replaces the list (two-letter codes,
+// separated by commas); CT_BLOCK_UK=1 adds the United Kingdom.
+const CT_BLOCK_DEFAULT = 'AF,CU,CA,IQ,IN,IR,LR,LY,MM,PS,RU,SO,SY,SD,YE,US,KP,BY,SS,' +
+  'AT,BE,BG,HR,CY,CZ,DK,EE,FI,FR,DE,GR,HU,IE,IT,LV,LT,LU,MT,NL,PL,PT,RO,SK,SI,ES,SE,IS,LI,NO,T1,XX';
+function ctCountry(request, env) {
+  if (env.CT_TEST_HOST) return String(request.headers.get('X-Test-Country') || '').toUpperCase();   // the local tests only
+  return String((request.cf && request.cf.country) || 'XX').toUpperCase();
+}
+function ctBlocked(request, env) {
+  const cc = ctCountry(request, env); if (!cc) return '';
+  const list = new Set(String(env.CT_BLOCK || CT_BLOCK_DEFAULT).toUpperCase().split(/[\s,]+/).filter(Boolean));
+  if (String(env.CT_BLOCK_UK || '') === '1') list.add('GB');
+  return list.has(cc) ? cc : '';
+}
 function ctReady(env) { return !!(env.CT_HUB && env.CT_CLIENT_ID && env.CT_CLIENT_SECRET && (env.CT_REFRESH_TOKEN || env.CT_ACCESS_TOKEN)); }
 async function ctRoute(request, env, url, reply, json) {
   if (!ctReady(env)) return json({ ok: false, code: 'not_setup', message: "cTrader isn't set up on this helper." }, 404);
+  const blocked = ctBlocked(request, env);   // checked before anything is cached or streamed
+  if (blocked) return json({ ok: false, code: 'region', country: blocked, message: "The broker's prices aren't available in your country." }, 451);
   const hub = env.CT_HUB.get(env.CT_HUB.idFromName('hub'));
   const p = url.pathname, q = url.searchParams;
   if (p === '/ct/live') {   // live prices: one WebSocket per visitor, all fed from the hub's single cTrader connection
@@ -503,7 +520,7 @@ export class CTHub {
     ws.serializeAttachment({ ids });
     this.usedAt = Date.now();
     try { await this.ensure(); await this.symbols(); } catch (e) { try { ws.send(JSON.stringify({ err: e.message })); } catch (e2) { /* gone */ } return; }
-    const snap = ids.filter(id => this.last.has(id)).map(id => this.row(id));
+    const snap = ids.filter(id => { const l = this.last.get(id); return l && l.bid != null && l.ask != null; }).map(id => this.row(id));
     if (snap.length) { try { ws.send(JSON.stringify({ q: snap })); } catch (e) { /* gone */ } }
     this.resub();
   }
@@ -552,7 +569,7 @@ export class CTHub {
     this.flushT = null;
     const dirty = this.dirty; this.dirty = new Set();
     if (!dirty.size) return;
-    const rows = new Map(); for (const id of dirty) if (this.last.has(id)) rows.set(id, this.row(id));
+    const rows = new Map(); for (const id of dirty) { const l = this.last.get(id); if (l && l.bid != null && l.ask != null) rows.set(id, this.row(id)); }   // a quote goes out once both sides are known
     for (const c of this.ctx.getWebSockets()) {
       const a = c.deserializeAttachment(), mine = ((a && a.ids) || []).filter(id => rows.has(id)).map(id => rows.get(id));
       if (mine.length) { try { c.send(JSON.stringify({ q: mine })); } catch (e) { /* gone */ } }

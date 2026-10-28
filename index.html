@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self' https://data-api.binance.vision https://api.binance.com wss://data-stream.binance.vision wss://stream.binance.com:9443 https://www.okx.com wss://ws.okx.com:8443 https://api.bybit.com wss://stream.bybit.com https://api.kraken.com https://api.gold-api.com https://api.twelvedata.com wss://ws.twelvedata.com https://*.workers.dev wss://*.workers.dev https://*.supabase.co; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; upgrade-insecure-requests">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://s3.tradingview.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self' https://data-api.binance.vision https://api.binance.com wss://data-stream.binance.vision wss://stream.binance.com:9443 https://www.okx.com wss://ws.okx.com:8443 https://api.bybit.com wss://stream.bybit.com https://api.kraken.com https://api.gold-api.com https://api.twelvedata.com wss://ws.twelvedata.com https://*.workers.dev wss://*.workers.dev https://*.supabase.co; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src https://www.tradingview-widget.com https://s.tradingview.com; worker-src 'none'; upgrade-insecure-requests">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="description" content="Free live charts for crypto, US stocks, forex, indices and commodities, with indicators, drawing tools, a watchlist and price alerts.">
@@ -240,9 +240,142 @@ select option{background:var(--panel);color:var(--fg)}
 .view-tab{height:26px;padding:0 12px;border-radius:6px;display:inline-flex;align-items:center;font-weight:600;font-size:12.5px;color:var(--muted);text-decoration:none}
 .view-tab:hover{color:var(--fg)}
 .view-tab[aria-current="page"]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(8,12,20,.1)}
-body:is([data-view="journal"],[data-view="ideas"],[data-view="home"]) .app>:is(.tools,.stage,.side){display:none}
-body:is([data-view="journal"],[data-view="ideas"],[data-view="home"]) .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#ideaBtn,#tradeBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn){display:none!important}
+body:is([data-view="journal"],[data-view="ideas"],[data-view="home"],[data-view="markets"]) .app>:is(.tools,.stage,.side){display:none}
+body:is([data-view="journal"],[data-view="ideas"],[data-view="home"],[data-view="markets"]) .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#ideaBtn,#tradeBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn,#layoutBtn,#dataBtn,#btBtn){display:none!important}
 
+
+/* markets */
+.markets{grid-column:1/-1;grid-row:2/-1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px}
+.mk-tabs{align-self:flex-start;max-width:100%;overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:3px;scrollbar-width:none}
+.mk-tabs .btn{height:30px;font-family:var(--font-body);font-size:13px;white-space:nowrap;padding:0 12px}
+.mk-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px;flex:1;min-height:0}
+.mk-card[hidden]{display:none}
+.mk-bar{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.mk-bar .field{flex:0 0 auto;width:auto;max-width:100%;font-family:var(--font-body)}
+#scSearch{width:200px}
+.mk-info{font-size:12px;color:var(--faint)}
+.mk-err{font-size:13px;color:var(--down-ink)}
+#mkMap{position:relative;flex:1;min-height:440px;border-radius:6px;overflow:hidden;background:var(--panel-2)}
+.mk-tile{position:absolute;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#fff;overflow:hidden;text-align:center;line-height:1.15;padding:2px;border-radius:2px;font-family:var(--font-data);text-shadow:0 1px 1px rgba(0,0,0,.25)}
+.mk-tile b{font-weight:700;letter-spacing:-.01em}
+.mk-tile span{font-size:.7em;font-weight:500}
+.mk-tile .px{font-size:.56em;opacity:.85}
+.mk-tile:hover,.mk-tile:focus-visible{filter:brightness(1.18);z-index:1;outline:1.5px solid rgba(255,255,255,.75);outline-offset:-1.5px}
+.mk-legend{display:flex;align-items:center;gap:8px;font-family:var(--font-data);font-size:11px;color:var(--faint)}
+.mk-legend .g{width:150px;height:8px;border-radius:4px;background:linear-gradient(90deg,rgb(242,54,69),rgb(93,97,112),rgb(8,153,129))}
+.fx-wrap{display:grid;grid-template-columns:minmax(0,2.2fr) minmax(220px,1fr);gap:16px;align-items:start}
+.fx-grid{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:3px}
+.fx-c{padding:9px 2px;text-align:center;font-family:var(--font-data);font-size:12.5px;border-radius:4px;min-width:0;overflow:hidden;white-space:nowrap}
+.fx-h{font-weight:700;color:var(--muted)}
+.fx-v{color:#fff;font-weight:500}
+button.fx-v:hover{filter:brightness(1.2)}
+.fx-self{background:var(--panel-2)}
+.fx-str h2,.mk-h2{margin:0 0 6px;font-size:13px;font-weight:600;color:var(--muted)}
+.fx-s{display:grid;grid-template-columns:40px 1fr 64px;align-items:center;gap:8px;padding:5px 0;font-family:var(--font-data);font-size:12.5px}
+.fx-s .bar{position:relative;height:10px;border-radius:3px;background:var(--panel-2)}
+.fx-s .bar i{position:absolute;top:0;bottom:0;border-radius:3px}
+.fx-s .bar i.pos{left:50%}.fx-s .bar i.neg{right:50%}
+.fx-s .bar::after{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--line)}
+.fx-s .v{text-align:right}
+#tvHeat{flex:1;min-height:560px;display:flex;flex-direction:column}
+#tvHeat .tradingview-widget-container__widget{flex:1;min-height:520px}
+#tvHeat .tradingview-widget-copyright{font-size:11.5px;padding-top:6px;color:var(--faint)}
+#tvHeat .tradingview-widget-copyright a{color:var(--accent)}
+.sc-wrap{overflow-x:auto;border-top:1px solid var(--line)}
+.sc-t{width:100%;border-collapse:collapse;font-size:12.5px}
+.sc-t th{position:sticky;top:0;background:var(--panel);text-align:right;font-weight:600;font-size:11px;color:var(--muted);padding:0;border-bottom:1px solid var(--line);white-space:nowrap}
+.sc-t th:first-child{text-align:left}
+.sc-sort{font:inherit;color:inherit;padding:8px;width:100%;text-align:inherit}
+.sc-sort:hover{color:var(--fg)}
+.sc-t th[aria-sort="ascending"] .sc-sort::after{content:" ▲";font-size:9px}
+.sc-t th[aria-sort="descending"] .sc-sort::after{content:" ▼";font-size:9px}
+.sc-t td{padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.sc-t td.num{text-align:right;font-family:var(--font-data);font-variant-numeric:tabular-nums}
+.sc-t tbody tr{cursor:pointer}
+.sc-t tbody tr:hover,.sc-t tbody tr:focus-visible{background:var(--panel-2);outline:none}
+.sc-sym b{font-family:var(--font-data);font-weight:700}
+.sc-sym span{font-family:var(--font-data);color:var(--faint);font-size:11.5px}
+.sc-sym small{display:block;font-size:11px;color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.sc-t .up-t{color:var(--up-ink)}.sc-t .dn-t{color:var(--down-ink)}
+.sc-rng .rb{position:relative;display:block;width:64px;height:4px;border-radius:2px;background:linear-gradient(90deg,var(--down-ink),var(--up-ink));margin-left:auto;opacity:.75}
+.sc-rng .rb i{position:absolute;top:-3px;width:3px;height:10px;margin-left:-1.5px;border-radius:2px;background:var(--fg)}
+.sc-act{width:36px;text-align:right}
+.sc-act svg{width:15px;height:15px}
+.sc-none td{text-align:center;color:var(--muted);padding:24px}
+@media (max-width: 880px){
+  .fx-wrap{grid-template-columns:minmax(0,1fr)}
+  #mkMap{min-height:520px}
+  .fx-c{font-size:10.5px;padding:8px 0}
+}
+
+/* rules (strategy tester and indicator alerts) */
+.rl-box{display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}
+.rl-head{display:flex;align-items:center;gap:8px;font-size:12.5px}
+.rl-head b{font-weight:600}
+.rl-head .selwrap{margin-left:auto}
+.rl-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rl-op{display:inline-flex;align-items:center;gap:4px;min-width:0}
+.rl-ps{display:inline-flex;gap:3px}
+.rl-box .rl-sel,.rl-box .rl-cmp,.rl-box .rl-match{flex:none;width:auto;height:30px;font-size:12.5px;font-family:var(--font-body);padding:0 24px 0 8px}
+.rl-box .rl-sel{max-width:170px}
+.rl-box .rl-num{flex:none;width:54px;height:30px;font-size:12.5px;padding:0 6px;font-family:var(--font-data)}
+.rl-box .rl-num.wide{width:90px}
+.rl-x{width:28px;height:28px;margin-left:auto}
+.rl-x svg{width:14px;height:14px}
+.rl-add{align-self:flex-start;height:28px;font-size:12.5px}
+/* strategy tester */
+#btBtn.on{color:var(--accent);background:var(--accent-soft)}
+#btDlg{width:min(1180px,calc(100vw - 24px));max-height:calc(100vh - 32px)}
+.bt-body{display:grid;grid-template-columns:minmax(360px,440px) minmax(0,1fr);gap:0;min-height:0;overflow:auto}
+.bt-form{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-right:1px solid var(--line);overflow:auto}
+.bt-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bt-row>label{font-size:12.5px;color:var(--muted)}
+.bt-row .selwrap .field{font-family:var(--font-body);height:32px}
+.bt-form .seg{background:var(--panel-2);border-radius:6px;padding:2px}
+.bt-form .seg .btn{height:28px;font-family:var(--font-body);font-size:12.5px}
+.bt-risk{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.bt-risk label{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted)}
+.bt-risk .field{flex:none;height:32px;font-family:var(--font-data)}
+.bt-note{font-size:11.5px;color:var(--faint);margin:0}
+.bt-out{padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.bt-empty{color:var(--muted);font-size:13px;padding:30px 0;text-align:center}
+.bt-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px}
+.bt-k{display:flex;flex-direction:column;gap:2px;padding:9px 11px;border-radius:8px;background:var(--panel-2);min-width:0}
+.bt-k span{font-size:11px;color:var(--muted)}
+.bt-k b{font-family:var(--font-data);font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-k small{font-family:var(--font-data);font-size:11px;color:var(--faint)}
+.bt-k .up-t{color:var(--up-ink)}.bt-k .dn-t{color:var(--down-ink)}
+#btEq{height:200px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.bt-detail{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:2px 16px;font-size:12px}
+.bt-detail div{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--line)}
+.bt-detail span{color:var(--muted)}
+.bt-detail b{font-family:var(--font-data);font-weight:500;text-align:right}
+.bt-acts{display:flex;gap:6px;flex-wrap:wrap}
+.bt-tw{overflow:auto;max-height:300px;border:1px solid var(--line);border-radius:8px}
+.bt-t{width:100%;border-collapse:collapse;font-size:12px}
+.bt-t th{position:sticky;top:0;background:var(--panel);text-align:left;font-weight:600;font-size:11px;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.bt-t td{padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.bt-t .num{text-align:right;font-family:var(--font-data);font-variant-numeric:tabular-nums}
+.bt-t .up-t{color:var(--up-ink)}.bt-t .dn-t{color:var(--down-ink)}
+.bt-none td{text-align:center;color:var(--muted);padding:18px;white-space:normal}
+@media (max-width: 880px){
+  .bt-body{grid-template-columns:minmax(0,1fr)}
+  .bt-form{border-right:0;border-bottom:1px solid var(--line);overflow:visible}
+}
+
+/* indicator alerts */
+.ta-new{align-self:flex-start;height:28px;font-size:12.5px;margin-top:2px}
+.ta-list{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.ta-h{padding:8px 12px 2px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.ta-item .c{white-space:normal;line-height:1.35}
+#taDlg{width:min(640px,calc(100vw - 24px))}
+.ta-body{display:flex;flex-direction:column;gap:10px;padding:14px 16px;overflow:auto}
+.ta-mk{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
+.ta-mk b{font-family:var(--font-data)}
+.ta-mk .field,.ta-opts .field{flex:none;width:auto;height:32px;font-family:var(--font-body)}
+.ta-opts{display:flex;gap:10px;flex-wrap:wrap}
+.ta-opts label{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted)}
+.ta-opts #taName{width:220px}
 /* journal */
 .journal{grid-column:1/-1;grid-row:2/-1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px}
 .j-head{display:flex;align-items:flex-end;gap:10px 16px;flex-wrap:wrap;padding:6px 4px 2px}
@@ -1178,6 +1311,7 @@ a.h-btn.primary{color:var(--panel)}
     </a>
     <nav class="views" aria-label="Pages">
       <a class="view-tab" href="?view=chart" data-view="chart" aria-current="page">Chart</a>
+      <a class="view-tab" href="?view=markets" data-view="markets" aria-current="false">Markets</a>
       <a class="view-tab" href="?view=ideas" data-view="ideas" aria-current="false">Ideas</a>
       <a class="view-tab" href="?view=journal" data-view="journal" aria-current="false">Journal</a>
     </nav>
@@ -1190,6 +1324,7 @@ a.h-btn.primary{color:var(--panel)}
     <button class="btn" id="layoutBtn" title="Chart layout: up to 16 charts" aria-haspopup="menu" aria-label="Chart layout"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/></svg><span class="rp-btn-lbl">Layout</span></button>
     <button class="btn" id="indBtn"><svg viewBox="0 0 24 24"><path d="M3 17c3 0 4-10 7-10s3 10 6 10 3-6 5-6"/></svg>Indicators</button>
     <button class="btn" id="replayBtn" aria-pressed="false" title="Bar replay: replay the market from a past bar"><svg viewBox="0 0 24 24"><path d="M11.5 7l-6 5 6 5z"/><path d="M19.5 7l-6 5 6 5z"/></svg><span class="rp-btn-lbl">Replay</span></button>
+    <button class="btn" id="btBtn" title="Strategy tester: test buy and sell rules on this chart"><svg viewBox="0 0 24 24"><path d="M4 19h16"/><path d="M6 15l4-5 3 3 5-7"/><circle cx="18" cy="6" r="1.4"/></svg><span class="rp-btn-lbl">Strategy</span></button>
     <button class="btn" id="ideaBtn" title="Publish your view of this chart as an idea"><svg viewBox="0 0 24 24"><path d="M9.5 18h5M10.5 21h3"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></svg><span class="rp-btn-lbl">Publish idea</span></button>
     <button class="btn trade-btn" id="tradeBtn" title="Paper trading: practise buying and selling with virtual money (Shift B or Shift S)"><svg viewBox="0 0 24 24"><path d="M7.5 20V5M4 8.5l3.5-3.5L11 8.5"/><path d="M16.5 4v15M13 15.5l3.5 3.5 3.5-3.5"/></svg><span class="rp-btn-lbl">Trade</span></button>
     <span class="spacer"></span>
@@ -1312,7 +1447,9 @@ a.h-btn.primary{color:var(--panel)}
         <label for="alPrice" id="alLabel">Alert me when BTCUSDT crosses</label>
         <div class="al-row"><input class="field" id="alPrice" inputmode="decimal" autocomplete="off" placeholder="Price"><button class="primary" type="submit">Add</button></div>
         <p class="fine">Alerts check prices while this page is open.</p>
+        <button class="ghost ta-new" id="taNew" type="button">+ Alert on indicators</button>
       </form>
+      <ul class="ta-list" id="taList" hidden></ul>
     </section>
     <p class="risk-note" id="riskChart"><b>Risk warning:</b> leveraged trading (CFDs, forex) carries a high risk of losing money rapidly. Not financial advice.</p>
     <p class="credit"><a href="privacy.html" target="_blank" rel="noopener">Privacy</a> · Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></p>
@@ -1353,6 +1490,46 @@ a.h-btn.primary{color:var(--panel)}
       <p class="risk-note" id="riskHome"><b>Risk warning:</b> trading CFDs, forex and other leveraged products carries a high risk of losing money rapidly. Only trade with money you can afford to lose. RealChart is for information and practice only and isn’t financial advice. Paper trading uses virtual money.</p>
       <p><a href="privacy.html" target="_blank" rel="noopener">Privacy</a> · <a href="rules.html" target="_blank" rel="noopener">Community rules</a> · Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></p>
     </footer>
+  </section>
+
+  <section class="markets" id="markets" hidden aria-label="Markets">
+    <div class="j-head"><div><h1>Markets</h1><p class="j-sub" id="mkSub"></p></div></div>
+    <div class="seg mk-tabs" id="mkTabs" role="tablist" aria-label="Markets views"></div>
+    <div class="mk-card" id="mk-crypto" role="tabpanel">
+      <div class="mk-bar">
+        <label>Show <select class="field" id="mkCount" aria-label="How many coins"><option value="30">30 coins</option><option value="50">50 coins</option><option value="100">100 coins</option></select></label>
+        <span class="mk-legend" aria-hidden="true">−3%<span class="g"></span>+3%</span>
+        <span class="mk-info" id="mkCryptoInfo"></span>
+      </div>
+      <p class="mk-err" id="mkCryptoErr" hidden></p>
+      <div id="mkMap" aria-label="Crypto heatmap"></div>
+    </div>
+    <div class="mk-card" id="mk-forex" role="tabpanel" hidden>
+      <div class="fx-wrap">
+        <div><h2 class="mk-h2">Each row's currency against each column's, today</h2><div class="fx-grid" id="fxGrid"></div></div>
+        <div class="fx-str"><h2>Currency strength</h2><div id="fxStr"></div><p class="mk-info">The average of each currency's moves against the other seven.</p></div>
+      </div>
+      <p class="mk-info" id="fxNote" hidden></p>
+    </div>
+    <div class="mk-card" id="mk-stocks" role="tabpanel" hidden>
+      <div class="tradingview-widget-container" id="tvHeat"></div>
+    </div>
+    <div class="mk-card" id="mk-screener" role="tabpanel" hidden>
+      <div class="mk-bar">
+        <input class="field" id="scSearch" type="search" placeholder="Search coins" aria-label="Search coins" autocomplete="off" spellcheck="false">
+        <select class="field" id="scVol" aria-label="Traded in 24 hours"><option value="0">Any volume</option><option value="1000000">Over $1M traded</option><option value="10000000">Over $10M traded</option><option value="100000000">Over $100M traded</option></select>
+        <select class="field" id="scChg" aria-label="24 hour change"><option value="">Any change</option><option value="up">Up today</option><option value="down">Down today</option><option value="up5">Up 5% or more</option><option value="down5">Down 5% or more</option></select>
+        <span class="mk-info" id="scInfo"></span>
+      </div>
+      <p class="mk-err" id="scErr" hidden></p>
+      <div class="sc-wrap">
+        <table class="sc-t" id="scTable">
+          <thead><tr><th data-k="sym">Coin</th><th data-k="last">Price</th><th data-k="chg">24h change</th><th data-k="high">24h high</th><th data-k="low">24h low</th><th data-k="fromHigh">From high</th><th data-k="range">Day range</th><th data-k="qvol">Traded 24h</th><th aria-label="Watchlist"></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <button class="ghost" id="scMore" type="button" hidden>Show more</button>
+    </div>
   </section>
 
   <section class="journal" id="journal" hidden aria-label="Trade journal">
@@ -1594,6 +1771,54 @@ a.h-btn.primary{color:var(--panel)}
   </form>
 </dialog>
 
+<dialog id="btDlg" aria-labelledby="btTitle">
+  <div class="dlg-h"><div><h2 id="btTitle">Strategy tester</h2><p class="j-sub" id="btSub"></p></div><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="bt-body">
+    <form class="bt-form" id="btForm" novalidate>
+      <div class="bt-row"><label for="btPreset">Strategy</label><span class="selwrap"><select class="field" id="btPreset"><option value="ma">Moving average cross</option><option value="rsi">RSI oversold and overbought</option><option value="macd">MACD cross</option><option value="bb">Bollinger Bands bounce</option><option value="brk">Breakout (20-bar high and low)</option><option value="st">SuperTrend</option><option value="custom">My own rules</option></select></span></div>
+      <div class="bt-row"><label>Trades</label><div class="seg" id="btDir" role="group" aria-label="Which trades"><button class="btn" type="button" data-dir="long">Buys only</button><button class="btn" type="button" data-dir="short">Short sells only</button><button class="btn" type="button" data-dir="both">Both</button></div></div>
+      <div id="btLong"><div class="rl-box" id="btLe"></div><div class="rl-box" id="btLx" style="margin-top:6px"></div></div>
+      <div id="btShort"><div class="rl-box" id="btSe"></div><div class="rl-box" id="btSx" style="margin-top:6px"></div></div>
+      <div class="bt-risk">
+        <label>Stop loss %<input class="field" id="btSl" type="number" min="0" max="90" step="0.1" placeholder="None"></label>
+        <label>Take profit %<input class="field" id="btTp" type="number" min="0" max="1000" step="0.1" placeholder="None"></label>
+        <label>Trade size, % of money<input class="field" id="btSize" type="number" min="1" max="100" step="1"></label>
+        <label>Starting money ($)<input class="field" id="btCap" type="number" min="100" step="100"></label>
+        <label>Fees % per trade side<input class="field" id="btFee" type="number" min="0" max="5" step="0.01"></label>
+      </div>
+      <p class="bt-note">Signals are read when a bar closes and filled at the next bar's open. Past results don't promise future ones; this is practice, not advice.</p>
+      <button class="primary" type="submit" id="btRun">Run the test</button>
+    </form>
+    <div class="bt-out">
+      <p class="bt-empty" id="btEmpty">Pick a strategy or set your own rules, then press <b>Run the test</b>.</p>
+      <div id="btRes" hidden>
+        <div class="bt-kpis" id="btKpis"></div>
+        <div id="btEq" aria-label="Money over time: the strategy, and buying and holding (dashed)"></div>
+        <div class="bt-detail" id="btDetail"></div>
+        <div class="bt-acts"><button class="ghost" type="button" id="btShow" aria-pressed="false">Show trades on the chart</button><button class="ghost" type="button" id="btCsv">Export trades (CSV)</button></div>
+        <div class="bt-tw"><table class="bt-t" id="btTrades"><thead><tr><th>#</th><th>Side</th><th>Entry</th><th>Price</th><th>Exit</th><th>Price</th><th>Why</th><th>Profit</th><th>%</th><th>Bars</th></tr></thead><tbody></tbody></table></div>
+        <p class="bt-note" id="btTradesNote"></p>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="taDlg" aria-labelledby="taTitle">
+  <div class="dlg-h"><h2 id="taTitle">Indicator alert</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <form class="ta-body" id="taForm" novalidate>
+    <div class="ta-mk"><span>Market</span><b id="taSym"></b><span>on</span><span class="selwrap"><select class="field" id="taTf" aria-label="Timeframe"></select></span></div>
+    <p class="fine" id="taTfNote"></p>
+    <div class="rl-box" id="taRule"></div>
+    <div class="ta-opts">
+      <label>How often<span class="selwrap"><select class="field" id="taMode"><option value="once">Only once</option><option value="bar">Every time (once per bar)</option></select></span></label>
+      <label>Name (optional)<input class="field" id="taName" maxlength="60" autocomplete="off" placeholder="For example: RSI overbought"></label>
+    </div>
+    <p class="fine">Checked when each bar closes, while this page is open.</p>
+    <p class="fine" id="taMsg" aria-live="polite"></p>
+    <div class="t-actions"><span class="spacer"></span><button class="ghost" type="button" data-close>Cancel</button><button class="primary" type="submit">Create alert</button></div>
+  </form>
+</dialog>
+
 <dialog id="wlDlg" aria-labelledby="wlTitle">
   <div class="dlg-h"><h2 id="wlTitle">New watchlist</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <form class="dlg-body" id="wlForm" novalidate>
@@ -1715,7 +1940,7 @@ a.h-btn.primary{color:var(--panel)}
 <script src="vendor/lightweight-charts-5.1.0.js"></script>
 <script src="vendor/supabase-js-2.117.2.js"></script>
 <script src="config.js"></script>
-<script src="app.js?v=1ca8c28e6b"></script>
+<script src="app.js?v=bc8697d0d3"></script>
 
 </body>
 </html>

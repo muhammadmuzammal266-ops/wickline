@@ -76,6 +76,10 @@ How it works:
 
 Before showing a broker's prices to the public, get the broker's written permission. Asking as its partner (an introducing broker) helps.
 
+**Countries that don't see the broker's prices.** The helper checks each visitor's country (Cloudflare tells it) and refuses the broker's prices to visitors in restricted countries; their pages say so and use the other sources. The list follows FP Markets' rules: Afghanistan, Cuba, Canada, Iraq, India, Iran, Liberia, Libya, Myanmar, Palestine, Russia, Somalia, Syria, Sudan, Yemen, the United States, the European Economic Area (the EU plus Iceland, Liechtenstein and Norway), North Korea, Belarus and South Sudan, plus Tor and unknown locations. Pages that show the broker's prices also say where they aren't shown.
+- To hide them from the UK too, add a **Text** variable `CT_BLOCK_UK` set to `1`.
+- To use a different list, add a **Text** variable `CT_BLOCK` with two-letter country codes separated by commas (it replaces the whole list). The FATF and sanctions lists change a few times a year, so check them now and then.
+
 ## Timeframes and chart types
 
 The timeframe bar has 1m to 1W. The arrow at its end opens every timeframe: 3m, 45m, 2h, 3h, 6h, 8h, 12h, 3D, 1M and more, plus any length typed in (for example 90 minutes or 2 weeks). A star keeps a timeframe on the bar. Timeframes a price source doesn't offer are built from its shorter candles (45m from 15m, 1M from days), and the newest bar is rebuilt exactly as each live candle changes.
@@ -89,6 +93,22 @@ The chart type menu has 14 types: bars, candles, hollow candles, Heikin Ashi, co
 ## Chart layouts
 
 The **Layout** button shows 1, 2, 3, 4, 6, 8 or 16 charts at once. Each extra chart has its own symbol (click its name to search) and timeframe, a live price and volume. The arrow button, or a double-click, swaps that chart with the main one, where the drawing tools, indicators and trading are. The layout is remembered, and kept in the account for signed-in people. On phones the charts stack one under another.
+
+## Markets page
+
+The **Markets** tab has four views:
+- **Crypto heatmap:** the 30, 50 or 100 most traded coins against USDT as boxes sized by their last 24 hours of trading and coloured by how much they moved (red to green, strongest at ±3%). Click a box to open its chart. Stablecoins and old leveraged tokens are left out.
+- **Forex heatmap:** the eight major currencies (USD, EUR, GBP, JPY, CHF, AUD, CAD, NZD) against each other today, worked out from the seven dollar pairs, with a currency strength list. Click a pair to open its chart.
+- **Stock heatmap:** TradingView's free widget of the S&P 500 by sector, sized by company value. TradingView provides its data and its credit link stays on it.
+- **Crypto screener:** every coin traded against USDT, with price, 24h change, high, low, distance from the high, where it sits in the day's range and how much traded. Sort by any column, search, filter by volume or change, add a coin to the watchlist with +, or click a row to open its chart.
+
+Crypto prices come from Binance (or OKX or Bybit where Binance is blocked) and update every 30 seconds.
+
+## Strategy tester
+
+The **Strategy** button tests buy and sell rules on the bars of the chart, like TradingView's Strategy Tester. Pick a ready-made strategy (moving average cross, RSI, MACD cross, Bollinger Bands bounce, breakout, SuperTrend) or write your own rules: up to six conditions each for buying, selling, short selling and buying back, such as "EMA 9 crosses above EMA 21" or "RSI 14 is below 30", combined with "all" or "any". Values can be prices, volume, moving averages, VWAP, Bollinger, Keltner, highest high and lowest low, SuperTrend, Parabolic SAR, ADX, RSI, Stochastic, CCI, Williams %R, Money Flow, rate of change, MACD, ATR or a number, all worked out with the chart's own formulas.
+
+Signals are read when a bar closes and filled at the next bar's open. Optional stop loss and take profit are checked against each bar's high and low (when both could have been hit in one bar, the stop counts first). The results show net profit, trades, win rate, profit factor, maximum drawdown, buy-and-hold over the same bars, more statistics, the money over time, and every trade. The trades can be shown on the chart or exported as a CSV.
 
 ## Indicators
 
@@ -117,6 +137,8 @@ Drawings are saved with the chart and can go into published ideas.
 ## Watchlists and alerts
 
 People can keep up to 20 watchlists. Click the watchlist's name to switch, make a new one, copy, rename or delete one. Up to 1,000 price alerts can be set; they're checked while the site is open.
+
+**Alert on indicators** (in the Alerts card) sets up to 100 alerts on indicator conditions, using the same rules as the strategy tester, for example "RSI 14 crosses above 70 on BTCUSDT 1h". Each alert watches its own market and timeframe, whatever the chart shows, and is checked when each bar closes, once or every time. They need live prices; for stocks the shortest timeframe is 15 minutes, to stay within Twelve Data's free allowance.
 
 ## Trade journal
 

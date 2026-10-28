@@ -3127,10 +3127,10 @@ function onTicker(t) {
   S.tickers[t.sym] = t;
   updateWatchRow(t.sym, prev);
   if (t.sym === S.symbol) renderDetails();
-  Home.onTicker(t); MC.onTicker(t);
+  Home.onTicker(t); MC.onTicker(t); MK.onTicker(t);
   if (!t.stand) { checkAlerts(t.sym, t.last); Paper.onPrice(t.sym); }   // a saved stand-in price never sets off an alert or fills an order
 }
-function tickerSet() { const set = new Set(S.watch); set.add(S.symbol); S.alerts.forEach(a => { if (!a.hit) set.add(a.sym); }); Paper.symbols().forEach(id => set.add(id)); Home.symbols().forEach(id => set.add(id)); MC.symbols().forEach(id => set.add(id)); return Array.from(set); }
+function tickerSet() { const set = new Set(S.watch); set.add(S.symbol); S.alerts.forEach(a => { if (!a.hit) set.add(a.sym); }); Paper.symbols().forEach(id => set.add(id)); Home.symbols().forEach(id => set.add(id)); MC.symbols().forEach(id => set.add(id)); MK.symbols().forEach(id => set.add(id)); return Array.from(set); }
 
 /* ---------- network helpers ---------- */
 function fetchT(url, ms, opts) {
@@ -3896,6 +3896,8 @@ const CT_ALIAS = {
   'FX:NATGAS/USD': ['XNGUSD', 'NATGAS', 'NGAS'], 'FX:XCU/USD': ['XCUUSD', 'COPPER'], 'FX:XPT/USD': ['XPTUSD', 'PLATINUM'], 'FX:XPD/USD': ['XPDUSD', 'PALLADIUM'],
   'FX:CORN/USD': ['CORN'], 'FX:WHEAT/USD': ['WHEAT'], 'FX:SOYBN/USD': ['SOYBEAN', 'SOYBEANS'], 'FX:SUGAR/USD': ['SUGAR', 'SUGARRAW'],
 };
+const CT_REGION_MSG = "The broker's prices aren't available in your country, so these markets use other price sources.";
+const CT_REGION_NOTE = 'Not shown in the United States, Canada, the European Economic Area, India, Russia and other restricted countries.';
 const ctNorm = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const CT = {
   state: 'off', broker: '', live: false, map: {}, rev: {}, refs: {}, refsAt: 0, syncAt: 0, busy: false, fails: 0,
@@ -3906,17 +3908,20 @@ const CT = {
     let r;
     try { r = await fetchT(API + path, 20000); } catch (e) { throw new OErr(0, "Couldn't reach the cTrader prices. Check your connection."); }
     let j = null; try { j = await r.json(); } catch (e) { /* not JSON */ }
-    if (!r.ok || !j || j.ok === false) throw new OErr(r.status, (j && j.message) || `cTrader prices answered with error ${r.status}.`);
+    if (!r.ok || !j || j.ok === false) { const e = new OErr(r.status, (j && j.message) || `cTrader prices answered with error ${r.status}.`); e.body = j; throw e; }
     return j;
   },
   async connect(check) {
     if (!API) throw new OErr(0, 'cTrader is not set up for this site.');
     if (check) await this.get('/ct/status');   // coming back after an outage: only once the helper and cTrader both answer
     let j = store.get('ctsyms', null);   // the broker's symbol list, kept for six hours (it rarely changes)
-    if (j && j.none && Date.now() - (j.at || 0) < 3600000) throw new OErr(404, 'cTrader is not set up for this site.');   // asked within the hour
+    if (j && j.none && Date.now() - (j.at || 0) < 3600000) { if (j.region) { this.region = j.region; throw new OErr(451, CT_REGION_MSG); } throw new OErr(404, 'cTrader is not set up for this site.'); }   // asked within the hour
     if (!j || j.none || !Array.isArray(j.symbols) || Date.now() - (j.at || 0) > 6 * 3600000) {
       try { j = await this.get('/ct/symbols'); }
-      catch (e) { if (e.code >= 400 && e.code < 500) { store.raw('ctsyms', { at: Date.now(), none: true }); e.code = 404; } throw e; }   // a helper without cTrader (older ones answer 403)
+      catch (e) {
+        if (e.code === 451) { this.region = (e.body && e.body.country) || '?'; store.raw('ctsyms', { at: Date.now(), none: true, region: this.region }); e.message = CT_REGION_MSG; throw e; }   // the broker's prices aren't shown in this country
+        if (e.code >= 400 && e.code < 500) { store.raw('ctsyms', { at: Date.now(), none: true }); e.code = 404; } throw e;
+      }   // a helper without cTrader (older ones answer 403)
       store.raw('ctsyms', { at: Date.now(), broker: j.broker, live: j.live, symbols: j.symbols });
     }
     this.index(j);
@@ -4614,7 +4619,7 @@ function renderFeed() {
     else if (src === 'kraken') { state = 'live'; lbl = S.symbol === GOLD ? 'Live · PAXG' : 'Live · Kraken'; }
     else { state = 'live'; lbl = 'Live · Twelve Data'; }
     note.hidden = !['demo', 'paxg', 'metal', 'kraken', 'ctrader'].includes(src);
-    if (src === 'ctrader') note.textContent = `${label(S.symbol)} from ${CT.broker}’s cTrader prices: the broker’s own price, which follows the market closely.`;
+    if (src === 'ctrader') note.textContent = `${label(S.symbol)} from ${CT.broker}’s cTrader prices: the broker’s own price, which follows the market closely. ${CT_REGION_NOTE}`;
     if (src === 'paxg') note.textContent = 'Gold shown as PAX Gold (PAXG), a gold-backed token that tracks spot gold. Add a Twelve Data key for exact spot XAU/USD.';
     if (src === 'kraken') note.textContent = S.symbol === GOLD ? 'Gold shown as PAX Gold on Kraken, which trades within cents of spot gold. The spot price is on the right.' : `Live ${label(S.symbol)} from Kraken’s market, which tracks the interbank rate closely.`;
     if (src === 'metal') note.textContent = 'Live spot price from gold-api.com. Earlier candles are illustrative.';
@@ -4659,10 +4664,11 @@ function renderSources() {
   // forex, indices and commodities from a cTrader broker
   if (CT.configured() && CT.state !== 'off') {
     const xb = el('div', 'src'), xh = el('div', 'src-h');
-    xh.append(el('b', null, `Forex, indices & commodities · cTrader${CT.broker ? ' (' + CT.broker + ')' : ''}`), CT.active() ? stateChip(CTLive.ws && !CTLive.live ? 'Connecting' : 'Connected', CTLive.ws && !CTLive.live ? 'warn' : 'ok') : stateChip("Can't reach cTrader", 'warn'));
+    xh.append(el('b', null, `Forex, indices & commodities · cTrader${CT.broker ? ' (' + CT.broker + ')' : ''}`), CT.active() ? stateChip(CTLive.ws && !CTLive.live ? 'Connecting' : 'Connected', CTLive.ws && !CTLive.live ? 'warn' : 'ok') : CT.state === 'region' ? stateChip('Not in your country', 'warn') : stateChip("Can't reach cTrader", 'warn'));
     xb.append(xh, el('p', 'fine', CT.active()
       ? `Live prices for ${Object.keys(CT.map).length} of the site’s markets come from ${CT.broker}’s cTrader feed, through the site’s own helper. These are the broker’s prices, which follow the market closely.`
-      : 'The site’s cTrader prices aren’t answering right now, so these markets use the sources below. They come back by themselves.'));
+      : CT.state === 'region' ? `${CT_REGION_MSG} ${CT_REGION_NOTE}` : 'The site’s cTrader prices aren’t answering right now, so these markets use the sources below. They come back by themselves.'));
+    if (CT.active()) xb.append(el('p', 'fine', CT_REGION_NOTE));
     body.append(xb);
   }
   // forex & gold from OANDA
@@ -4752,6 +4758,7 @@ function updateUrl() {
 function updateDocTitle() {
   if (curView() === 'home') { document.title = `${CFG.siteName} · Free live charts, paper trading and a trading journal`; return; }
   if (curView() === 'journal') { document.title = `Trade journal · ${CFG.siteName}`; return; }
+  if (curView() === 'markets') { document.title = `Markets · ${CFG.siteName}`; return; }
   if (curView() === 'ideas') { document.title = ID.open && ID.cur ? `${ID.cur.title} · Ideas · ${CFG.siteName}` : `Ideas · ${CFG.siteName}`; return; }
   const t = S.tickers[S.symbol];
   const px = t ? ' ' + fmtP(t.last, t.prec) : '';
@@ -4879,7 +4886,7 @@ function applyTheme() {
     JR.eqSeries.applyOptions({ topLineColor: C.up, topFillColor1: alpha(C.up, 0.14), topFillColor2: alpha(C.up, 0.02), bottomLineColor: C.down, bottomFillColor1: alpha(C.down, 0.02), bottomFillColor2: alpha(C.down, 0.14) });
   }
   syncTradeMarks();
-  ideasRetheme(); MC.retheme();
+  ideasRetheme(); MC.retheme(); MK.retheme(); BT.retheme();
 }
 new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 if (mq.addEventListener) mq.addEventListener('change', applyTheme);
@@ -4887,7 +4894,7 @@ if (mq.addEventListener) mq.addEventListener('change', applyTheme);
 /* ---------- accounts: sign in with Google, profile, and syncing the setup across devices ----------
    Supabase keeps the accounts. The browser only ever holds the public "publishable" key; the database rules
    (row level security) let each person read and change only their own profile and saved setup. */
-const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset', 'paper', 'layout', 'tffav', 'tfcustom', 'ctset', 'wlists'];
+const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset', 'paper', 'layout', 'tffav', 'tfcustom', 'ctset', 'wlists', 'talerts'];
 function cleanState(d) {   // saved data is checked before it's used, whatever is in the database
   const o = {}; if (!d || typeof d !== 'object' || Array.isArray(d)) return o;
   const isId = v => typeof v === 'string' && v.length <= 40 && /^[A-Z0-9.:/_-]+$/.test(v);
@@ -4901,6 +4908,7 @@ function cleanState(d) {   // saved data is checked before it's used, whatever i
   if (Array.isArray(d.wlFold)) o.wlFold = d.wlFold.filter(v => typeof v === 'string' && /^[a-z]{3,8}$/.test(v)).slice(0, 10);
   if (isObj(d.drawings)) { o.drawings = {}; for (const [k, v] of Object.entries(d.drawings)) if (isId(k) && Array.isArray(v)) o.drawings[k] = v.filter(x => isObj(x) && typeof x.type === 'string' && x.type.length < 12).slice(0, 500); }
   if (Array.isArray(d.ind)) o.ind = d.ind.filter(x => isObj(x) && typeof x.type === 'string').slice(0, 50);
+  if (Array.isArray(d.talerts)) o.talerts = d.talerts.map(taClean).filter(Boolean).slice(0, TA_MAX);
   if (Array.isArray(d.alerts)) o.alerts = d.alerts.filter(x => isObj(x) && isId(x.sym) && typeof x.price === 'number' && isFinite(x.price) && (x.dir === 'above' || x.dir === 'below')).slice(0, 1000);
   if (isId(d.symbol)) o.symbol = d.symbol;
   if (tfValid(d.tf)) o.tf = d.tf;
@@ -5064,12 +5072,228 @@ $('#delGo').onclick = () => { if ($('#delConfirm').value.trim() === 'DELETE') Au
 document.addEventListener('visibilitychange', () => { if (document.hidden && Auth.timer) Auth.save(); });   // don't lose a change when the tab is closed
 if (sessionStorage.getItem('wickline:deleted')) { sessionStorage.removeItem('wickline:deleted'); setTimeout(() => toast('Your account and everything saved to it have been deleted.'), 600); }
 
+/* ---------- Markets: crypto and forex heatmaps, the stock heatmap (TradingView widget) and a crypto screener ---------- */
+// every USDT pair at once, from whichever crypto source answered (Binance, or OKX / Bybit where Binance is blocked)
+Binance.allTickers = async function () {
+  const r = await fetchT(`${this.rest}/api/v3/ticker/24hr`, 15000); if (!r.ok) throw new Error(`Binance answered with error ${r.status}.`);
+  return (await r.json()).map(x => ({ sym: 'BINANCE:' + x.symbol, last: +x.lastPrice, ref: +x.openPrice, high: +x.highPrice, low: +x.lowPrice, vol: +x.volume, qvol: +x.quoteVolume }));
+};
+OKX.allTickers = async function () { const all = await this.get('/api/v5/market/tickers?instType=SPOT'); this.learn(all); return all.map(x => this.conv(x)); };
+Bybit.allTickers = async function () { const res = await this.get('/v5/market/tickers?category=spot'); return (res.list || []).map(x => this.conv(x)); };
+const MK_STABLE = new Set(['USDC', 'FDUSD', 'TUSD', 'DAI', 'USDP', 'BUSD', 'EUR', 'EURI', 'AEUR', 'USD1', 'PYUSD', 'USDE', 'XUSD', 'RLUSD', 'USDS', 'BFUSD', 'GBP', 'TRY', 'BRL', 'USTC', 'UST', 'PAX', 'SUSD']);
+const MK_LEV = new Set(['BTC', 'ETH', 'BNB', 'XRP', 'ADA', 'DOT', 'LINK', 'TRX', 'LTC', 'EOS', 'XTZ', 'SXP', 'YFI', 'FIL', 'AAVE', 'SUSHI', 'UNI', 'XLM', 'BCH', '1INCH']);
+const MK_FX = ['EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'CAD', 'NZD'];   // each against the US dollar; the crosses are worked out from these
+const MK_FX_PAIR = { EUR: ['FX:EUR/USD', 1], GBP: ['FX:GBP/USD', 1], JPY: ['FX:USD/JPY', -1], CHF: ['FX:USD/CHF', -1], AUD: ['FX:AUD/USD', 1], CAD: ['FX:USD/CAD', -1], NZD: ['FX:NZD/USD', 1] };
+const MK_CCY = ['USD'].concat(MK_FX);
+const MK_TABS = [['crypto', 'Crypto heatmap'], ['forex', 'Forex heatmap'], ['stocks', 'Stock heatmap'], ['screener', 'Crypto screener']];
+const mkPct = (last, ref) => (ref > 0 && isFinite(last) ? (last / ref - 1) * 100 : null);
+function mkColor(p, cap = 3) {   // red through grey to green, strongest at ±cap %
+  if (p == null || !isFinite(p)) return '#5d6170';
+  const k = Math.min(1, Math.abs(p) / cap), a = [93, 97, 112], b = p >= 0 ? [8, 153, 129] : [242, 54, 69];
+  const m = k < 0.08 ? 0 : 0.35 + 0.65 * k;
+  return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * m)).join(',')})`;
+}
+// squarified treemap: rectangles for values that fill w × h
+function mkTreemap(items, x, y, w, h) {
+  const out = [], total = items.reduce((s, it) => s + it.v, 0); if (!total || w <= 0 || h <= 0) return out;
+  const scale = (w * h) / total;
+  let rest = items.map(it => Object.assign({}, it, { a: it.v * scale }));
+  const worst = (row, side) => { const s = row.reduce((t, r) => t + r.a, 0), mx = Math.max(...row.map(r => r.a)), mn = Math.min(...row.map(r => r.a)); return Math.max((side * side * mx) / (s * s), (s * s) / (side * side * mn)); };
+  while (rest.length) {
+    const side = Math.min(w, h); let row = [rest[0]], i = 1;
+    while (i < rest.length && worst(row.concat([rest[i]]), side) <= worst(row, side)) { row.push(rest[i]); i++; }
+    const s = row.reduce((t, r) => t + r.a, 0);
+    if (w >= h) { const cw = s / h; let cy = y; for (const r of row) { const rh = r.a / cw; out.push(Object.assign(r, { x, y: cy, w: cw, h: rh })); cy += rh; } x += cw; w -= cw; }
+    else { const ch = s / w; let cx = x; for (const r of row) { const rw = r.a / ch; out.push(Object.assign(r, { x: cx, y, w: rw, h: ch })); cx += rw; } y += ch; h -= ch; }
+    rest = rest.slice(i);
+  }
+  return out;
+}
+const MK = {
+  built: false, tab: (() => { const q = new URLSearchParams(location.search), t = q.get('view') === 'markets' && q.get('tab') ? q.get('tab') : store.get('mktab', 'crypto'); return MK_TABS.some(x => x[0] === t) ? t : 'crypto'; })(), all: null, at: 0, busy: null, err: '', timer: null, fxTimer: 0, tvTheme: '',
+  sort: { k: 'qvol', dir: -1 }, shown: 100,
+  visible() { return curView() === 'markets'; },
+  symbols() { return this.visible() && this.tab === 'forex' && S.ready ? Object.values(MK_FX_PAIR).map(p => p[0]) : []; },
+  build() {
+    this.built = true;
+    $('#mkTabs').replaceChildren(...MK_TABS.map(([id, name]) => { const b = el('button', 'btn', name); b.type = 'button'; b.dataset.tab = id; b.setAttribute('role', 'tab'); b.onclick = () => this.setTab(id); return b; }));
+    $('#mkCount').onchange = () => { store.set('mkcount', +$('#mkCount').value); this.drawCrypto(); };
+    const c = store.get('mkcount', 50); $('#mkCount').value = [30, 50, 100].includes(c) ? String(c) : '50';
+    ['#scSearch', '#scVol', '#scChg'].forEach(s => { $(s).oninput = () => { this.shown = 100; this.drawScreener(); }; });
+    $('#scMore').onclick = () => { this.shown += 200; this.drawScreener(); };
+    document.querySelectorAll('#scTable th[data-k]').forEach(th => {
+      const b = el('button', 'sc-sort', th.textContent); b.type = 'button'; th.replaceChildren(b);
+      b.onclick = () => { const k = th.dataset.k; this.sort = this.sort.k === k ? { k, dir: -this.sort.dir } : { k, dir: k === 'sym' ? 1 : -1 }; this.drawScreener(); };
+    });
+    let rz = 0; new ResizeObserver(() => { cancelAnimationFrame(rz); rz = requestAnimationFrame(() => { if (this.visible() && this.tab === 'crypto') this.drawCrypto(); }); }).observe($('#mkMap'));
+  },
+  show() {
+    if (!this.built) this.build();
+    this.setTab(this.tab, true);
+    clearInterval(this.timer); this.timer = setInterval(() => { if (this.visible() && !document.hidden && ['crypto', 'screener'].includes(this.tab)) this.load(); }, 30000);
+  },
+  leave() { clearInterval(this.timer); this.timer = null; },
+  ready() { if (this.visible()) this.setTab(this.tab, true); },   // the market data has connected
+  setTab(id, first) {
+    this.tab = id; store.set('mktab', id);
+    document.querySelectorAll('#mkTabs .btn').forEach(b => { const on = b.dataset.tab === id; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
+    for (const [t] of MK_TABS) $('#mk-' + t).hidden = t !== id;
+    $('#mkSub').textContent = { crypto: 'Every coin is a box sized by its trading over the last 24 hours, coloured by how much it moved.', forex: 'How each major currency moved against the others today.', stocks: 'US stocks by sector, sized by company value. Data and widget by TradingView.', screener: 'Every coin traded against USDT. Sort, filter, and click one to open its chart.' }[id];
+    if (!first && this.visible()) { try { history.replaceState(history.state, '', location.pathname + '?view=markets&tab=' + id); } catch (e) { /* address can't be changed here */ } }
+    ensureTickerSubs();
+    if (id === 'crypto' || id === 'screener') { if (this.all) (id === 'crypto' ? this.drawCrypto() : this.drawScreener()); if (!this.all || Date.now() - this.at > 25000) this.load(); }
+    if (id === 'forex') this.drawForex();
+    if (id === 'stocks') this.loadStocks();
+  },
+  async load() {
+    if (this.busy) return this.busy;
+    if (!S.ready) return null;   // tried again once the market data connects (ready)
+    this.busy = (async () => {
+      try {
+        if (!S.binance || !CX || !CX.allTickers) throw new Error('Crypto prices are offline right now.');
+        const rows = await CX.allTickers();
+        this.all = rows.filter(r => {
+          const raw = r.sym.slice(8); if (!raw.endsWith('USDT')) return false;
+          const base = raw.slice(0, -4);
+          const lev = /^(.+?)(UP|DOWN|BULL|BEAR)$/.exec(base);   // old leveraged tokens such as BTCUP; not coins like JUP
+          return base && !MK_STABLE.has(base) && !(lev && MK_LEV.has(lev[1])) && r.last > 0 && r.qvol > 0;
+        }).map(r => Object.assign(r, { base: r.sym.slice(8, -4), chg: mkPct(r.last, r.ref) }));
+        this.at = Date.now(); this.err = '';
+      } catch (e) { this.err = e && e.message ? e.message : 'Couldn\'t load the prices.'; }
+      this.busy = null;
+      if (this.visible()) { if (this.tab === 'crypto') this.drawCrypto(); if (this.tab === 'screener') this.drawScreener(); }
+    })();
+    return this.busy;
+  },
+  open(id) { setSymbol(id); setView('chart', true); },
+  note(sel, txt) { const n = $(sel); n.textContent = txt; n.hidden = !txt; },
+  // ----- crypto heatmap -----
+  drawCrypto() {
+    const box = $('#mkMap'), W = box.clientWidth, H = box.clientHeight;
+    this.note('#mkCryptoErr', this.err && !this.all ? this.err : '');
+    if (!this.all) { box.replaceChildren(); return; }
+    const n = +$('#mkCount').value || 50;
+    const top = this.all.slice().sort((a, b) => b.qvol - a.qvol).slice(0, n);
+    const rects = mkTreemap(top.map(r => ({ r, v: r.qvol })), 0, 0, W, H);
+    box.replaceChildren(...rects.map(({ r, x, y, w, h }) => {
+      const t = el('button', 'mk-tile'); t.type = 'button'; t.dataset.sym = r.sym;
+      t.style.cssText = `left:${x.toFixed(1)}px;top:${y.toFixed(1)}px;width:${Math.max(0, w - 1).toFixed(1)}px;height:${Math.max(0, h - 1).toFixed(1)}px;background:${mkColor(r.chg)}`;
+      const name = COINS[r.base] || r.base, chg = r.chg == null ? '—' : fmtPct(r.chg);
+      t.title = `${name} (${r.base}/USDT): ${fmtP(r.last, precFor(r.sym, r.last))}, ${chg} in 24h, ${compactUsd(r.qvol)} traded`;
+      t.setAttribute('aria-label', t.title);
+      const big = Math.min(w, h * 2.2), fs = clamp(big / 5.2, 9, 30);
+      if (w > 30 && h > 16) {
+        t.style.fontSize = fs + 'px';
+        t.append(el('b', null, r.base));
+        if (h > fs * 2.6 && w > 40) t.append(el('span', null, chg));
+        if (h > fs * 4.2 && w > 70) t.append(el('span', 'px', fmtP(r.last, precFor(r.sym, r.last))));
+      }
+      t.onclick = () => this.open(r.sym);
+      return t;
+    }));
+    const up = top.filter(r => r.chg > 0).length;
+    $('#mkCryptoInfo').textContent = `${top.length} coins · ${up} up, ${top.length - up} down · prices from ${SRC_NAME.binance || 'Binance'} · updates every 30 seconds`;
+  },
+  // ----- forex heatmap -----
+  fxMoves() {   // each currency's move against the US dollar today, from the seven dollar pairs
+    const u = { USD: 0 }; let live = 0, saved = 0;
+    for (const c of MK_FX) {
+      const [id, dir] = MK_FX_PAIR[c], t = S.tickers[id], p = t ? mkPct(t.last, t.ref) : null;
+      if (p == null) continue;
+      u[c] = dir > 0 ? p : (1 / (1 + p / 100) - 1) * 100;
+      if (t.stand || t.src === 'demo' || srcOf(id) === 'demo') saved++; else live++;
+    }
+    return { u, live, saved };
+  },
+  drawForex() {
+    const { u, live, saved } = this.fxMoves(), grid = $('#fxGrid'), have = MK_CCY.filter(c => u[c] != null);
+    const cross = (a, b) => (u[a] == null || u[b] == null ? null : ((1 + u[a] / 100) / (1 + u[b] / 100) - 1) * 100);
+    const head = el('div', 'fx-c fx-h'); grid.replaceChildren(head);
+    MK_CCY.forEach(c => grid.append(el('div', 'fx-c fx-h', c)));
+    for (const a of MK_CCY) {
+      grid.append(el('div', 'fx-c fx-h fx-row', a));
+      for (const b of MK_CCY) {
+        if (a === b) { grid.append(el('div', 'fx-c fx-self')); continue; }
+        const p = cross(a, b), id = [`FX:${a}/${b}`, `FX:${b}/${a}`].find(x => FX.some(f => 'FX:' + f[0] === x));
+        const cell = el(id ? 'button' : 'div', 'fx-c fx-v', p == null ? '—' : fmtPct(p, 2));
+        cell.style.background = mkColor(p, 1);
+        cell.title = p == null ? `${a}/${b}: no price yet` : `${a} against ${b}: ${fmtPct(p, 2)} today${id ? ` · open the ${id.slice(3)} chart` : ''}`;
+        if (id) { cell.type = 'button'; cell.dataset.sym = id; cell.onclick = () => this.open(id); }
+        grid.append(cell);
+      }
+    }
+    // currency strength: the average of each currency's moves against the other seven
+    const str = have.map(c => [c, have.filter(d => d !== c).reduce((s, d) => s + cross(c, d), 0) / Math.max(1, have.length - 1)]).sort((x, y) => y[1] - x[1]);
+    const mx = Math.max(0.05, ...str.map(x => Math.abs(x[1])));
+    $('#fxStr').replaceChildren(...str.map(([c, v]) => {
+      const row = el('div', 'fx-s'); row.dataset.ccy = c;
+      const bar = el('span', 'bar'), fill = el('i'); fill.style.width = (Math.abs(v) / mx * 50).toFixed(1) + '%'; fill.style.background = mkColor(v, mx); fill.className = v >= 0 ? 'pos' : 'neg';
+      bar.append(fill); row.append(el('b', null, c), bar, el('span', 'v', fmtPct(v, 2)));
+      return row;
+    }));
+    this.note('#fxNote', have.length < 2 ? 'Waiting for forex prices…' : saved && !live ? 'Saved prices · not live. Live forex prices need the site\'s helper.' : '');
+  },
+  onTicker(t) {
+    if (!this.visible() || this.tab !== 'forex' || !Object.values(MK_FX_PAIR).some(p => p[0] === t.sym)) return;
+    if (this.fxTimer) return;
+    this.fxTimer = setTimeout(() => { this.fxTimer = 0; if (this.visible() && this.tab === 'forex') this.drawForex(); }, 500);
+  },
+  // ----- stock heatmap: TradingView's free widget -----
+  loadStocks() {
+    const theme = document.documentElement.dataset.theme === 'light' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+    const box = $('#tvHeat');
+    if (box.querySelector('script') && this.tvTheme === theme) return;
+    this.tvTheme = theme;
+    const inner = el('div', 'tradingview-widget-container__widget');
+    const credit = el('div', 'tradingview-widget-copyright');
+    const a = el('a'); a.href = 'https://www.tradingview.com/'; a.rel = 'noopener nofollow'; a.target = '_blank'; a.append(el('span', null, 'Track all markets on TradingView'));
+    credit.append(a);
+    const sc = document.createElement('script'); sc.src = 'https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js'; sc.async = true;
+    sc.textContent = JSON.stringify({ exchanges: [], dataSource: 'SPX500', grouping: 'sector', blockSize: 'market_cap_basic', blockColor: 'change', locale: 'en', symbolUrl: '', colorTheme: theme, hasTopBar: false, isDataSetEnabled: false, isZoomEnabled: true, hasSymbolTooltip: true, isMonoSize: false, width: '100%', height: '100%' });
+    box.replaceChildren(inner, credit, sc);
+  },
+  retheme() { if (this.built && $('#tvHeat').querySelector('script')) { $('#tvHeat').replaceChildren(); if (this.visible() && this.tab === 'stocks') this.loadStocks(); } if (this.visible() && this.tab === 'crypto') this.drawCrypto(); },
+  // ----- crypto screener -----
+  drawScreener() {
+    this.note('#scErr', this.err && !this.all ? this.err : '');
+    const body = $('#scTable tbody'); if (!this.all) { body.replaceChildren(); $('#scInfo').textContent = ''; $('#scMore').hidden = true; return; }
+    const q = $('#scSearch').value.trim().toUpperCase().replace(/[\s/]/g, ''), minVol = +$('#scVol').value || 0, chg = $('#scChg').value;
+    let rows = this.all.filter(r => (!q || r.base.includes(q.replace(/USDT$/, '')) || (COINS[r.base] || '').toUpperCase().replace(/\s/g, '').includes(q)) && r.qvol >= minVol);
+    if (chg === 'up') rows = rows.filter(r => r.chg > 0); if (chg === 'down') rows = rows.filter(r => r.chg < 0);
+    if (chg === 'up5') rows = rows.filter(r => r.chg >= 5); if (chg === 'down5') rows = rows.filter(r => r.chg <= -5);
+    const k = this.sort.k, d = this.sort.dir, val = r => (k === 'sym' ? r.base : k === 'range' ? (r.high > r.low ? (r.last - r.low) / (r.high - r.low) : 0.5) : k === 'fromHigh' ? (r.high ? r.last / r.high - 1 : 0) : r[k]);
+    rows.sort((a, b) => { const x = val(a), y = val(b); if (x == null) return 1; if (y == null) return -1; return typeof x === 'string' ? d * x.localeCompare(y) : d * (x - y); });
+    document.querySelectorAll('#scTable th[data-k]').forEach(th => th.setAttribute('aria-sort', th.dataset.k === k ? (d > 0 ? 'ascending' : 'descending') : 'none'));
+    const show = rows.slice(0, this.shown);
+    body.replaceChildren(...show.map(r => {
+      const tr = el('tr'); tr.dataset.sym = r.sym; tr.tabIndex = 0; tr.title = `Open the ${r.base}/USDT chart`;
+      const prec = precFor(r.sym, r.last), rng = r.high > r.low ? (r.last - r.low) / (r.high - r.low) : 0.5;
+      const sym = el('td', 'sc-sym'); sym.append(el('b', null, r.base), el('span', null, '/USDT'), el('small', null, COINS[r.base] || ''));
+      const c = el('td', 'num ' + (r.chg > 0 ? 'up-t' : r.chg < 0 ? 'dn-t' : ''), r.chg == null ? '—' : fmtPct(r.chg));
+      const bar = el('td', 'sc-rng'); const rb = el('span', 'rb'), dot = el('i'); dot.style.left = (rng * 100).toFixed(1) + '%'; rb.append(dot); bar.append(rb); bar.title = `${Math.round(rng * 100)}% of the way from the 24h low to the high`;
+      const star = el('td', 'sc-act'), sb = el('button', 'icon-btn'); sb.type = 'button';
+      const on = S.watch.includes(r.sym); sb.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${on ? 'M5 12.5l4.5 4.5L19 7.5' : 'M12 5v14M5 12h14'}"/></svg>`; sb.title = on ? 'In your watchlist' : 'Add to your watchlist'; sb.setAttribute('aria-label', `${sb.title}: ${r.base}`);
+      sb.onclick = e => { e.stopPropagation(); if (!S.watch.includes(r.sym)) { addWatch(r.sym); toast(`Added ${r.base}/USDT to your watchlist`); this.drawScreener(); } };
+      star.append(sb);
+      tr.append(sym, el('td', 'num', fmtP(r.last, prec)), c, el('td', 'num', fmtP(r.high, prec)), el('td', 'num', fmtP(r.low, prec)), el('td', 'num', r.high ? fmtPct((r.last / r.high - 1) * 100) : '—'), bar, el('td', 'num', compactUsd(r.qvol)), star);
+      tr.onclick = () => this.open(r.sym);
+      tr.onkeydown = e => { if (e.key === 'Enter') this.open(r.sym); };
+      return tr;
+    }));
+    $('#scInfo').textContent = `${rows.length.toLocaleString('en-GB')} of ${this.all.length.toLocaleString('en-GB')} coins · prices from ${SRC_NAME.binance || 'Binance'} · updates every 30 seconds`;
+    $('#scMore').hidden = rows.length <= this.shown;
+    if (!rows.length) body.append(Object.assign(el('tr', 'sc-none'), { innerHTML: '<td colspan="9">No coin matches these filters.</td>' }));
+  },
+};
+function compactUsd(v) { if (!isFinite(v)) return '—'; const a = Math.abs(v); return a >= 1e9 ? `$${(v / 1e9).toFixed(2)}B` : a >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : a >= 1e3 ? `$${(v / 1e3).toFixed(0)}K` : `$${v.toFixed(0)}`; }
+
 /* ---------- pages: Chart, Ideas and Journal ---------- */
-const VIEWS = ['home', 'chart', 'ideas', 'journal'];
+const VIEWS = ['home', 'chart', 'markets', 'ideas', 'journal'];
 const curView = () => (VIEWS.includes(document.body.dataset.view) ? document.body.dataset.view : 'chart');
 function viewQuery(v) {
   v = v || curView();
   if (v === 'journal') return '?view=journal';
+  if (v === 'markets') return '?view=markets' + (MK.tab && MK.tab !== 'crypto' ? '&tab=' + MK.tab : '');
   if (v === 'ideas') return '?view=ideas' + (ID.open ? '&idea=' + ID.open : '');
   if (v === 'chart') return '?view=chart';
   return '';   // home
@@ -5077,7 +5301,7 @@ function viewQuery(v) {
 function setView(v, push) {
   v = VIEWS.includes(v) ? v : 'chart';
   document.body.dataset.view = v;
-  $('#journal').hidden = v !== 'journal'; $('#ideas').hidden = v !== 'ideas'; $('#home').hidden = v !== 'home';
+  $('#journal').hidden = v !== 'journal'; $('#ideas').hidden = v !== 'ideas'; $('#home').hidden = v !== 'home'; $('#markets').hidden = v !== 'markets';
   document.querySelectorAll('.view-tab').forEach(a => a.setAttribute('aria-current', a.dataset.view === v ? 'page' : 'false'));
   let url;
   if (v === 'chart') {
@@ -5087,6 +5311,7 @@ function setView(v, push) {
   try { if (push && url !== location.pathname + location.search) history.pushState({ view: v }, '', url); else history.replaceState({ view: v }, '', url); } catch (e) { /* address can't be changed here */ }
   $('#acctMenu').hidden = true; jTipHide();
   if (v === 'home') Home.show();
+  if (v === 'markets') MK.show(); else MK.leave();
   if (v === 'journal') Journal.show();
   else if (v === 'ideas') Ideas.show();
   else requestAnimationFrame(() => { sizeOverlay(); markDirty(); if (S.focusTime) focusChart(); });
@@ -5787,6 +6012,7 @@ function syncTradeMarks() {
     }
     m.sort((x, y) => x.time - y.time);
   }
+  const bm = BT.marks(); if (bm.length) { m.push(...bm); m.sort((x, y) => x.time - y.time); }
   if (!tMarks) { if (m.length) tMarks = LWC.createSeriesMarkers(S.main, m); } else tMarks.setMarkers(m);
 }
 function focusChart() {
@@ -8498,6 +8724,437 @@ function downloadChartData() {
 $('#dataBtn').onclick = downloadChartData;
 function renderDataBtn() { const ok = DATA_SRC_OK.includes(srcOf(S.symbol)); $('#dataBtn').classList.toggle('dim', !ok); $('#dataBtn').title = ok ? 'Download chart data (CSV)' : 'Data download is for crypto charts'; }
 
+/* ---------- rules: conditions on prices and indicators, shared by the strategy tester and indicator alerts ----------
+   Every value is worked out with the chart's own indicator formulas, on the bars of the chart (or of the alert's market). */
+const RP_LEN = (def, max = 500, min = 1) => ['len', 'Length', def, min, max, 1];
+const RULE_OPS = [
+  ['close', 'Close', 'Price'], ['open', 'Open', 'Price'], ['high', 'High', 'Price'], ['low', 'Low', 'Price'], ['volume', 'Volume', 'Price'],
+  ['sma', 'SMA', 'Moving averages', [RP_LEN(50)]], ['ema', 'EMA', 'Moving averages', [RP_LEN(21)]], ['wma', 'WMA', 'Moving averages', [RP_LEN(20)]],
+  ['hma', 'Hull MA', 'Moving averages', [RP_LEN(9)]], ['vwap', 'VWAP', 'Moving averages'],
+  ['bbU', 'Bollinger upper', 'Bands and channels', [RP_LEN(20, 300, 2), ['mult', 'Std. dev.', 2, 0.5, 5, 0.1]]],
+  ['bbM', 'Bollinger basis', 'Bands and channels', [RP_LEN(20, 300, 2), ['mult', 'Std. dev.', 2, 0.5, 5, 0.1]]],
+  ['bbL', 'Bollinger lower', 'Bands and channels', [RP_LEN(20, 300, 2), ['mult', 'Std. dev.', 2, 0.5, 5, 0.1]]],
+  ['kcU', 'Keltner upper', 'Bands and channels', [RP_LEN(20), ['mult', 'Multiplier', 2, 0.5, 10, 0.1]]],
+  ['kcL', 'Keltner lower', 'Bands and channels', [RP_LEN(20), ['mult', 'Multiplier', 2, 0.5, 10, 0.1]]],
+  ['dcU', 'Highest high (before this bar)', 'Bands and channels', [RP_LEN(20)]], ['dcL', 'Lowest low (before this bar)', 'Bands and channels', [RP_LEN(20)]],
+  ['st', 'SuperTrend', 'Trend', [['len', 'ATR length', 10, 1, 100, 1], ['factor', 'Factor', 3, 0.5, 10, 0.1]]], ['psar', 'Parabolic SAR', 'Trend'],
+  ['adx', 'ADX', 'Trend', [RP_LEN(14, 100)]],
+  ['rsi', 'RSI', 'Oscillators', [RP_LEN(14, 100, 2)]], ['stochK', 'Stochastic %K', 'Oscillators', [['k', 'Length', 14, 1, 100, 1]]], ['stochD', 'Stochastic %D', 'Oscillators', [['k', 'Length', 14, 1, 100, 1]]],
+  ['cci', 'CCI', 'Oscillators', [RP_LEN(20)]], ['willr', 'Williams %R', 'Oscillators', [RP_LEN(14)]], ['mfi', 'Money Flow Index', 'Oscillators', [RP_LEN(14)]], ['roc', 'Rate of change', 'Oscillators', [RP_LEN(9)]],
+  ['macd', 'MACD line', 'Oscillators', [['fast', 'Fast', 12, 1, 200, 1], ['slow', 'Slow', 26, 1, 300, 1], ['signal', 'Signal', 9, 1, 100, 1]]],
+  ['macdS', 'MACD signal', 'Oscillators', [['fast', 'Fast', 12, 1, 200, 1], ['slow', 'Slow', 26, 1, 300, 1], ['signal', 'Signal', 9, 1, 100, 1]]],
+  ['macdH', 'MACD histogram', 'Oscillators', [['fast', 'Fast', 12, 1, 200, 1], ['slow', 'Slow', 26, 1, 300, 1], ['signal', 'Signal', 9, 1, 100, 1]]],
+  ['atr', 'ATR', 'Volatility', [RP_LEN(14)]],
+  ['num', 'Value', 'Number', [['v', 'Value', 30, -1e12, 1e12, 'any']]],
+];
+const RULE_OP = Object.fromEntries(RULE_OPS.map(o => [o[0], { id: o[0], label: o[1], group: o[2], params: o[3] || [] }]));
+const RULE_CMP = [['xa', 'crosses above'], ['xb', 'crosses below'], ['gt', 'is above'], ['lt', 'is below']];
+const RULE_CMP_TXT = Object.fromEntries(RULE_CMP);
+const ruleShift = a => a.map((_, i) => (i ? a[i - 1] : null));
+function ruleInd(type, p, B, tf, sym) {   // one indicator's lines, with its other settings at their defaults
+  const def = Object.fromEntries((IND[type].params || []).map(x => [x.k, x.def]));
+  return indCompute({ type, params: Object.assign(def, p) }, B, tf, sym);
+}
+function ruleSeries(o, B, tf, sym) {
+  const p = o.p || {};
+  switch (o.id) {
+    case 'close': case 'open': case 'high': case 'low': case 'volume': return B.map(b => b[o.id]);
+    case 'sma': case 'ema': case 'wma': case 'hma': case 'rsi': case 'cci': case 'willr': case 'mfi': case 'roc': case 'atr': return ruleInd(o.id, { len: p.len }, B, tf, sym)[0];
+    case 'vwap': return ruleInd('vwap', {}, B, tf, sym)[0];
+    case 'bbU': case 'bbM': case 'bbL': return ruleInd('bb', { len: p.len, mult: p.mult }, B, tf, sym)[{ bbU: 0, bbM: 1, bbL: 2 }[o.id]];
+    case 'kcU': case 'kcL': return ruleInd('keltner', { len: p.len, mult: p.mult }, B, tf, sym)[o.id === 'kcU' ? 0 : 2];
+    case 'dcU': case 'dcL': return ruleShift(ruleInd('donchian', { len: p.len }, B, tf, sym)[o.id === 'dcU' ? 0 : 2]);
+    case 'st': { const [u, d] = ruleInd('supertrend', { len: p.len, factor: p.factor }, B, tf, sym); return u.map((v, i) => (v != null ? v : d[i])); }
+    case 'psar': return ruleInd('psar', {}, B, tf, sym)[0];
+    case 'adx': return ruleInd('adx', { len: p.len, smooth: p.len }, B, tf, sym)[0];
+    case 'stochK': case 'stochD': return ruleInd('stoch', { k: p.k }, B, tf, sym)[o.id === 'stochK' ? 0 : 1];
+    case 'macd': case 'macdS': case 'macdH': return ruleInd('macd', { fast: p.fast, slow: p.slow, signal: p.signal }, B, tf, sym)[{ macd: 1, macdS: 2, macdH: 0 }[o.id]];
+    case 'num': return B.map(() => +p.v);
+  }
+  return B.map(() => null);
+}
+const ruleKey = o => o.id + JSON.stringify(o.p || {});
+function ruleCache(B, tf, sym) {   // each value worked out once per set of bars
+  const m = new Map();
+  return o => { const k = ruleKey(o); if (!m.has(k)) m.set(k, ruleSeries(o, B, tf, sym)); return m.get(k); };
+}
+function condAt(c, get, i) {
+  const a = get(c.a), b = get(c.b), x = a[i], y = b[i];
+  if (x == null || y == null || !isFinite(x) || !isFinite(y)) return false;
+  if (c.op === 'gt') return x > y;
+  if (c.op === 'lt') return x < y;
+  if (i < 1) return false;
+  const px = a[i - 1], py = b[i - 1];
+  if (px == null || py == null || !isFinite(px) || !isFinite(py)) return false;
+  return c.op === 'xa' ? px <= py && x > y : px >= py && x < y;
+}
+function ruleAt(r, get, i) {
+  const cs = (r && r.conds) || []; if (!cs.length) return false;
+  return r.match === 'any' ? cs.some(c => condAt(c, get, i)) : cs.every(c => condAt(c, get, i));
+}
+function opText(o) {
+  const d = RULE_OP[o.id]; if (!d) return '?';
+  if (o.id === 'num') return String(+o.p.v);
+  const ps = d.params.map(x => o.p && o.p[x[0]] != null ? o.p[x[0]] : x[2]);
+  return d.label + (ps.length ? ' ' + ps.join(' ') : '');
+}
+const condText = c => `${opText(c.a)} ${RULE_CMP_TXT[c.op] || c.op} ${opText(c.b)}`;
+const ruleText = r => ((r && r.conds) || []).map(condText).join(r && r.match === 'any' ? ' or ' : ' and ') || 'no conditions';
+function opClean(o) {   // a saved or typed operand, made safe
+  const d = RULE_OP[o && o.id] || RULE_OP.close, p = {};
+  for (const [k, , def, mn, mx, st] of d.params) { let v = o && o.p && isFinite(+o.p[k]) ? +o.p[k] : def; v = clamp(v, mn, mx); if (st === 1) v = Math.round(v); p[k] = v; }
+  return { id: d.id, p };
+}
+function ruleClean(r) {
+  const conds = (r && Array.isArray(r.conds) ? r.conds : []).slice(0, 6).map(c => ({ a: opClean(c && c.a), op: RULE_CMP_TXT[c && c.op] ? c.op : 'xa', b: opClean(c && c.b) }));
+  return { match: r && r.match === 'any' ? 'any' : 'all', conds };
+}
+// the editor: one row per condition, each side a value with its settings
+function opSelect(o, onChange) {
+  const w = el('span', 'rl-op'), sw = el('span', 'selwrap'), s = el('select', 'field rl-sel'); s.setAttribute('aria-label', 'Value');
+  let grp = null, g = null;
+  for (const d of Object.values(RULE_OP)) { if (d.group !== grp) { grp = d.group; g = el('optgroup'); g.label = grp; s.append(g); } const op = el('option', null, d.label); op.value = d.id; g.append(op); }
+  s.value = o.id; sw.append(s); w.append(sw);
+  const ps = el('span', 'rl-ps'); w.append(ps);
+  const drawParams = () => {
+    ps.replaceChildren();
+    for (const [k, lbl, def, mn, mx, st] of RULE_OP[o.id].params) {
+      const i = el('input', 'field rl-num'); i.type = 'number'; i.step = String(st); i.min = String(mn); i.max = String(mx); i.value = String(o.p[k] != null ? o.p[k] : def); i.title = lbl; i.setAttribute('aria-label', lbl);
+      if (o.id === 'num') i.classList.add('wide');
+      i.onchange = () => { o.p[k] = +i.value; Object.assign(o, opClean(o)); i.value = String(o.p[k]); onChange(); };
+      ps.append(i);
+    }
+  };
+  s.onchange = () => { o.id = s.value; Object.assign(o, opClean({ id: o.id })); drawParams(); onChange(); };
+  drawParams();
+  return w;
+}
+function ruleEditor(box, rule, onChange, opts = {}) {
+  const draw = () => {
+    box.replaceChildren();
+    const head = el('div', 'rl-head');
+    if (opts.title) head.append(el('b', null, opts.title));
+    if (rule.conds.length > 1) {
+      const mw = el('span', 'selwrap'), m = el('select', 'field rl-match'); m.setAttribute('aria-label', 'How conditions combine');
+      [['all', 'all of these'], ['any', 'any of these']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; m.append(o); });
+      m.value = rule.match; m.onchange = () => { rule.match = m.value; onChange(); }; mw.append(m); head.append(mw);
+    }
+    box.append(head);
+    rule.conds.forEach((c, i) => {
+      const row = el('div', 'rl-row');
+      const cw = el('span', 'selwrap'), cmp = el('select', 'field rl-cmp'); cmp.setAttribute('aria-label', 'Comparison');
+      RULE_CMP.forEach(([v, t]) => { const o = el('option', null, t); o.value = v; cmp.append(o); }); cmp.value = c.op; cmp.onchange = () => { c.op = cmp.value; onChange(); }; cw.append(cmp);
+      const x = el('button', 'icon-btn rl-x'); x.type = 'button'; x.innerHTML = svg('x'); x.title = 'Remove this condition'; x.setAttribute('aria-label', 'Remove this condition');
+      x.onclick = () => { rule.conds.splice(i, 1); draw(); onChange(); };
+      row.append(opSelect(c.a, onChange), cw, opSelect(c.b, onChange), x);
+      box.append(row);
+    });
+    if (rule.conds.length < 6) {
+      const add = el('button', 'ghost rl-add', rule.conds.length ? '+ Add a condition' : '+ Add a condition'); add.type = 'button';
+      add.onclick = () => { const last = rule.conds[rule.conds.length - 1]; rule.conds.push(last ? JSON.parse(JSON.stringify(last)) : { a: opClean({ id: 'close' }), op: 'xa', b: opClean({ id: 'sma' }) }); draw(); onChange(); };
+      box.append(add);
+    }
+  };
+  draw();
+  return draw;
+}
+
+/* ---------- strategy tester: rules run over the chart's bars, like TradingView's Strategy Tester ----------
+   Signals are read when a bar closes and filled at the next bar's open. Stops and targets are checked against each
+   bar's high and low; when both could have been hit in one bar, the stop is assumed to come first. */
+const C2 = (a, op, b) => ({ a: opClean(a), op, b: opClean(b) });
+const R1 = (...conds) => ({ match: 'all', conds });
+const BT_PRESETS = [
+  ['ma', 'Moving average cross', { le: R1(C2({ id: 'ema', p: { len: 9 } }, 'xa', { id: 'ema', p: { len: 21 } })), lx: R1(C2({ id: 'ema', p: { len: 9 } }, 'xb', { id: 'ema', p: { len: 21 } })),
+    se: R1(C2({ id: 'ema', p: { len: 9 } }, 'xb', { id: 'ema', p: { len: 21 } })), sx: R1(C2({ id: 'ema', p: { len: 9 } }, 'xa', { id: 'ema', p: { len: 21 } })) }],
+  ['rsi', 'RSI oversold and overbought', { le: R1(C2({ id: 'rsi', p: { len: 14 } }, 'xa', { id: 'num', p: { v: 30 } })), lx: R1(C2({ id: 'rsi', p: { len: 14 } }, 'xa', { id: 'num', p: { v: 70 } })),
+    se: R1(C2({ id: 'rsi', p: { len: 14 } }, 'xb', { id: 'num', p: { v: 70 } })), sx: R1(C2({ id: 'rsi', p: { len: 14 } }, 'xb', { id: 'num', p: { v: 30 } })) }],
+  ['macd', 'MACD cross', { le: R1(C2({ id: 'macd' }, 'xa', { id: 'macdS' })), lx: R1(C2({ id: 'macd' }, 'xb', { id: 'macdS' })), se: R1(C2({ id: 'macd' }, 'xb', { id: 'macdS' })), sx: R1(C2({ id: 'macd' }, 'xa', { id: 'macdS' })) }],
+  ['bb', 'Bollinger Bands bounce', { le: R1(C2({ id: 'close' }, 'xa', { id: 'bbL' })), lx: R1(C2({ id: 'close' }, 'xa', { id: 'bbM' })), se: R1(C2({ id: 'close' }, 'xb', { id: 'bbU' })), sx: R1(C2({ id: 'close' }, 'xb', { id: 'bbM' })) }],
+  ['brk', 'Breakout (20-bar high and low)', { le: R1(C2({ id: 'close' }, 'xa', { id: 'dcU', p: { len: 20 } })), lx: R1(C2({ id: 'close' }, 'xb', { id: 'dcL', p: { len: 10 } })),
+    se: R1(C2({ id: 'close' }, 'xb', { id: 'dcL', p: { len: 20 } })), sx: R1(C2({ id: 'close' }, 'xa', { id: 'dcU', p: { len: 10 } })) }],
+  ['st', 'SuperTrend', { le: R1(C2({ id: 'close' }, 'xa', { id: 'st' })), lx: R1(C2({ id: 'close' }, 'xb', { id: 'st' })), se: R1(C2({ id: 'close' }, 'xb', { id: 'st' })), sx: R1(C2({ id: 'close' }, 'xa', { id: 'st' })) }],
+];
+const BT_DEF = { preset: 'ma', dir: 'long', sl: '', tp: '', size: 100, cap: 10000, fee: 0.1 };
+function btClean(v) {
+  const o = Object.assign({}, BT_DEF, v && typeof v === 'object' ? v : {}), p = BT_PRESETS.find(x => x[0] === o.preset);
+  const base = p ? p[2] : BT_PRESETS[0][2];
+  for (const k of ['le', 'lx', 'se', 'sx']) o[k] = ruleClean(v && v[k] ? v[k] : base[k]);
+  o.preset = p || o.preset === 'custom' ? o.preset : 'ma';
+  o.dir = ['long', 'short', 'both'].includes(o.dir) ? o.dir : 'long';
+  const pos = (x, mx) => (x === '' || x == null || !isFinite(+x) || +x <= 0 ? '' : Math.min(+x, mx));
+  o.sl = pos(o.sl, 90); o.tp = pos(o.tp, 1000);
+  o.size = clamp(isFinite(+o.size) ? +o.size : 100, 1, 100); o.cap = clamp(isFinite(+o.cap) ? +o.cap : 10000, 100, 1e9); o.fee = clamp(isFinite(+o.fee) ? +o.fee : 0.1, 0, 5);
+  return o;
+}
+function btRun(B, st, tf, sym) {
+  const get = ruleCache(B, tf, sym), n = B.length, trades = [], curve = [];
+  const fee = st.fee / 100, sl = st.sl ? st.sl / 100 : 0, tp = st.tp ? st.tp / 100 : 0;
+  let cash = st.cap, pos = null, pend = null, peak = st.cap, maxDD = 0, maxDDpct = 0, inBars = 0;
+  const close = (i, px, why) => {
+    const gross = (px - pos.px) * pos.qty * pos.dir, cost = px * pos.qty * fee;
+    cash += gross - cost;
+    const pnl = gross - cost - pos.fee;
+    trades.push({ n: trades.length + 1, dir: pos.dir, inT: B[pos.i].time, inPx: pos.px, outT: B[i].time, outPx: px, qty: pos.qty, pnl, pct: (pnl / (pos.px * pos.qty)) * 100, bars: i - pos.i, why });
+    pos = null;
+  };
+  const open = (i, dir) => {
+    const px = B[i].open, qty = (cash * st.size / 100) / px / (1 + fee); if (!(qty > 0)) return;
+    const f = px * qty * fee; cash -= f;
+    pos = { dir, i, px, qty, fee: f, sl: sl ? px * (1 - dir * sl) : null, tp: tp ? px * (1 + dir * tp) : null };
+  };
+  for (let i = 0; i < n; i++) {
+    const b = B[i];
+    if (pend) {   // orders from the last bar's close fill at this bar's open
+      if (pos && pend.exit) close(i, b.open, pend.why);
+      if (!pos && pend.dir) open(i, pend.dir);
+      pend = null;
+    }
+    if (pos) {   // stop loss and take profit inside the bar
+      const L = pos.dir > 0;
+      const hitSl = pos.sl != null && (L ? b.low <= pos.sl : b.high >= pos.sl), hitTp = pos.tp != null && (L ? b.high >= pos.tp : b.low <= pos.tp);
+      if (hitSl) close(i, L ? Math.min(b.open, pos.sl) : Math.max(b.open, pos.sl), 'Stop loss');
+      else if (hitTp) close(i, L ? Math.max(b.open, pos.tp) : Math.min(b.open, pos.tp), 'Take profit');
+    }
+    if (pos) inBars++;
+    if (i < n - 1) {   // signals at this bar's close, for the next bar
+      const le = st.dir !== 'short' && ruleAt(st.le, get, i), se = st.dir !== 'long' && ruleAt(st.se, get, i);
+      if (pos && pos.dir > 0) { const x = ruleAt(st.lx, get, i); if (x || se) pend = { exit: true, why: x ? 'Exit rule' : 'Reversed', dir: se ? -1 : 0 }; }
+      else if (pos && pos.dir < 0) { const x = ruleAt(st.sx, get, i); if (x || le) pend = { exit: true, why: x ? 'Exit rule' : 'Reversed', dir: le ? 1 : 0 }; }
+      else if (le) pend = { dir: 1 }; else if (se) pend = { dir: -1 };
+    }
+    const eq = cash + (pos ? (b.close - pos.px) * pos.qty * pos.dir : 0);
+    curve.push({ time: b.time, value: eq });
+    if (eq > peak) peak = eq;
+    if (peak - eq > maxDD) maxDD = peak - eq;
+    if (peak > 0 && (peak - eq) / peak > maxDDpct) maxDDpct = (peak - eq) / peak;
+  }
+  const last = B[n - 1];
+  const openTrade = pos ? { dir: pos.dir, inT: B[pos.i].time, inPx: pos.px, qty: pos.qty, pnl: (last.close - pos.px) * pos.qty * pos.dir - pos.fee, bars: n - 1 - pos.i } : null;
+  const wins = trades.filter(t => t.pnl > 0), losses = trades.filter(t => t.pnl <= 0);
+  const gp = wins.reduce((s, t) => s + t.pnl, 0), gl = -losses.reduce((s, t) => s + t.pnl, 0), net = gp - gl;
+  return {
+    trades, curve, open: openTrade, net, netPct: (net / st.cap) * 100, gp, gl, pf: gl > 0 ? gp / gl : gp > 0 ? Infinity : null,
+    win: trades.length ? (wins.length / trades.length) * 100 : null, avg: trades.length ? net / trades.length : null,
+    avgWin: wins.length ? gp / wins.length : null, avgLoss: losses.length ? -gl / losses.length : null,
+    best: trades.length ? Math.max(...trades.map(t => t.pnl)) : null, worst: trades.length ? Math.min(...trades.map(t => t.pnl)) : null,
+    maxDD, maxDDpct: maxDDpct * 100, avgBars: trades.length ? trades.reduce((s, t) => s + t.bars, 0) / trades.length : null,
+    hold: n ? (last.close / B[0].open - 1) * 100 : null, exposure: n ? (inBars / n) * 100 : 0, bars: n, from: B[0] && B[0].time, to: last && last.time,
+  };
+}
+const BT = {
+  st: btClean(store.get('btset', null)), res: null, ctx: null, show: false, eq: null,
+  bars() { return (S.raw || S.bars).slice(); },
+  open() {
+    if (!S.bars.length) { toast('Wait for the chart to load first.'); return; }
+    this.st = btClean(this.st); this.form();
+    $('#btSub').textContent = `Tests the rules on the ${this.bars().length.toLocaleString('en-GB')} bars of ${label(S.symbol)} · ${tfOf(S.tf).label} on the chart.`;
+    $('#btDlg').showModal();
+    if (this.res && this.ctx === S.symbol + '|' + S.tf) this.draw(); else { this.res = null; this.draw(); }
+  },
+  save() { store.set('btset', this.st); },
+  form() {
+    const st = this.st;
+    $('#btPreset').value = st.preset;
+    document.querySelectorAll('#btDir .btn').forEach(b => { const on = b.dataset.dir === st.dir; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+    $('#btSl').value = st.sl; $('#btTp').value = st.tp; $('#btSize').value = st.size; $('#btCap').value = st.cap; $('#btFee').value = st.fee;
+    const changed = () => { if (st.preset !== 'custom') { st.preset = 'custom'; $('#btPreset').value = 'custom'; } this.save(); };
+    ruleEditor($('#btLe'), st.le, changed, { title: 'Buy when' });
+    ruleEditor($('#btLx'), st.lx, changed, { title: 'Sell (close the buy) when' });
+    ruleEditor($('#btSe'), st.se, changed, { title: 'Sell short when' });
+    ruleEditor($('#btSx'), st.sx, changed, { title: 'Buy back (close the short) when' });
+    $('#btLong').hidden = st.dir === 'short'; $('#btShort').hidden = st.dir === 'long';
+  },
+  run() {
+    const st = this.st = btClean(Object.assign(this.st, { sl: $('#btSl').value, tp: $('#btTp').value, size: $('#btSize').value, cap: $('#btCap').value, fee: $('#btFee').value }));
+    this.save(); this.form();
+    const B = this.bars();
+    if (B.length < 30) { toast('The chart needs at least 30 bars to test on.'); return; }
+    this.res = btRun(B, st, S.tf, S.symbol); this.ctx = S.symbol + '|' + S.tf;
+    this.draw();
+    if (this.show) syncTradeMarks();
+  },
+  draw() {
+    const r = this.res, out = $('#btRes');
+    out.hidden = !r; $('#btEmpty').hidden = !!r;
+    if (!r) return;
+    const m = v => usd(v, true), pct = v => (v == null || !isFinite(v) ? '—' : fmtPct(v));
+    const tile = (k, v, cls, sub) => { const d = el('div', 'bt-k'); d.append(el('span', null, k), el('b', cls || null, v)); if (sub) d.append(el('small', null, sub)); return d; };
+    $('#btKpis').replaceChildren(
+      tile('Net profit', m(r.net), signCls(r.net), pct(r.netPct)),
+      tile('Trades', String(r.trades.length), null, r.open ? '+ 1 still open' : ''),
+      tile('Win rate', r.win == null ? '—' : r.win.toFixed(1) + '%', null, `${r.trades.filter(t => t.pnl > 0).length} won`),
+      tile('Profit factor', r.pf == null ? '—' : r.pf === Infinity ? '∞' : r.pf.toFixed(2)),
+      tile('Max drawdown', r.maxDD ? '−' + usd(r.maxDD).replace(/^[−-]/, '') : usd(0), r.maxDD ? 'dn-t' : null, r.maxDDpct ? '−' + r.maxDDpct.toFixed(2) + '%' : ''),
+      tile('Buy and hold', pct(r.hold), signCls(r.hold), 'same bars'),
+    );
+    const det = [['Gross profit', m(r.gp)], ['Gross loss', r.gl ? '−' + usd(r.gl).replace(/^[−-]/, '') : usd(0)], ['Average trade', r.avg == null ? '—' : m(r.avg)], ['Average win', r.avgWin == null ? '—' : m(r.avgWin)],
+      ['Average loss', r.avgLoss == null ? '—' : m(r.avgLoss)], ['Best trade', r.best == null ? '—' : m(r.best)], ['Worst trade', r.worst == null ? '—' : m(r.worst)], ['Bars in a trade', r.avgBars == null ? '—' : r.avgBars.toFixed(1)],
+      ['Time in the market', r.exposure.toFixed(1) + '%'], ['Open trade', r.open ? `${r.open.dir > 0 ? 'Long' : 'Short'} · ${m(r.open.pnl)}` : 'None'], ['Tested', `${fmtTime(r.from)} – ${fmtTime(r.to)}`]];
+    $('#btDetail').replaceChildren(...det.map(([k, v]) => { const d = el('div'); d.append(el('span', null, k), el('b', null, v)); return d; }));
+    this.chart(r);
+    const body = $('#btTrades tbody');
+    body.replaceChildren(...r.trades.slice(-300).reverse().map(t => {
+      const tr = el('tr');
+      tr.append(el('td', 'num', String(t.n)), el('td', t.dir > 0 ? 'up-t' : 'dn-t', t.dir > 0 ? 'Long' : 'Short'), el('td', null, fmtTime(t.inT)), el('td', 'num', fmtP(t.inPx)), el('td', null, fmtTime(t.outT)), el('td', 'num', fmtP(t.outPx)),
+        el('td', null, t.why), el('td', 'num ' + (signCls(t.pnl) || ''), m(t.pnl)), el('td', 'num ' + (signCls(t.pct) || ''), fmtPct(t.pct)), el('td', 'num', String(t.bars)));
+      return tr;
+    }));
+    if (!r.trades.length) body.append(Object.assign(el('tr', 'bt-none'), { innerHTML: '<td colspan="10">No trades. The rules never lined up on these bars; try other settings, a longer history or another timeframe.</td>' }));
+    $('#btTradesNote').textContent = r.trades.length > 300 ? `Showing the last 300 of ${r.trades.length} trades. Export them all as a CSV.` : '';
+    $('#btShow').textContent = this.show ? 'Hide trades on the chart' : 'Show trades on the chart';
+    $('#btShow').setAttribute('aria-pressed', String(this.show));
+  },
+  chart(r) {
+    const box = $('#btEq');
+    if (!this.eq) {
+      this.eq = createChart(box, { autoSize: true, layout: { background: { type: 'solid', color: C.panel }, textColor: C.muted, fontSize: 11, fontFamily: FONT_DATA, attributionLogo: false },
+        grid: { vertLines: { visible: false }, horzLines: { color: C.grid } }, rightPriceScale: { borderVisible: false }, timeScale: { borderVisible: false, timeVisible: true, tickMarkFormatter: tickFmt },
+        localization: { timeFormatter: t => fmtTime(t), priceFormatter: v => usd(v) }, handleScroll: false, handleScale: false, crosshair: { mode: CrosshairMode.Magnet } });
+      this.eqS = this.eq.addSeries(BaselineSeries, { baseValue: { type: 'price', price: 0 }, lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+      this.holdS = this.eq.addSeries(LineSeries, { lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    }
+    const cap = this.st.cap, B = this.bars(), k = cap / B[0].open;
+    this.eqS.applyOptions({ baseValue: { type: 'price', price: cap }, topLineColor: C.up, topFillColor1: alpha(C.up, 0.18), topFillColor2: alpha(C.up, 0.02), bottomLineColor: C.down, bottomFillColor1: alpha(C.down, 0.02), bottomFillColor2: alpha(C.down, 0.18) });
+    this.holdS.applyOptions({ color: C.faint });
+    this.eqS.setData(r.curve); this.holdS.setData(B.map(b => ({ time: b.time, value: b.close * k })));
+    this.eq.timeScale().fitContent();
+  },
+  retheme() { if (this.eq) { this.eq.applyOptions({ layout: { background: { type: 'solid', color: C.panel }, textColor: C.muted }, grid: { horzLines: { color: C.grid } } }); if (this.res) this.chart(this.res); } },
+  marks() {   // the trades as markers on the chart
+    if (!this.show || !this.res || this.ctx !== S.symbol + '|' + S.tf || BRICK_TYPES.includes(S.type)) return [];
+    const T = S.bars, m = []; if (!T.length) return m;
+    const at = s => { const j = rpIndexFor(T, s); return j < 0 ? null : T[j].time; };
+    for (const t of this.res.trades) {
+      const a = at(t.inT), b = at(t.outT);
+      if (a != null) m.push({ time: a, position: t.dir > 0 ? 'belowBar' : 'aboveBar', shape: t.dir > 0 ? 'arrowUp' : 'arrowDown', color: t.dir > 0 ? C.up : C.down, text: t.dir > 0 ? 'Long' : 'Short', size: 1 });
+      if (b != null) m.push({ time: b, position: t.dir > 0 ? 'aboveBar' : 'belowBar', shape: 'circle', color: t.pnl > 0 ? C.up : C.down, text: (t.pnl > 0 ? '+' : '−') + Math.abs(t.pct).toFixed(1) + '%', size: 0.6 });
+    }
+    if (this.res.open) { const a = at(this.res.open.inT); if (a != null) m.push({ time: a, position: this.res.open.dir > 0 ? 'belowBar' : 'aboveBar', shape: this.res.open.dir > 0 ? 'arrowUp' : 'arrowDown', color: C.accent, text: 'Open', size: 1 }); }
+    return m;
+  },
+  toggleShow() {
+    this.show = !this.show; syncTradeMarks(); this.draw();
+    if (this.show) { $('#btDlg').close(); toast(`${this.res.trades.length} test trades are on the chart. Open the Strategy tester again to hide them.`); }
+    $('#btBtn').classList.toggle('on', this.show);
+  },
+  exportCsv() {
+    const r = this.res; if (!r) return;
+    const rows = [['#', 'side', 'entry time (UTC)', 'entry price', 'exit time (UTC)', 'exit price', 'quantity', 'exit reason', 'profit', 'profit %', 'bars']];
+    const iso = t => new Date(t * 1000).toISOString().replace('.000Z', 'Z');
+    for (const t of r.trades) rows.push([t.n, t.dir > 0 ? 'long' : 'short', iso(t.inT), csvNum(t.inPx), iso(t.outT), csvNum(t.outPx), csvNum(t.qty), t.why, csvNum(t.pnl.toFixed(2)), csvNum(t.pct.toFixed(3)), t.bars]);
+    const a = el('a'); a.href = URL.createObjectURL(new Blob([rows.map(x => x.map(v => csvCell(String(v))).join(',')).join('\n') + '\n'], { type: 'text/csv' }));
+    a.download = `${label(S.symbol).replace(/[^A-Za-z0-9]+/g, '')}-${S.tf}-strategy-trades.csv`; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast(`Saved ${r.trades.length} trades to your downloads.`);
+  },
+};
+$('#btBtn').onclick = () => BT.open();
+$('#btPreset').onchange = () => {
+  const v = $('#btPreset').value, p = BT_PRESETS.find(x => x[0] === v);
+  BT.st.preset = v; if (p) for (const k of ['le', 'lx', 'se', 'sx']) BT.st[k] = JSON.parse(JSON.stringify(p[2][k]));
+  BT.save(); BT.form();
+};
+document.querySelectorAll('#btDir .btn').forEach(b => { b.onclick = () => { BT.st.dir = b.dataset.dir; BT.save(); BT.form(); }; });
+$('#btForm').onsubmit = e => { e.preventDefault(); BT.run(); };
+$('#btShow').onclick = () => BT.toggleShow();
+$('#btCsv').onclick = () => BT.exportCsv();
+
+/* ---------- indicator alerts: conditions on indicators, checked when each bar closes ----------
+   Like price alerts, they run while the site is open. Each one looks at its own market and timeframe, so it works
+   whatever the chart is showing. */
+const TA_MAX = 100;
+const taSymOk = v => typeof v === 'string' && v.length <= 40 && /^[A-Z0-9.:/_-]+$/.test(v);
+function taClean(a) {
+  if (!a || typeof a !== 'object' || !taSymOk(a.sym) || !tfValid(a.tf) || tfOf(a.tf).u === 's') return null;
+  return { id: typeof a.id === 'string' && /^[a-z0-9]{1,16}$/.test(a.id) ? a.id : uid(), sym: a.sym, tf: a.tf, rule: ruleClean(a.rule), mode: a.mode === 'bar' ? 'bar' : 'once',
+    name: typeof a.name === 'string' ? a.name.replace(/\s+/g, ' ').trim().slice(0, 60) : '', at: isFinite(+a.at) ? +a.at : Date.now(), hit: isFinite(+a.hit) && +a.hit > 0 ? +a.hit : null,
+    last: isFinite(+a.last) && +a.last > 0 ? +a.last : null, n: isFinite(+a.n) ? Math.max(0, Math.floor(+a.n)) : 0 };
+}
+const TA = {
+  list: (store.get('talerts', []) || []).map(taClean).filter(Boolean).slice(0, TA_MAX),
+  next: {}, busy: new Set(), draft: null,
+  save() { store.set('talerts', this.list); this.render(); },
+  load(v) { this.list = (Array.isArray(v) ? v : []).map(taClean).filter(Boolean).slice(0, TA_MAX); this.next = {}; this.render(); },
+  minSec(id) { return srcOf(id) === 'td' ? 900 : 60; },   // stocks use the small Twelve Data allowance
+  tfs(id) { return tfAll().filter(t => tfOf(t).u !== 's' && tfOf(t).sec >= this.minSec(id)); },
+  open() {
+    if (srcOf(S.symbol) === 'demo') { toast(`Indicator alerts need live prices, and ${label(S.symbol)} shows saved prices right now.`); return; }
+    if (this.list.filter(a => !a.hit).length >= TA_MAX) { toast(`You have ${TA_MAX} indicator alerts, the most there can be. Remove some to add more.`); return; }
+    const tfs = this.tfs(S.symbol), tf = tfs.includes(S.tf) ? S.tf : tfs.find(t => tfOf(t).sec >= tfOf(S.tf).sec) || tfs[0];
+    this.draft = { sym: S.symbol, tf, rule: ruleClean({ match: 'all', conds: [{ a: { id: 'rsi', p: { len: 14 } }, op: 'xa', b: { id: 'num', p: { v: 70 } } }] }), mode: 'once', name: '' };
+    $('#taSym').textContent = label(S.symbol);
+    const sel = $('#taTf'); sel.replaceChildren(...tfs.map(t => { const o = el('option', null, tfName(t)); o.value = t; return o; })); sel.value = tf;
+    $('#taMode').value = 'once'; $('#taName').value = ''; $('#taMsg').textContent = '';
+    $('#taTfNote').textContent = this.minSec(S.symbol) > 60 ? 'For stocks, the shortest timeframe is 15 minutes, to stay within the free price allowance.' : '';
+    ruleEditor($('#taRule'), this.draft.rule, () => {}, { title: 'Alert me when' });
+    $('#taDlg').showModal();
+  },
+  create() {
+    const d = this.draft; if (!d) return;
+    d.tf = $('#taTf').value; d.mode = $('#taMode').value; d.name = $('#taName').value;
+    if (!d.rule.conds.length) { $('#taMsg').textContent = 'Add at least one condition.'; return; }
+    const a = taClean(Object.assign({ id: uid(), at: Date.now() }, d)); if (!a) return;
+    this.list.unshift(a); this.save(); $('#taDlg').close();
+    toast(`Indicator alert set: ${label(a.sym)} · ${tfOf(a.tf).label} when ${ruleText(a.rule)}`);
+    askNotify(); this.check(a, true);
+  },
+  remove(id) { this.list = this.list.filter(a => a.id !== id); delete this.next[id]; this.save(); },
+  closedIndex(bars, tf) {   // the newest bar that has finished
+    const n = bars.length; if (!n) return -1;
+    const lastEnd = tfNext(tf, bars[n - 1].time);
+    return Date.now() / 1000 >= lastEnd ? n - 1 : n - 2;
+  },
+  async check(a, quiet) {
+    if (a.hit || this.busy.has(a.id) || !S.ready || srcOf(a.sym) === 'demo') return;
+    this.busy.add(a.id);
+    try {
+      const bars = await feedFor(a.sym).klines(a.sym, a.tf);
+      const i = this.closedIndex(bars, a.tf);
+      this.next[a.id] = (i >= 0 ? tfNext(a.tf, tfNext(a.tf, bars[i].time)) : Date.now() / 1000 + 60) + 3;   // just after the next bar closes
+      if (i < 1) return;
+      const t = bars[i].time;
+      if (quiet) { a.last = Math.max(a.last || 0, t); return; }   // a new alert waits for the next bar, as TradingView's do
+      if (a.last && t <= a.last) return;
+      a.last = t;
+      if (ruleAt(a.rule, ruleCache(bars, a.tf, a.sym), i)) this.fire(a, bars[i]);
+      else store.set('talerts', this.list);
+    } catch (e) { this.next[a.id] = Date.now() / 1000 + 60; }
+    finally { this.busy.delete(a.id); }
+  },
+  fire(a, bar) {
+    a.n = (a.n || 0) + 1; if (a.mode === 'once') a.hit = Date.now();
+    const what = a.name || ruleText(a.rule), msg = `${label(a.sym)} · ${tfOf(a.tf).label}: ${what}`;
+    toast(msg, 'alert'); beep(); notify(`${label(a.sym)} indicator alert`, `${what}. Close ${fmtP(bar.close, precFor(a.sym, bar.close))}.`);
+    this.save();
+  },
+  tick() {
+    if (!S.ready || document.visibilityState === 'prerender') return;
+    const now = Date.now() / 1000;
+    for (const a of this.list) if (!a.hit && (this.next[a.id] == null || now >= this.next[a.id])) this.check(a, this.next[a.id] == null && !a.last);
+  },
+  render() {
+    const box = $('#taList'); if (!box) return;
+    box.replaceChildren();
+    if (!this.list.length) { box.hidden = true; return; }
+    box.hidden = false;
+    box.append(el('li', 'ta-h', `Indicator alerts · ${this.list.filter(a => !a.hit).length} active`));
+    for (const a of this.list) {
+      const li = el('li', 'al-item ta-item' + (a.hit ? ' hit' : '')); li.dataset.id = a.id;
+      const txt = el('div'); txt.append(el('div', 's', `${label(a.sym)} · ${tfOf(a.tf).label}`), el('div', 'c', a.name || ruleText(a.rule)));
+      txt.title = ruleText(a.rule) + (a.mode === 'bar' ? ' · every time' : ' · once');
+      const when = a.hit ? `Hit ${pad(new Date(a.hit).getHours())}:${pad(new Date(a.hit).getMinutes())}` : a.mode === 'bar' && a.n ? `Active · ${a.n}×` : 'Active';
+      const chip = el('span', 'chip' + (a.hit ? '' : ' live'), when);
+      const rm = el('button', 'wl-x'); rm.innerHTML = svg('x'); rm.style.opacity = 1; rm.setAttribute('aria-label', `Delete the indicator alert for ${label(a.sym)}`);
+      rm.onclick = () => this.remove(a.id);
+      li.append(txt, chip, rm); box.append(li);
+    }
+  },
+};
+$('#taNew').onclick = () => TA.open();
+$('#taForm').onsubmit = e => { e.preventDefault(); TA.create(); };
+setInterval(() => TA.tick(), 15000);
+TA.render();
+
 async function boot() {
   $('.brand .word').textContent = CFG.siteName; $('.brand').setAttribute('aria-label', CFG.siteName); $('#wmWord').textContent = CFG.siteName;
   renderTools(); renderTf(); renderAlerts(); clockTick();
@@ -8511,7 +9168,9 @@ async function boot() {
   Ideas.boot();
   { const v = readViewFromUrl(); if (v !== 'chart') setView(v); }
   const oandaUp = OANDA.configured() ? OANDA.connect().then(() => true, e => { OANDA.state = e.code === 401 ? 'bad' : 'offline'; return false; }) : Promise.resolve(false);
-  const ctUp = CT.configured() ? CT.connect().then(() => true, e => { if (e.code === 0 || e.code >= 500) { CT.state = 'offline'; retryCt(15000); } return false; }) : Promise.resolve(false);
+  const ctUp = CT.configured() ? CT.connect().then(() => true, e => {
+    if (e.code === 451) { CT.state = 'region'; if (store.get('ctRegionTold', '') !== new Date().toISOString().slice(0, 10)) { store.raw('ctRegionTold', new Date().toISOString().slice(0, 10)); setTimeout(() => toast(CT_REGION_MSG), 2500); } return false; }
+    if (e.code === 0 || e.code >= 500) { CT.state = 'offline'; retryCt(15000); } return false; }) : Promise.resolve(false);
   const [bin, tdOk, goldOk, oaOk, krOk, ctOk] = await Promise.all([Live.probe(), probeTD(), GoldApi.price('XAU').then(q => { S.spot.XAU = q; return true; }, () => false), oandaUp, Kraken.probe(), ctUp]);
   S.binance = bin; S.tdReach = tdOk; S.goldApi = goldOk; S.sandbox = !bin && !tdOk && !goldOk && !oaOk && !krOk && !ctOk;
   if (OANDA.state === 'offline') retryOanda(8000);
@@ -8528,6 +9187,7 @@ async function boot() {
   Paper.ready();
   Home.ready();
   MC.ready();
+  MK.ready();
   await first;
 }
 boot();
