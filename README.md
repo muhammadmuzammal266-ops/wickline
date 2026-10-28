@@ -88,7 +88,31 @@ The **Layout** button shows 1, 2, 3, 4, 6, 8 or 16 charts at once. Each extra ch
 
 ## Indicators
 
-The **Indicators** button lists 25 indicators in five groups, with a search box: moving averages (SMA, EMA, WMA, Hull), trend (Ichimoku Cloud, Parabolic SAR, SuperTrend, ADX/DMI), oscillators (RSI, MACD, Stochastic, Stochastic RSI, CCI, Williams %R, Rate of Change, Awesome Oscillator), volatility (Bollinger Bands, Keltner Channels, Donchian Channels, ATR) and volume (Volume, VWAP, On Balance Volume, Money Flow Index, Chaikin Money Flow). Each can be shown, hidden, recoloured or set up from its name on the chart, and the formulas follow the usual TradingView defaults. With many indicators on the chart, the list of names can be folded away with the small arrow under them.
+The **Indicators** button lists 67 indicators in five groups, with a search box:
+
+- **Moving averages:** SMA, EMA, WMA, Hull, Double EMA, Triple EMA, Smoothed, Volume Weighted, Arnaud Legoux, Least Squares, McGinley Dynamic, Moving Average Ribbon, Envelope.
+- **Trend:** Ichimoku Cloud, Parabolic SAR, SuperTrend, ADX/DMI, Aroon, Vortex, Williams Alligator, Choppiness Index, Zig Zag, Williams Fractals.
+- **Oscillators:** RSI, MACD, Stochastic, Stochastic RSI, CCI, Williams %R, Rate of Change, Awesome Oscillator, Detrended Price Oscillator, TRIX, Price Oscillator, Ultimate Oscillator, True Strength Index, Momentum, Balance of Power, Chande Momentum, Coppock Curve, Know Sure Thing, Fisher Transform, Relative Vigor Index, Bull Bear Power, Connors RSI.
+- **Volatility:** Bollinger Bands, Keltner Channels, Donchian Channels, ATR, Bollinger BandWidth, Bollinger Bands %B, Standard Deviation, Historical Volatility, Mass Index.
+- **Volume:** Volume, VWAP, On Balance Volume, Money Flow Index, Chaikin Money Flow, Accumulation/Distribution, Chaikin Oscillator, Price Volume Trend, Ease of Movement, Volume Oscillator, Klinger Oscillator, Elder Force Index, Volume Profile (visible range).
+
+Up to 50 can be on a chart. Each can be shown, hidden, recoloured or set up from its name on the chart, and the formulas follow the usual TradingView defaults. With many indicators on the chart, the list of names can be folded away with the small arrow under them.
+
+## Drawing tools
+
+The toolbar on the left has 29 drawing tools, plus the price alert tool. The main ones sit on the bar; the rest open from small groups next to them:
+
+- **Lines:** trend line, ray, horizontal line, extended line, info line, arrow, horizontal ray, vertical line, cross line.
+- **Shapes:** rectangle, ellipse, triangle, brush, highlighter.
+- **Fibonacci, channels and pitchforks:** Fib retracement, trend-based Fib extension, Fib time zones, parallel channel, regression trend, pitchfork.
+- **Text and marks:** text, price label, arrow marks up and down.
+- **Measuring and ranges:** measure, date range, price range, long and short positions.
+
+Drawings are saved with the chart and can go into published ideas.
+
+## Watchlists and alerts
+
+People can keep up to 20 watchlists. Click the watchlist's name to switch, make a new one, copy, rename or delete one. Up to 1,000 price alerts can be set; they're checked while the site is open.
 
 ## Trade journal
 

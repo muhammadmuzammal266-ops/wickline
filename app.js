@@ -35,6 +35,43 @@ const ICON = {
   live: '<path d="M5 7l5 5-5 5M11 7l5 5-5 5"/><path d="M19.5 6v12"/>',
 };
 const svg = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[name]}</svg>`;
+/* ----- more drawing tools: icons and groups (the drawing code itself sits with the other drawing code) ----- */
+Object.assign(ICON, {
+  ext: '<path d="M2.5 19.5l19-15"/><circle cx="8" cy="15.2" r="2"/><circle cx="16" cy="8.8" r="2"/>',
+  infoline: '<path d="M5 18L16 7"/><circle cx="5" cy="18" r="1.8"/><circle cx="16" cy="7" r="1.8"/><rect x="13" y="13" width="8" height="6" rx="1"/>',
+  arrowline: '<path d="M5 19L19 5"/><path d="M12 5h7v7"/>',
+  hray: '<circle cx="5" cy="12" r="2"/><path d="M7 12h14"/><path d="M18 9l3 3-3 3"/>',
+  vline: '<path d="M12 3v7M12 14v7"/><circle cx="12" cy="12" r="2"/>',
+  cross: '<path d="M12 3v7M12 14v7M3 12h7M14 12h7"/><circle cx="12" cy="12" r="2"/>',
+  channel: '<path d="M3 15L15 4M9 20L21 9"/><path d="M6 17.5L18 6.5" stroke-dasharray="2 2.5"/>',
+  regchan: '<path d="M3 17L21 8"/><path d="M3 13L21 4M3 21L21 12" stroke-dasharray="2 2.5"/>',
+  pitchfork: '<circle cx="4" cy="16" r="1.8"/><path d="M5.6 15.2L21 9"/><path d="M10 5L21 3M10 19l11-2"/><path d="M10 5v14"/>',
+  fibext: '<path d="M4 5h16M4 9.5h16M4 14h16M4 19h16"/><path d="M5 17l4-8 4 5" stroke-dasharray="2 2"/>',
+  fibtime: '<path d="M4 4v16M7 4v16M10 4v16M14 4v16M20 4v16"/>',
+  ellipse: '<ellipse cx="12" cy="12" rx="9" ry="6"/>',
+  triangle: '<path d="M12 4L21 19H3z"/>',
+  brush: '<path d="M4 17c2-1 3.5-4 5.5-4s2 3 4 3 3.5-6 6.5-9"/>',
+  highlighter: '<path d="M4 15c3-2 5-2 8 0s5 2 8 0" stroke-width="4" stroke-opacity=".55"/>',
+  text: '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>',
+  pricelabel: '<path d="M4 7h11l5 5-5 5H4z"/><path d="M7.5 12h5"/>',
+  arrowup: '<path d="M12 4l7 8h-4v8H9v-8H5z"/>',
+  arrowdown: '<path d="M12 20l7-8h-4V4H9v8H5z"/>',
+  daterange: '<path d="M4 4v16M20 4v16M6 12h12"/><path d="M9 9l-3 3 3 3M15 9l3 3-3 3"/>',
+  pricerange: '<path d="M4 4h16M4 20h16M12 6v12"/><path d="M9 9l3-3 3 3M9 15l3 3 3-3"/>',
+  chev: '<path d="M10 7l5 5-5 5"/>',
+});
+// The toolbar keeps the original tools as buttons; each group button opens a list of more tools.
+const TOOL_GROUPS = [
+  { id: 'lines', name: 'More lines', after: 'hline', tools: [['ext', 'Extended line'], ['infoline', 'Info line'], ['arrowline', 'Arrow'], ['hray', 'Horizontal ray'], ['vline', 'Vertical line', 'Alt+V'], ['cross', 'Cross line', 'Alt+C']] },
+  { id: 'shapes', name: 'Shapes and brushes', after: 'rect', tools: [['ellipse', 'Ellipse'], ['triangle', 'Triangle'], ['brush', 'Brush'], ['highlighter', 'Highlighter']] },
+  { id: 'fibs', name: 'Fibonacci, channels and pitchforks', after: 'fib', tools: [['fibext', 'Trend-based Fib extension'], ['fibtime', 'Fib time zones'], ['channel', 'Parallel channel'], ['regchan', 'Regression trend'], ['pitchfork', 'Pitchfork']] },
+  { id: 'notes', name: 'Text and marks', after: 'fib', tools: [['text', 'Text'], ['pricelabel', 'Price label'], ['arrowup', 'Arrow mark up'], ['arrowdown', 'Arrow mark down']] },
+  { id: 'ranges', name: 'Ranges', after: 'measure', tools: [['daterange', 'Date range'], ['pricerange', 'Price range']] },
+];
+const TOOLS_1PT = ['hray', 'vline', 'cross', 'text', 'pricelabel', 'arrowup', 'arrowdown'];
+const TOOLS_3PT = ['channel', 'pitchfork', 'fibext', 'triangle'];
+const BRUSHES = ['brush', 'highlighter'];
+const EXTRA_TOOLS = TOOL_GROUPS.flatMap(g => g.tools.map(t => t[0]));
 const uid = () => Math.random().toString(36).slice(2, 10);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
@@ -1392,6 +1429,325 @@ function vwap(bars, tf, sym) {
   return o;
 }
 
+// ----- even more indicators (formulas follow TradingView's built-in scripts and their default settings) -----
+const P_LEN = (def, max = 500, min = 1) => ({ k: 'len', label: 'Length', def, min, max, step: 1 });
+const nz = v => (v == null || !isFinite(v) ? null : v);
+const zip2 = (a, b, f) => a.map((v, i) => (v != null && b[i] != null ? f(v, b[i], i) : null));
+function sumN(a, n) {   // rolling sum of the last n values; null until there are n in a row
+  const o = new Array(a.length).fill(null); let s = 0, c = 0;
+  for (let i = 0; i < a.length; i++) {
+    const v = a[i];
+    if (v == null || !isFinite(v)) { s = 0; c = 0; continue; }
+    s += v; c++;
+    if (c > n) { s -= a[i - n]; c = n; }
+    if (c === n) o[i] = s;
+  }
+  return o;
+}
+function emaN(a, n) {   // EMA that starts after leading gaps (as ta.ema on a series that begins later)
+  const o = new Array(a.length).fill(null), k = 2 / (n + 1); let prev = null, cnt = 0, sum = 0;
+  for (let i = 0; i < a.length; i++) {
+    const v = a[i]; if (v == null || !isFinite(v)) continue;
+    if (prev == null) { sum += v; cnt++; if (cnt === n) { prev = sum / n; o[i] = prev; } }
+    else { prev = v * k + prev * (1 - k); o[i] = prev; }
+  }
+  return o;
+}
+function stdevN(a, n) {   // population standard deviation, as ta.stdev
+  const o = new Array(a.length).fill(null);
+  for (let i = n - 1; i < a.length; i++) {
+    let s = 0, ok = true; for (let j = i - n + 1; j <= i; j++) { if (a[j] == null) { ok = false; break; } s += a[j]; }
+    if (!ok) continue;
+    const m = s / n; let ss = 0; for (let j = i - n + 1; j <= i; j++) ss += (a[j] - m) * (a[j] - m);
+    o[i] = Math.sqrt(ss / n);
+  }
+  return o;
+}
+const change = (a, k = 1) => a.map((v, i) => (i >= k && v != null && a[i - k] != null ? v - a[i - k] : null));
+const shiftR = (a, k) => a.map((_, i) => (i - k >= 0 ? a[i - k] : null));
+const hl2s = B => B.map(b => (b.high + b.low) / 2);
+const hlc3s = B => B.map(b => (b.high + b.low + b.close) / 3);
+const vols = B => B.map(b => b.volume || 0);
+const trs = B => B.map((b, i) => (i ? Math.max(b.high - b.low, Math.abs(b.high - B[i - 1].close), Math.abs(b.low - B[i - 1].close)) : b.high - b.low));
+function rocA(a, n) { return a.map((v, i) => (i >= n && v != null && a[i - n] ? (100 * (v - a[i - n])) / a[i - n] : null)); }
+function alma(a, n, off, sig) {
+  const m = off * (n - 1), s = n / sig, w = []; let norm = 0;
+  for (let i = 0; i < n; i++) { const x = Math.exp(-((i - m) * (i - m)) / (2 * s * s)); w.push(x); norm += x; }
+  return a.map((_, i) => { if (i < n - 1) return null; let sum = 0; for (let k = 0; k < n; k++) sum += a[i - (n - 1) + k] * w[k]; return sum / norm; });
+}
+function linreg(a, n, off) {   // least-squares line over the last n values, read off at n - 1 - offset
+  return a.map((_, i) => {
+    if (i < n - 1) return null;
+    let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (let k = 0; k < n; k++) { const y = a[i - (n - 1) + k]; if (y == null) return null; sx += k; sy += y; sxx += k * k; sxy += k * y; }
+    const slope = (n * sxy - sx * sy) / (n * sxx - sx * sx || 1), icpt = (sy - slope * sx) / n;
+    return icpt + slope * (n - 1 - off);
+  });
+}
+function mcginley(a, n) {
+  const e = ema(a, n), o = new Array(a.length).fill(null); let prev = null;
+  for (let i = 0; i < a.length; i++) {
+    if (prev == null) { if (e[i] != null) { prev = e[i]; o[i] = prev; } continue; }
+    prev = prev + (a[i] - prev) / (n * Math.pow(a[i] / prev, 4)); o[i] = prev;
+  }
+  return o;
+}
+function barsSince(a, i, n, max) {   // bars back (0..n) to the highest/lowest of the last n + 1 values; the latest wins a tie
+  let best = a[i], k = 0;
+  for (let j = 1; j <= n; j++) { const v = a[i - j]; if (max ? v > best : v < best) { best = v; k = j; } }
+  return k;
+}
+function aroon(B, n) {
+  const H = highs(B), Lw = lows(B), up = new Array(B.length).fill(null), dn = new Array(B.length).fill(null);
+  for (let i = n; i < B.length; i++) { up[i] = (100 * (n - barsSince(H, i, n, true))) / n; dn[i] = (100 * (n - barsSince(Lw, i, n, false))) / n; }
+  return [up, dn];
+}
+function vortex(B, n) {
+  const vmp = B.map((b, i) => (i ? Math.abs(b.high - B[i - 1].low) : null)), vmm = B.map((b, i) => (i ? Math.abs(b.low - B[i - 1].high) : null));
+  const tr = trs(B).map((v, i) => (i ? v : null)), sp = sumN(vmp, n), sm = sumN(vmm, n), st = sumN(tr, n);
+  return [zip2(sp, st, (a, b) => (b ? a / b : null)), zip2(sm, st, (a, b) => (b ? a / b : null))];
+}
+function chop(B, n) {
+  const st = sumN(trs(B), n), h = rolling(highs(B), n, true), l = rolling(lows(B), n, false);
+  return [st.map((s, i) => (s != null && h[i] != null && h[i] > l[i] ? (100 * Math.log10(s / (h[i] - l[i]))) / Math.log10(n) : null))];
+}
+function zigzag(B, dev) {   // swing highs and lows at least dev % apart; the newest leg runs to the latest extreme
+  const n = B.length, o = new Array(n).fill(null); if (n < 2) return [o];
+  const f = dev / 100; let dir = 0, pi = 0, pv = B[0].close, ei = 0, ev = pv;
+  for (let i = 1; i < n; i++) {
+    const b = B[i];
+    if (dir === 0) {
+      if (b.high >= pv * (1 + f)) { o[pi] = pv; dir = 1; ei = i; ev = b.high; }
+      else if (b.low <= pv * (1 - f)) { o[pi] = pv; dir = -1; ei = i; ev = b.low; }
+    } else if (dir === 1) {
+      if (b.high > ev) { ei = i; ev = b.high; }
+      else if (b.low <= ev * (1 - f)) { o[ei] = ev; pi = ei; dir = -1; ei = i; ev = b.low; }
+    } else {
+      if (b.low < ev) { ei = i; ev = b.low; }
+      else if (b.high >= ev * (1 + f)) { o[ei] = ev; pi = ei; dir = 1; ei = i; ev = b.high; }
+    }
+  }
+  if (dir !== 0) o[ei] = ev;
+  return [o];
+}
+function fractals(B, k) {   // a high (low) with k lower highs (higher lows) on each side
+  const n = B.length, up = new Array(n).fill(null), dn = new Array(n).fill(null);
+  for (let i = k; i < n - k; i++) {
+    let hi = true, lo = true;
+    for (let j = 1; j <= k; j++) { if (!(B[i].high > B[i - j].high && B[i].high > B[i + j].high)) hi = false; if (!(B[i].low < B[i - j].low && B[i].low < B[i + j].low)) lo = false; }
+    if (hi) up[i] = B[i].high; if (lo) dn[i] = B[i].low;
+  }
+  return [up, dn];
+}
+function dpo(B, n) { const c = closes(B), ma = sma(c, n), back = Math.floor(n / 2) + 1; return [c.map((v, i) => (i - back >= 0 && ma[i - back] != null ? v - ma[i - back] : null))]; }
+function trix(B, n) { const e = emaN(emaN(emaN(closes(B).map(Math.log), n), n), n); return [change(e).map(v => (v == null ? null : v * 10000))]; }
+function ppo(B, f, s) { const ef = ema(closes(B), f), es = ema(closes(B), s); return [zip2(ef, es, (a, b) => (b ? ((a - b) / b) * 100 : null))]; }
+function uo(B, a, b, c) {
+  const bp = B.map((x, i) => (i ? x.close - Math.min(x.low, B[i - 1].close) : null)), tr = B.map((x, i) => (i ? Math.max(x.high, B[i - 1].close) - Math.min(x.low, B[i - 1].close) : null));
+  const av = n => zip2(sumN(bp, n), sumN(tr, n), (p, q) => (q ? p / q : null));
+  const A = av(a), Bv = av(b), Cv = av(c);
+  return [A.map((v, i) => (v != null && Bv[i] != null && Cv[i] != null ? (100 * (4 * v + 2 * Bv[i] + Cv[i])) / 7 : null))];
+}
+function tsi(B, l, s, sig) {
+  const pc = change(closes(B)), ds = x => emaN(emaN(x, l), s);
+  const t = zip2(ds(pc), ds(pc.map(v => (v == null ? null : Math.abs(v)))), (a, b) => (b ? (100 * a) / b : null));
+  return [t, emaN(t, sig)];
+}
+function cmo(B, n) {
+  const m = change(closes(B)), up = sumN(m.map(v => (v == null ? null : v >= 0 ? v : 0)), n), dn = sumN(m.map(v => (v == null ? null : v >= 0 ? 0 : -v)), n);
+  return [zip2(up, dn, (a, b) => (a + b ? (100 * (a - b)) / (a + b) : 0))];
+}
+function coppock(B, w, l, s) { const c = closes(B), r = zip2(rocA(c, l), rocA(c, s), (a, b) => a + b); return [wma(r, w)]; }
+function kst(B, p) {
+  const c = closes(B), r = (rl, sl) => smaN(rocA(c, rl), sl);
+  const a = r(p.r1, p.s1), b = r(p.r2, p.s2), d = r(p.r3, p.s3), e = r(p.r4, p.s4);
+  const k = a.map((v, i) => (v != null && b[i] != null && d[i] != null && e[i] != null ? v + 2 * b[i] + 3 * d[i] + 4 * e[i] : null));
+  return [k, smaN(k, p.sig)];
+}
+function fisher(B, n) {
+  const m = hl2s(B), h = rolling(m, n, true), l = rolling(m, n, false), f = new Array(B.length).fill(null), t = new Array(B.length).fill(null);
+  let val = 0, fish = 0, prevFish = null;
+  const rnd = v => (v > 0.99 ? 0.999 : v < -0.99 ? -0.999 : v);
+  for (let i = 0; i < B.length; i++) {
+    if (h[i] == null) continue;
+    const x = h[i] === l[i] ? 0 : (m[i] - l[i]) / (h[i] - l[i]) - 0.5;
+    val = rnd(0.66 * x + 0.67 * val);
+    const nf = 0.5 * Math.log((1 + val) / (1 - val)) + 0.5 * fish;
+    t[i] = prevFish; f[i] = nf; prevFish = nf; fish = nf;
+  }
+  return [f, t];
+}
+function swma(a) { return a.map((v, i) => (i >= 3 && [v, a[i - 1], a[i - 2], a[i - 3]].every(x => x != null) ? (a[i - 3] + 2 * a[i - 2] + 2 * a[i - 1] + v) / 6 : null)); }
+function rvi(B, n) {
+  const num = sumN(swma(B.map(b => b.close - b.open)), n), den = sumN(swma(B.map(b => b.high - b.low)), n);
+  const r = zip2(num, den, (a, b) => (b ? a / b : null));
+  return [r, swma(r)];
+}
+function crsi(B, rl, ul, pl) {
+  const c = closes(B), r = rsi(c, rl), ud = new Array(c.length).fill(0); ud[0] = -1;
+  for (let i = 1; i < c.length; i++) ud[i] = c[i] === c[i - 1] ? 0 : c[i] > c[i - 1] ? (ud[i - 1] <= 0 ? 1 : ud[i - 1] + 1) : (ud[i - 1] >= 0 ? -1 : ud[i - 1] - 1);
+  const ur = rsi(ud, ul), rc = rocA(c, 1), pr = rc.map((v, i) => { if (i < pl || v == null) return null; let k = 0; for (let j = 1; j <= pl; j++) if (rc[i - j] != null && rc[i - j] <= v) k++; return (100 * k) / pl; });
+  return [r.map((v, i) => (v != null && ur[i] != null && pr[i] != null ? (v + ur[i] + pr[i]) / 3 : null))];
+}
+function hv(B, n, tf) {
+  const per = tfOf(tf || S.tf).sec <= DAY ? 1 : 7, c = closes(B), lr = c.map((v, i) => (i ? Math.log(v / c[i - 1]) : null));
+  return [stdevN(lr, n).map(v => (v == null ? null : 100 * v * Math.sqrt(365 / per)))];
+}
+function massIndex(B, n) { const sp = B.map(b => b.high - b.low), e1 = ema(sp, 9), e2 = emaN(e1, 9); return [sumN(zip2(e1, e2, (a, b) => (b ? a / b : null)), n)]; }
+function adLine(B) { let t = 0; return B.map(b => { t += b.high === b.low ? 0 : (((b.close - b.low) - (b.high - b.close)) / (b.high - b.low)) * (b.volume || 0); return t; }); }
+function noVol(B, f) { return hasVolume(B) ? f() : [new Array(B.length).fill(null)]; }
+Object.assign(IND, {
+  dema: { cat: 'ma', label: 'Double EMA', alias: 'dema double exponential', short: p => `DEMA ${p.len}`, desc: 'Two EMAs combined to cut the lag of a single EMA.', params: [P_LEN(9)], fmt: 'price',
+    series: [{ color: L1 }], compute: (B, p) => { const e1 = ema(closes(B), p.len), e2 = emaN(e1, p.len); return [zip2(e1, e2, (a, b) => 2 * a - b)]; } },
+  tema: { cat: 'ma', label: 'Triple EMA', alias: 'tema triple exponential', short: p => `TEMA ${p.len}`, desc: 'Three EMAs combined, faster still than the Double EMA.', params: [P_LEN(9)], fmt: 'price',
+    series: [{ color: L1 }], compute: (B, p) => { const e1 = ema(closes(B), p.len), e2 = emaN(e1, p.len), e3 = emaN(e2, p.len); return [e1.map((v, i) => (v != null && e2[i] != null && e3[i] != null ? 3 * (v - e2[i]) + e3[i] : null))]; } },
+  smma: { cat: 'ma', label: 'Smoothed Moving Average', alias: 'smma rma wilder running', short: p => `SMMA ${p.len}`, desc: 'A slow, steady average (Wilder’s smoothing).', params: [P_LEN(7)], fmt: 'price',
+    series: [{ color: L1 }], compute: (B, p) => [rma(closes(B), p.len)] },
+  vwma: { cat: 'ma', label: 'Volume Weighted Moving Average', alias: 'vwma volume weighted', short: p => `VWMA ${p.len}`, desc: 'An average where busier bars count more. Blank for markets without volume, such as forex.', params: [P_LEN(20)], fmt: 'price',
+    series: [{ color: L1 }], compute: (B, p) => noVol(B, () => [zip2(sma(B.map(b => b.close * (b.volume || 0)), p.len), sma(vols(B), p.len), (a, b) => (b ? a / b : null))]) },
+  alma: { cat: 'ma', label: 'Arnaud Legoux Moving Average', alias: 'alma legoux', short: p => `ALMA ${p.len} ${p.off} ${p.sig}`, desc: 'A smooth average shaped like a bell curve, leaning towards recent closes.',
+    params: [P_LEN(9), { k: 'off', label: 'Offset', def: 0.85, min: 0, max: 1, step: 0.01 }, { k: 'sig', label: 'Sigma', def: 6, min: 0.5, max: 50, step: 0.5 }], fmt: 'price',
+    series: [{ color: L1 }], compute: (B, p) => [alma(closes(B), p.len, p.off, p.sig)] },
+  lsma: { cat: 'ma', label: 'Least Squares Moving Average', alias: 'lsma linear regression curve linreg', short: p => `LSMA ${p.len}`, desc: 'The end of a best-fit straight line through the last N closes.', params: [P_LEN(25), { k: 'off', label: 'Offset', def: 0, min: -100, max: 100, step: 1 }], fmt: 'price',
+    series: [{ color: L1 }], compute: (B, p) => [linreg(closes(B), p.len, p.off)] },
+  mcginley: { cat: 'ma', label: 'McGinley Dynamic', alias: 'mcginley dynamic md', short: p => `McGinley ${p.len}`, desc: 'An average that speeds up in fast markets and slows down in quiet ones.', params: [P_LEN(14)], fmt: 'price',
+    series: [{ color: L1 }], compute: (B, p) => [mcginley(closes(B), p.len)] },
+  ribbon: { cat: 'ma', label: 'Moving Average Ribbon', alias: 'ribbon sma 20 50 100 200', nocolor: true, short: () => 'MA Ribbon 20 50 100 200', desc: 'Four simple moving averages (20, 50, 100 and 200) that fan out in a trend and bunch up in a range.', params: [], fmt: 'price',
+    series: [{ name: '20', color: () => '#f6c309', width: 1 }, { name: '50', color: () => '#fb9800', width: 1 }, { name: '100', color: () => '#fb6500', width: 1 }, { name: '200', color: () => '#f60c0c', width: 1 }],
+    compute: B => [20, 50, 100, 200].map(n => sma(closes(B), n)) },
+  envelope: { cat: 'ma', label: 'Envelope', alias: 'envelope bands percent', short: p => `Env ${p.len} ${p.pct}`, desc: 'An average with bands a fixed percentage above and below it.',
+    params: [P_LEN(20), { k: 'pct', label: 'Percent', def: 10, min: 0.1, max: 50, step: 0.1 }], fmt: 'price',
+    series: [{ name: 'Upper', color: L1, width: 1 }, { name: 'Basis', color: L1, width: 1, dashed: true }, { name: 'Lower', color: L1, width: 1 }], fills: [{ a: 0, b: 2, mode: 'band' }],
+    compute: (B, p) => { const m = sma(closes(B), p.len); return [m.map(v => (v == null ? null : v * (1 + p.pct / 100))), m, m.map(v => (v == null ? null : v * (1 - p.pct / 100)))]; } },
+  aroon: { cat: 'trend', label: 'Aroon', alias: 'aroon up down', pane: true, nocolor: true, short: p => `Aroon ${p.len}`, desc: 'How many bars since the highest high (up) and lowest low (down), from 0 to 100.', params: [P_LEN(14, 200, 2)], fmt: 'fixed', range: [0, 100], levels: [70, 30],
+    series: [{ name: 'Up', color: () => C.up }, { name: 'Down', color: () => C.down }], compute: (B, p) => aroon(B, p.len) },
+  vortex: { cat: 'trend', label: 'Vortex Indicator', alias: 'vortex vi', pane: true, nocolor: true, short: p => `VI ${p.len}`, desc: 'Two lines that cross when a new trend starts: VI+ above VI− in an uptrend.', params: [P_LEN(14, 200, 2)], fmt: 'fixed3',
+    series: [{ name: 'VI+', color: () => C.up }, { name: 'VI−', color: () => C.down }], compute: (B, p) => vortex(B, p.len) },
+  alligator: { cat: 'trend', label: 'Williams Alligator', alias: 'alligator jaw teeth lips bill williams', nocolor: true, short: () => 'Alligator 13 8 5', desc: 'Three shifted averages (jaw, teeth, lips). Tangled lines mean no trend; fanned out means a trend. Drawn up to the latest bar.', params: [], fmt: 'price',
+    series: [{ name: 'Jaw', color: () => '#2f7fe0', width: 1 }, { name: 'Teeth', color: () => '#e2494f', width: 1 }, { name: 'Lips', color: () => '#3aa76d', width: 1 }],
+    compute: B => { const m = hl2s(B); return [shiftR(rma(m, 13), 8), shiftR(rma(m, 8), 5), shiftR(rma(m, 5), 3)]; } },
+  chop: { cat: 'trend', label: 'Choppiness Index', alias: 'chop choppiness', pane: true, short: p => `CHOP ${p.len}`, desc: 'Is the market trending (low) or going sideways (high)? Above 61.8 is choppy, below 38.2 trending.', params: [P_LEN(14, 200, 2)], fmt: 'fixed', levels: [61.8, 38.2], range: [0, 100],
+    series: [{ color: L1 }], compute: (B, p) => chop(B, p.len) },
+  zigzag: { cat: 'trend', label: 'Zig Zag', alias: 'zigzag zig zag swings', short: p => `ZigZag ${p.dev}%`, desc: 'Joins the swing highs and lows that are at least the chosen percentage apart. The newest leg moves until it is confirmed.',
+    params: [{ k: 'dev', label: 'Deviation (%)', def: 5, min: 0.1, max: 50, step: 0.1 }], fmt: 'price',
+    series: [{ color: L1 }], compute: (B, p) => zigzag(B, p.dev) },
+  fractals: { cat: 'trend', label: 'Williams Fractals', alias: 'fractals bill williams', nocolor: true, short: p => `Fractals ${p.k}`, desc: 'Marks a high with lower highs on each side (above) and a low with higher lows on each side (below).',
+    params: [{ k: 'k', label: 'Bars each side', def: 2, min: 1, max: 10, step: 1 }], fmt: 'price',
+    series: [{ name: 'Up', kind: 'dots', color: () => C.down, last: false }, { name: 'Down', kind: 'dots', color: () => C.up, last: false }], compute: (B, p) => fractals(B, p.k) },
+  dpo: { cat: 'osc', label: 'Detrended Price Oscillator', alias: 'dpo detrended', pane: true, short: p => `DPO ${p.len}`, desc: 'Takes the trend out to show the cycles: the close against an average from a while ago.', params: [P_LEN(21, 200, 2)], fmt: 'fine', levels: [0],
+    series: [{ color: L1 }], compute: (B, p) => dpo(B, p.len) },
+  trix: { cat: 'osc', label: 'TRIX', alias: 'trix triple exponential', pane: true, short: p => `TRIX ${p.len}`, desc: 'The rate of change of a triple-smoothed average. Crossing zero hints at a turn.', params: [P_LEN(18, 200)], fmt: 'fixed3', levels: [0],
+    series: [{ color: L1 }], compute: (B, p) => trix(B, p.len) },
+  ppo: { cat: 'osc', label: 'Price Oscillator', alias: 'ppo percentage price oscillator', pane: true, short: p => `PPO ${p.fast} ${p.slow}`, desc: 'The gap between a fast and a slow EMA, as a percentage.',
+    params: [{ k: 'fast', label: 'Short length', def: 10, min: 1, max: 200, step: 1 }, { k: 'slow', label: 'Long length', def: 21, min: 2, max: 300, step: 1 }], fmt: 'fixed3', levels: [0],
+    check: p => (p.fast >= p.slow ? 'Short length must be shorter than long length' : ''), series: [{ color: L1 }], compute: (B, p) => ppo(B, p.fast, p.slow) },
+  uo: { cat: 'osc', label: 'Ultimate Oscillator', alias: 'uo ultimate', pane: true, short: p => `UO ${p.a} ${p.b} ${p.c}`, desc: 'Buying pressure over three lengths blended together, from 0 to 100.',
+    params: [{ k: 'a', label: 'Fast length', def: 7, min: 1, max: 100, step: 1 }, { k: 'b', label: 'Middle length', def: 14, min: 1, max: 200, step: 1 }, { k: 'c', label: 'Slow length', def: 28, min: 1, max: 300, step: 1 }], fmt: 'fixed', levels: [70, 30], range: [0, 100],
+    series: [{ color: L1 }], compute: (B, p) => uo(B, p.a, p.b, p.c) },
+  tsi: { cat: 'osc', label: 'True Strength Index', alias: 'tsi true strength', pane: true, short: p => `TSI ${p.l} ${p.s} ${p.sig}`, desc: 'Double-smoothed momentum with a signal line, from −100 to 100.',
+    params: [{ k: 'l', label: 'Long length', def: 25, min: 1, max: 200, step: 1 }, { k: 's', label: 'Short length', def: 13, min: 1, max: 200, step: 1 }, { k: 'sig', label: 'Signal length', def: 13, min: 1, max: 100, step: 1 }], fmt: 'fixed', levels: [0],
+    series: [{ name: 'TSI', color: L1 }, { name: 'Signal', color: SIG, width: 1 }], compute: (B, p) => tsi(B, p.l, p.s, p.sig) },
+  mom: { cat: 'osc', label: 'Momentum', alias: 'momentum mom', pane: true, short: p => `Mom ${p.len}`, desc: 'The close minus the close N bars ago.', params: [P_LEN(10, 200)], fmt: 'fine', levels: [0],
+    series: [{ color: L1 }], compute: (B, p) => [change(closes(B), p.len)] },
+  bop: { cat: 'osc', label: 'Balance of Power', alias: 'bop balance power', pane: true, short: () => 'BOP', desc: 'Who won each bar: close minus open, divided by the bar’s range, from −1 to 1.', params: [], fmt: 'fixed3', levels: [0],
+    series: [{ color: L1 }], compute: B => [B.map(b => (b.high === b.low ? null : (b.close - b.open) / (b.high - b.low)))] },
+  cmo: { cat: 'osc', label: 'Chande Momentum Oscillator', alias: 'cmo chande', pane: true, short: p => `CMO ${p.len}`, desc: 'Up moves against down moves over N bars, from −100 to 100.', params: [P_LEN(9, 200, 2)], fmt: 'fixed', levels: [50, -50], range: [-100, 100],
+    series: [{ color: L1 }], compute: (B, p) => cmo(B, p.len) },
+  coppock: { cat: 'osc', label: 'Coppock Curve', alias: 'coppock', pane: true, short: p => `Coppock ${p.w} ${p.l} ${p.s}`, desc: 'A slow momentum line, first made for spotting long-term bottoms.',
+    params: [{ k: 'w', label: 'WMA length', def: 10, min: 1, max: 100, step: 1 }, { k: 'l', label: 'Long ROC length', def: 14, min: 1, max: 100, step: 1 }, { k: 's', label: 'Short ROC length', def: 11, min: 1, max: 100, step: 1 }], fmt: 'fixed3', levels: [0],
+    series: [{ color: L1 }], compute: (B, p) => coppock(B, p.w, p.l, p.s) },
+  kst: { cat: 'osc', label: 'Know Sure Thing', alias: 'kst know sure thing', pane: true, short: () => 'KST', desc: 'Four rates of change blended into one line, with a signal line.',
+    params: [{ k: 'r1', label: 'ROC length 1', def: 10, min: 1, max: 100, step: 1 }, { k: 'r2', label: 'ROC length 2', def: 15, min: 1, max: 100, step: 1 }, { k: 'r3', label: 'ROC length 3', def: 20, min: 1, max: 100, step: 1 }, { k: 'r4', label: 'ROC length 4', def: 30, min: 1, max: 100, step: 1 },
+      { k: 's1', label: 'SMA length 1', def: 10, min: 1, max: 100, step: 1 }, { k: 's2', label: 'SMA length 2', def: 10, min: 1, max: 100, step: 1 }, { k: 's3', label: 'SMA length 3', def: 10, min: 1, max: 100, step: 1 }, { k: 's4', label: 'SMA length 4', def: 15, min: 1, max: 100, step: 1 },
+      { k: 'sig', label: 'Signal length', def: 9, min: 1, max: 100, step: 1 }], fmt: 'fixed3', levels: [0],
+    series: [{ name: 'KST', color: L1 }, { name: 'Signal', color: SIG, width: 1 }], compute: (B, p) => kst(B, p) },
+  fisher: { cat: 'osc', label: 'Fisher Transform', alias: 'fisher transform', pane: true, short: p => `Fisher ${p.len}`, desc: 'Turns prices into sharp peaks and troughs that make turning points easier to see.', params: [P_LEN(9, 200, 2)], fmt: 'fixed3', levels: [1.5, 0.75, 0, -0.75, -1.5],
+    series: [{ name: 'Fisher', color: L1 }, { name: 'Trigger', color: SIG, width: 1 }], compute: (B, p) => fisher(B, p.len) },
+  rvi: { cat: 'osc', label: 'Relative Vigor Index', alias: 'rvi rvgi relative vigor', pane: true, short: p => `RVGI ${p.len}`, desc: 'Closes near the high in an uptrend and near the low in a downtrend, smoothed, with a signal line.', params: [P_LEN(10, 200)], fmt: 'fixed3', levels: [0],
+    series: [{ name: 'RVGI', color: L1 }, { name: 'Signal', color: SIG, width: 1 }], compute: (B, p) => rvi(B, p.len) },
+  bbp: { cat: 'osc', label: 'Bull Bear Power', alias: 'bbp bull bear power elder ray', pane: true, nocolor: true, short: p => `BBP ${p.len}`, desc: 'The high and the low against a 13-bar EMA, added together. Above zero, buyers lead.', params: [P_LEN(13, 200)], fmt: 'fine',
+    series: [{ kind: 'hist' }], compute: (B, p) => { const e = ema(closes(B), p.len); return [B.map((b, i) => (e[i] == null ? null : b.high - e[i] + (b.low - e[i])))]; } },
+  crsi: { cat: 'osc', label: 'Connors RSI', alias: 'crsi connors rsi', pane: true, short: p => `CRSI ${p.r} ${p.u} ${p.p}`, desc: 'An average of a short RSI, the RSI of up/down streaks and how today’s change ranks. Above 70 is stretched.',
+    params: [{ k: 'r', label: 'RSI length', def: 3, min: 1, max: 100, step: 1 }, { k: 'u', label: 'Up/down length', def: 2, min: 1, max: 100, step: 1 }, { k: 'p', label: 'ROC rank length', def: 100, min: 2, max: 500, step: 1 }], fmt: 'fixed', levels: [70, 30], range: [0, 100],
+    series: [{ color: L1 }], compute: (B, p) => crsi(B, p.r, p.u, p.p) },
+  bbw: { cat: 'volatility', label: 'Bollinger BandWidth', alias: 'bbw bandwidth bollinger squeeze', pane: true, short: p => `BBW ${p.len} ${p.mult}`, desc: 'How wide the Bollinger Bands are, as a percentage of the middle band. Low values mean a squeeze.',
+    params: [P_LEN(20, 300, 2), { k: 'mult', label: 'Std. deviations', def: 2, min: 0.5, max: 5, step: 0.1 }], fmt: 'fixed3',
+    series: [{ color: L1 }], compute: (B, p) => { const [u, m, l] = bbands(closes(B), p.len, p.mult); return [m.map((v, i) => (v ? ((u[i] - l[i]) / v) * 100 : null))]; } },
+  bbpct: { cat: 'volatility', label: 'Bollinger Bands %B', alias: 'percent b %b bollinger', pane: true, short: p => `%B ${p.len} ${p.mult}`, desc: 'Where the close sits in the Bollinger Bands: 1 at the upper band, 0 at the lower.',
+    params: [P_LEN(20, 300, 2), { k: 'mult', label: 'Std. deviations', def: 2, min: 0.5, max: 5, step: 0.1 }], fmt: 'fixed3', levels: [1, 0.5, 0],
+    series: [{ color: L1 }], compute: (B, p) => { const [u, , l] = bbands(closes(B), p.len, p.mult); return [B.map((b, i) => (u[i] != null && u[i] !== l[i] ? (b.close - l[i]) / (u[i] - l[i]) : null))]; } },
+  stdev: { cat: 'volatility', label: 'Standard Deviation', alias: 'stdev standard deviation', pane: true, short: p => `StdDev ${p.len}`, desc: 'How spread out the last N closes are.', params: [P_LEN(20, 300, 2)], fmt: 'price',
+    series: [{ color: L1 }], compute: (B, p) => [stdevN(closes(B), p.len)] },
+  hv: { cat: 'volatility', label: 'Historical Volatility', alias: 'hv historical volatility', pane: true, short: p => `HV ${p.len}`, desc: 'How much the price has been moving, as a yearly percentage.', params: [P_LEN(10, 300, 2)], fmt: 'fixed',
+    series: [{ color: L1 }], compute: (B, p, tf) => hv(B, p.len, tf) },
+  massi: { cat: 'volatility', label: 'Mass Index', alias: 'mass index', pane: true, short: p => `Mass ${p.len}`, desc: 'Watches the high–low range widen and narrow. A rise above 27 then below 26.5 can hint at a reversal.', params: [P_LEN(10, 100, 2)], fmt: 'fixed', levels: [27, 26.5],
+    series: [{ color: L1 }], compute: (B, p) => massIndex(B, p.len) },
+  ad: { cat: 'volume', label: 'Accumulation/Distribution', alias: 'ad a/d accumulation distribution', pane: true, short: () => 'A/D', desc: 'A running total of volume, weighted by where each bar closes in its range. Blank without volume.', params: [], fmt: 'vol',
+    series: [{ color: L1 }], compute: B => noVol(B, () => [adLine(B)]) },
+  chaikinosc: { cat: 'volume', label: 'Chaikin Oscillator', alias: 'chaikin oscillator adosc', pane: true, short: p => `Chaikin Osc ${p.fast} ${p.slow}`, desc: 'The gap between a fast and slow EMA of the Accumulation/Distribution line. Blank without volume.',
+    params: [{ k: 'fast', label: 'Fast length', def: 3, min: 1, max: 100, step: 1 }, { k: 'slow', label: 'Slow length', def: 10, min: 2, max: 200, step: 1 }], fmt: 'vol', levels: [0],
+    series: [{ color: L1 }], compute: (B, p) => noVol(B, () => { const a = adLine(B); return [zip2(ema(a, p.fast), ema(a, p.slow), (x, y) => x - y)]; }) },
+  pvt: { cat: 'volume', label: 'Price Volume Trend', alias: 'pvt price volume trend', pane: true, short: () => 'PVT', desc: 'A running total of volume times each bar’s percentage change. Blank without volume.', params: [], fmt: 'vol',
+    series: [{ color: L1 }], compute: B => noVol(B, () => { let t = 0; return [B.map((b, i) => { if (i) t += ((b.close - B[i - 1].close) / B[i - 1].close) * (b.volume || 0); return t; })]; }) },
+  eom: { cat: 'volume', label: 'Ease of Movement', alias: 'eom ease of movement emv', pane: true, short: p => `EOM ${p.len}`, desc: 'How easily the price moves: big moves on little volume score high. Blank without volume.',
+    params: [P_LEN(14, 200), { k: 'div', label: 'Divisor', def: 10000, min: 1, max: 1e9, step: 1 }], fmt: 'fixed3', levels: [0],
+    series: [{ color: L1 }], compute: (B, p) => noVol(B, () => { const m = hl2s(B), ch = change(m); return [smaN(B.map((b, i) => (ch[i] == null || !b.volume ? null : (p.div * ch[i] * (b.high - b.low)) / b.volume)), p.len)]; }) },
+  volosc: { cat: 'volume', label: 'Volume Oscillator', alias: 'volume oscillator', pane: true, short: p => `Vol Osc ${p.fast} ${p.slow}`, desc: 'A fast against a slow EMA of volume, as a percentage. Blank without volume.',
+    params: [{ k: 'fast', label: 'Short length', def: 5, min: 1, max: 100, step: 1 }, { k: 'slow', label: 'Long length', def: 10, min: 2, max: 200, step: 1 }], fmt: 'fixed', levels: [0],
+    series: [{ color: L1 }], compute: (B, p) => noVol(B, () => [zip2(ema(vols(B), p.fast), ema(vols(B), p.slow), (a, b) => (b ? (100 * (a - b)) / b : null))]) },
+  klinger: { cat: 'volume', label: 'Klinger Oscillator', alias: 'klinger kvo', pane: true, short: () => 'KVO 34 55 13', desc: 'Volume pushed up or down by each bar, as a fast minus slow EMA, with a signal line. Blank without volume.', params: [], fmt: 'vol', levels: [0],
+    series: [{ name: 'KVO', color: L1 }, { name: 'Signal', color: SIG, width: 1 }],
+    compute: B => noVol(B, () => { const t = hlc3s(B), sv = B.map((b, i) => (!i || t[i] - t[i - 1] < 0 ? -(b.volume || 0) : b.volume || 0)); const k = zip2(ema(sv, 34), ema(sv, 55), (a, b) => a - b); return [k, emaN(k, 13)]; }) },
+  efi: { cat: 'volume', label: 'Elder Force Index', alias: 'efi elder force', pane: true, short: p => `EFI ${p.len}`, desc: 'Each bar’s change times its volume, smoothed. Above zero, buyers are in control. Blank without volume.', params: [P_LEN(13, 200)], fmt: 'vol', levels: [0],
+    series: [{ color: L1 }], compute: (B, p) => noVol(B, () => [emaN(change(closes(B)).map((v, i) => (v == null ? null : v * (B[i].volume || 0))), p.len)]) },
+  vrvp: { cat: 'volume', label: 'Volume Profile (visible range)', alias: 'vrvp volume profile vpvr poc value area', nocolor: true, short: p => `VRVP ${p.rows}`, desc: 'How much was traded at each price over the bars on screen, with the point of control (most traded price) and the value area (70% of the volume).',
+    params: [{ k: 'rows', label: 'Rows', def: 24, min: 6, max: 120, step: 1 }, { k: 'va', label: 'Value area (%)', def: 70, min: 10, max: 95, step: 1 }, { k: 'width', label: 'Width (% of the chart)', def: 30, min: 5, max: 60, step: 1 }],
+    series: [], compute: () => [] },
+});
+// The visible-range volume profile is drawn over the chart (like TradingView's), from the bars on screen.
+function vpCompute(B, rows, vaPct) {
+  if (!B.length || !hasVolume(B)) return null;
+  let lo = Infinity, hi = -Infinity; for (const b of B) { if (b.low < lo) lo = b.low; if (b.high > hi) hi = b.high; }
+  if (!(hi > lo)) return null;
+  const step = (hi - lo) / rows, up = new Array(rows).fill(0), dn = new Array(rows).fill(0);
+  for (const b of B) {
+    const v = b.volume || 0; if (!v) continue;
+    const a = Math.max(0, Math.min(rows - 1, Math.floor((b.low - lo) / step))), z = Math.max(0, Math.min(rows - 1, Math.floor((b.high - lo) / step)));
+    const span = b.high - b.low;
+    for (let r = a; r <= z; r++) {
+      const share = span > 0 ? Math.max(0, Math.min(b.high, lo + (r + 1) * step) - Math.max(b.low, lo + r * step)) / span : 1 / (z - a + 1);
+      if (b.close >= b.open) up[r] += v * share; else dn[r] += v * share;
+    }
+  }
+  const tot = up.map((u, r) => u + dn[r]), all = tot.reduce((a, x) => a + x, 0); if (!all) return null;
+  let poc = 0; tot.forEach((x, r) => { if (x > tot[poc]) poc = r; });
+  let vaLo = poc, vaHi = poc, acc = tot[poc];
+  while (acc < (all * vaPct) / 100 && (vaLo > 0 || vaHi < rows - 1)) {
+    const below = vaLo > 0 ? tot[vaLo - 1] : -1, above = vaHi < rows - 1 ? tot[vaHi + 1] : -1;
+    if (above >= below) { vaHi++; acc += tot[vaHi]; } else { vaLo--; acc += tot[vaLo]; }
+  }
+  return { lo, hi, step, up, dn, tot, poc, vaLo, vaHi, max: Math.max(...tot) };
+}
+function drawVolumeProfiles(m, W, H) {
+  const list = S.rts.filter(r => r.inst.type === 'vrvp' && !r.inst.hidden); if (!list.length || !S.bars.length) return;
+  const i0 = Math.max(0, Math.floor(m.L(0))), i1 = Math.min(S.bars.length - 1, Math.ceil(m.L(W)));
+  if (i1 <= i0) return;
+  const vis = S.bars.slice(i0, i1 + 1);
+  for (const rt of list) {
+    const p = rt.inst.params, vp = vpCompute(vis, p.rows, p.va); rt.vp = vp; if (!vp) continue;
+    const maxW = (W * p.width) / 100;
+    for (let r = 0; r < p.rows; r++) {
+      const yTop = m.y(vp.lo + (r + 1) * vp.step), yBot = m.y(vp.lo + r * vp.step); if (yTop == null || yBot == null) continue;
+      const h = Math.max(1, Math.abs(yBot - yTop) - 1), y = Math.min(yTop, yBot) + 0.5, inVa = r >= vp.vaLo && r <= vp.vaHi;
+      const wu = (vp.up[r] / vp.max) * maxW, wd = (vp.dn[r] / vp.max) * maxW;
+      octx.fillStyle = alpha(C.up, inVa ? 0.42 : 0.18); octx.fillRect(W - wu, y, wu, h);
+      octx.fillStyle = alpha(C.down, inVa ? 0.42 : 0.18); octx.fillRect(W - wu - wd, y, wd, h);
+    }
+    const yp = m.y(vp.lo + (vp.poc + 0.5) * vp.step);
+    if (yp != null) { octx.strokeStyle = C.accent; octx.lineWidth = 1.5; octx.setLineDash([]); seg(0, yp, W, yp); }
+  }
+}
+
 function normInst(inst) {
   const def = IND[inst && inst.type]; if (!def) return null;
   const params = {};
@@ -1699,7 +2055,7 @@ function mapperFor(ch, s, T, step) {   // time and price <-> pixels on a chart, 
     const i = Math.floor(Lg); return T[i].time + (Lg - i) * (T[i + 1].time - T[i].time);
   };
   return {
-    sp,
+    sp, bars: T,
     L: x => L0 + (x - x0) / sp,
     x: t => x0 + (tToL(t) - L0) * sp,
     t: x => LToT(L0 + (x - x0) / sp),
@@ -1804,6 +2160,7 @@ function drawShape(d, m, W, H, sel, draft) {
       if (sel || draft) { handle(x1, y1, col); handle(x2, y2, col); }
       break;
     }
+    default: drawShape2(d, m, W, H, sel, draft, col, x1, y1, x2, y2);
   }
 }
 function drawMeasure(d, m) {
@@ -1881,7 +2238,7 @@ function drawOverlay(m) {
   const W = ps.width, H = ps.height;
   octx.save(); octx.beginPath(); octx.rect(0, 0, W, H); octx.clip();
   if (S.idea && S.idea.symbol === S.symbol) drawIdeaLayer(m, W, H);
-  drawPnf(m, W, H);
+  drawPnf(m, W, H); drawVolumeProfiles(m, W, H);
   for (const d of curDrawings()) drawShape(d, m, W, H, d.id === S.selected, false);
   if (S.draft && S.draft.type !== 'measure') drawShape(S.draft, m, W, H, false, true);
   const meas = S.draft && S.draft.type === 'measure' ? S.draft : S.measure;
@@ -1964,6 +2321,7 @@ function hitTest(x, y) {
     const x1 = m.x(d.p1.t), y1 = m.y(d.p1.p); if (y1 == null) continue;
     const x2 = d.p2 ? m.x(d.p2.t) : 0, y2 = d.p2 ? m.y(d.p2.p) : 0;
     if (d.p2) { if (dist(x, y, x1, y1) < 9) return { d, part: 'p1' }; if (dist(x, y, x2, y2) < 9) return { d, part: 'p2' }; }
+    if (d.p3) { const x3 = m.x(d.p3.t), y3 = m.y(d.p3.p); if (y3 != null && dist(x, y, x3, y3) < 9) return { d, part: 'p3' }; }
     let dd = Infinity;
     if (d.type === 'hline') dd = Math.abs(y - y1);
     else if (d.type === 'trend') dd = segDist(x, y, x1, y1, x2, y2);
@@ -1971,6 +2329,7 @@ function hitTest(x, y) {
     else if (d.type === 'rect' || d.type === 'fib') {
       if (x >= Math.min(x1, x2) - 4 && x <= Math.max(x1, x2) + 4 && y >= Math.min(y1, y2) - 4 && y <= Math.max(y1, y2) + 4) dd = 0;
     }
+    else dd = hitExtra(d, x, y, m, x1, y1, x2, y2, segDist);
     if (dd < bd) { bd = dd; best = { d, part: 'body' }; }
   }
   return best;
@@ -1998,6 +2357,7 @@ function select(id) {
   bar.hidden = false; $('#hint').hidden = true;
   $('#selName').textContent = TOOL_NAMES[d.type] || 'Drawing';
   $('#selJournal').hidden = !isPos(d);
+  $('#selText').hidden = d.type !== 'text';
   const sw = $('#selSw'); sw.replaceChildren(); sw.hidden = isPos(d);
   for (const c of SEL_COLORS) {
     const b = el('button', 'sw'); b.style.background = c || C.draw;
@@ -2028,6 +2388,7 @@ function setHint() {
   box.hidden = false; $('#selbar').hidden = true;
 }
 function setTool(t) {
+  closeText(true); $('#toolMenu').hidden = true;
   if (R.picking) { R.picking = false; R.hoverX = null; renderReplay(); }
   if (t === S.tool && t !== 'cursor') t = 'cursor';
   S.tool = t; S.draft = null;
@@ -2051,6 +2412,8 @@ function placeAt(x, y) {
   const t = S.tool;
   if (t === 'hline') { addDrawing({ type: 'hline', p1: pt }); finishTool(); return; }
   if (t === 'alert') { const ap = pointAt(x, y, false); if (ap) createAlert(S.symbol, ap.p); finishTool(); return; }
+  if (placeExtra(t, pt)) return;
+  if (BRUSHES.includes(t)) return;
   if (!S.draft) { S.draft = { type: t, p1: pt, p2: pt }; setHint(); markDirty(); return; }
   if (t === 'long' || t === 'short') {
     const p1 = S.draft.p1, m = mapper(), lv = posLevels({ type: t, p1, p2: pt });
@@ -2075,7 +2438,7 @@ chart.subscribeCrosshairMove(param => {
   else S.cross = { idx: findIdx(param.time) };
   const onMain = param.point && (param.paneIndex || 0) === 0 && S.main;
   S.crossPrice = onMain ? S.main.coordinateToPrice(param.point.y) : null;
-  if (S.draft && onMain) { const p = pointAt(param.point.x, param.point.y, true); if (p) { S.draft.p2 = p; markDirty(); } }
+  if (S.draft && onMain && !brushing) { const p = pointAt(param.point.x, param.point.y, true); if (p) { if (S.draft.p3 !== undefined) S.draft.p3 = p; else S.draft.p2 = p; markDirty(); } }
   if (R.picking) { R.hoverX = param.point ? param.point.x : null; markDirty(); }
   updateLegend();
 });
@@ -2090,7 +2453,9 @@ let drag = null, press = null;
 wrap.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   if (e.target.closest('.lg-row, .float, .latest, .veil')) return;
+  closeText(true);
   const r = wrap.getBoundingClientRect(); const x = e.clientX - r.left, y = e.clientY - r.top;
+  if (BRUSHES.includes(S.tool) && !R.picking && brushStart(e, x, y)) { press = null; return; }
   press = { x, y, id: e.pointerId };
   if (Paper.pointerDown(e, x, y)) { press = null; return; }   // paper trading lines on the chart
   if (S.tool !== 'cursor' || S.draft || R.picking) return;
@@ -2101,9 +2466,10 @@ wrap.addEventListener('pointerdown', e => {
   select(h.d.id);
   drag = { id: h.d.id, part: h.part, sx: x, sy: y, orig: JSON.parse(JSON.stringify(h.d)), before: JSON.stringify(curDrawings()), moved: false };
 }, true);
-['mousedown', 'touchstart'].forEach(ev => wrap.addEventListener(ev, e => { if (drag) e.stopPropagation(); }, { capture: true, passive: true }));
-window.addEventListener('touchmove', e => { if (drag) e.preventDefault(); }, { passive: false });
+['mousedown', 'touchstart'].forEach(ev => wrap.addEventListener(ev, e => { if (drag || brushing) e.stopPropagation(); }, { capture: true, passive: true }));
+window.addEventListener('touchmove', e => { if (drag || brushing) e.preventDefault(); }, { passive: false });
 window.addEventListener('pointermove', e => {
+  if (brushing) { brushMove(e); return; }
   if (!drag) return;
   const r = wrap.getBoundingClientRect(); const x = e.clientX - r.left, y = e.clientY - r.top;
   const dx = x - drag.sx, dy = y - drag.sy; if (!drag.moved && Math.hypot(dx, dy) < 3) return;
@@ -2112,9 +2478,9 @@ window.addEventListener('pointermove', e => {
   const o = drag.orig;
   if (drag.part === 'body') {
     const mv = pt => { const yy = m.y(pt.p); return { t: m.t(m.x(pt.t) + dx), p: yy == null ? pt.p : m.p(yy + dy) }; };
-    d.p1 = mv(o.p1); if (o.p2) d.p2 = mv(o.p2);
+    d.p1 = mv(o.p1); if (o.p2) d.p2 = mv(o.p2); if (o.p3) d.p3 = mv(o.p3); if (o.pts) d.pts = o.pts.map(mv);
     if (o.tp != null) { const yy = m.y(o.tp); d.tp = yy == null ? o.tp : m.p(yy + dy); }
-  } else if (drag.part === 'p1' || drag.part === 'p2') {
+  } else if (drag.part === 'p1' || drag.part === 'p2' || drag.part === 'p3') {
     const p = pointAt(x, y, true); if (p) d[drag.part] = p;
   } else {
     const s = pointAt(x, y, true), p = s ? s.p : m.p(y); if (p == null) return;
@@ -2126,6 +2492,7 @@ window.addEventListener('pointermove', e => {
   markDirty();
 });
 window.addEventListener('pointerup', e => {
+  if (brushing) { brushEnd(); press = null; return; }
   if (press && e.pointerId === press.id) {
     const r = wrap.getBoundingClientRect(); const x = e.clientX - r.left, y = e.clientY - r.top;
     if (Math.hypot(x - press.x, y - press.y) < 6) placeAt(x, y);
@@ -2136,6 +2503,357 @@ window.addEventListener('pointerup', e => {
   drag = null;
 });
 window.addEventListener('pointercancel', () => { press = null; });
+
+/* ---------- more drawing tools: lines, channels, Fibonacci, shapes, brushes, text, marks and ranges ---------- */
+Object.assign(TOOL_NAMES, Object.fromEntries(TOOL_GROUPS.flatMap(g => g.tools.map(t => [t[0], t[1]]))));
+Object.assign(HINTS, {
+  ext: ['Click a point on the line', 'Click a second point'],
+  infoline: ['Click where the line starts', 'Click where the line ends'],
+  arrowline: ['Click where the arrow starts', 'Click where it points'],
+  hray: ['Click where the ray starts'],
+  vline: ['Click a moment in time'],
+  cross: ['Click a point'],
+  channel: ['Click where the channel starts', 'Click where it ends', 'Click to set the channel\'s width'],
+  regchan: ['Click the first bar of the trend', 'Click the last bar'],
+  pitchfork: ['Click the starting pivot', 'Click the next swing high or low', 'Click the swing after it'],
+  fibext: ['Click the start of the move', 'Click the end of the move', 'Click the end of the pullback'],
+  fibtime: ['Click where the count starts', 'Click one unit later'],
+  ellipse: ['Click one corner', 'Click the opposite corner'],
+  triangle: ['Click the first corner', 'Click the second corner', 'Click the third corner'],
+  brush: ['Press and drag to draw'],
+  highlighter: ['Press and drag to highlight'],
+  text: ['Click where the text goes'],
+  pricelabel: ['Click a price to label'],
+  arrowup: ['Click where the arrow points'],
+  arrowdown: ['Click where the arrow points'],
+  daterange: ['Click where the range starts', 'Click where it ends'],
+  pricerange: ['Click the first price', 'Click the second price'],
+});
+const FIB_EXT = [[0, null], [0.382, '#e8902e'], [0.618, '#13a3b8'], [1, '#3aa76d'], [1.272, '#9b5de5'], [1.618, '#e2494f'], [2, '#3f7fe6'], [2.618, '#d8487f']];
+const FIB_TIME = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+function lineFar(x1, y1, x2, y2, both) {   // a line through two points, carried far past the screen
+  const len = Math.hypot(x2 - x1, y2 - y1) || 1, ux = (x2 - x1) / len, uy = (y2 - y1) / len;
+  return both ? [x1 - ux * 1e4, y1 - uy * 1e4, x1 + ux * 1e4, y1 + uy * 1e4] : [x1, y1, x1 + ux * 1e4, y1 + uy * 1e4];
+}
+function chanParts(d, m) {   // parallel channel: the line p1→p2 and a copy moved to pass through p3
+  const x1 = m.x(d.p1.t), y1 = m.y(d.p1.p), x2 = m.x(d.p2.t), y2 = m.y(d.p2.p), x3 = m.x(d.p3.t), y3 = m.y(d.p3.p);
+  if ([y1, y2, y3].some(v => v == null)) return null;
+  const k = x2 !== x1 ? (y2 - y1) / (x2 - x1) : 0, dy = y3 - (y1 + k * (x3 - x1));
+  return { x1, y1, x2, y2, dy };
+}
+function forkParts(d, m) {   // Andrews pitchfork: from p1 through the middle of p2–p3, with parallels through p2 and p3
+  const x1 = m.x(d.p1.t), y1 = m.y(d.p1.p), x2 = m.x(d.p2.t), y2 = m.y(d.p2.p), x3 = m.x(d.p3.t), y3 = m.y(d.p3.p);
+  if ([y1, y2, y3].some(v => v == null)) return null;
+  const mx = (x2 + x3) / 2, my = (y2 + y3) / 2;
+  const len = Math.hypot(mx - x1, my - y1) || 1, ux = (mx - x1) / len, uy = (my - y1) / len;
+  return { x1, y1, x2, y2, x3, y3, mx, my, ux, uy };
+}
+function regParts(d, m) {   // least-squares line through the closes between the two points, ±2 standard deviations
+  const T = m.bars; if (!T || !T.length) return null;
+  const ta = Math.min(d.p1.t, d.p2.t), tb = Math.max(d.p1.t, d.p2.t);
+  const pts = T.filter(b => b.time >= ta && b.time <= tb); if (pts.length < 2) return null;
+  const n = pts.length; let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  pts.forEach((b, i) => { sx += i; sy += b.close; sxx += i * i; sxy += i * b.close; });
+  const den = n * sxx - sx * sx, slope = den ? (n * sxy - sx * sy) / den : 0, icpt = (sy - slope * sx) / n;
+  let ss = 0; pts.forEach((b, i) => { const r = b.close - (icpt + slope * i); ss += r * r; });
+  const sd = Math.sqrt(ss / n);
+  return { t0: pts[0].time, t1: pts[n - 1].time, p0: icpt, p1: icpt + slope * (n - 1), sd, n };
+}
+function textBox(d, m) {   // where a text or price label sits, for drawing and for clicks
+  const x = m.x(d.p1.t), y = m.y(d.p1.p); if (y == null) return null;
+  octx.font = d.type === 'text' ? `500 14px ${FONT_BODY}` : `600 11.5px ${FONT_DATA}`;
+  const txt = d.type === 'text' ? (d.text || '') : fmtP(d.p1.p), w = octx.measureText(txt).width;
+  return d.type === 'text' ? { txt, x, y, bx: x - 2, by: y - 11, bw: w + 4, bh: 22 } : { txt, x, y, bx: x + 8, by: y - 20, bw: w + 14, bh: 20 };
+}
+function drawShape2(d, m, W, H, sel, draft, col, x1, y1, x2, y2) {
+  const hd = (x, y) => { if (sel || draft) handle(x, y, col); };
+  switch (d.type) {
+    case 'ext': { const [a, b, c, e] = lineFar(x1, y1, x2, y2, true); seg(a, b, c, e); hd(x1, y1); hd(x2, y2); break; }
+    case 'arrowline': seg(x1, y1, x2, y2); octx.lineWidth = 2.2; arrowHead(x1, y1, x2, y2); hd(x1, y1); hd(x2, y2); break;
+    case 'infoline': {
+      seg(x1, y1, x2, y2); hd(x1, y1); hd(x2, y2);
+      const dp = d.p2.p - d.p1.p, pct = d.p1.p ? (dp / d.p1.p) * 100 : 0, bars = Math.round(m.L(x2) - m.L(x1));
+      const ang = Math.round((Math.atan2(y1 - y2, x2 - x1) * 180) / Math.PI);
+      const lines = [`${fmtSigned(dp)} (${fmtPct(pct)})`, `${Math.abs(bars)} bars · ${fmtSpan(Math.abs(d.p2.t - d.p1.t))} · ${ang}°`];
+      octx.font = `500 11px ${FONT_DATA}`;
+      const w = Math.max(...lines.map(s => octx.measureText(s).width)) + 14, h = 36, bx = clamp(x2 + 10, 2, W - w - 2), by = clamp(y2 - h / 2, 2, H - h - 2);
+      octx.fillStyle = alpha(C.panel, 0.92); rr(bx, by, w, h, 4); octx.fill(); octx.strokeStyle = alpha(col, 0.6); octx.lineWidth = 1; octx.stroke();
+      octx.fillStyle = C.fg; octx.textBaseline = 'middle'; octx.textAlign = 'left'; octx.fillText(lines[0], bx + 7, by + 11); octx.fillText(lines[1], bx + 7, by + 25);
+      break;
+    }
+    case 'hray': seg(x1, y1, W, y1); priceTag(W, y1, d.p1.p, col); hd(x1, y1); break;
+    case 'vline': seg(x1, 0, x1, H); hd(x1, clamp(y1, 12, H - 12)); break;
+    case 'cross': seg(0, y1, W, y1); seg(x1, 0, x1, H); priceTag(W, y1, d.p1.p, col); hd(x1, y1); break;
+    case 'channel': {
+      const p3 = d.p3 || d.p2, c = chanParts(Object.assign({}, d, { p3 }), m); if (!c) break;
+      octx.fillStyle = alpha(col, 0.1); octx.beginPath(); octx.moveTo(c.x1, c.y1); octx.lineTo(c.x2, c.y2); octx.lineTo(c.x2, c.y2 + c.dy); octx.lineTo(c.x1, c.y1 + c.dy); octx.closePath(); octx.fill();
+      seg(c.x1, c.y1, c.x2, c.y2); seg(c.x1, c.y1 + c.dy, c.x2, c.y2 + c.dy);
+      octx.lineWidth = 1; octx.setLineDash([4, 4]); seg(c.x1, c.y1 + c.dy / 2, c.x2, c.y2 + c.dy / 2); octx.setLineDash([]);
+      hd(c.x1, c.y1); hd(c.x2, c.y2); if (d.p3) { const y3 = m.y(d.p3.p); if (y3 != null) hd(m.x(d.p3.t), y3); }
+      break;
+    }
+    case 'pitchfork': {
+      if (!d.p3) { seg(x1, y1, x2, y2); hd(x1, y1); hd(x2, y2); break; }
+      const f = forkParts(d, m); if (!f) break;
+      const far = 1e4;
+      octx.fillStyle = alpha(col, 0.08); octx.beginPath(); octx.moveTo(f.x2, f.y2); octx.lineTo(f.x2 + f.ux * far, f.y2 + f.uy * far); octx.lineTo(f.x3 + f.ux * far, f.y3 + f.uy * far); octx.lineTo(f.x3, f.y3); octx.closePath(); octx.fill();
+      seg(f.x1, f.y1, f.x1 + f.ux * far, f.y1 + f.uy * far);
+      octx.lineWidth = 1.5; seg(f.x2, f.y2, f.x2 + f.ux * far, f.y2 + f.uy * far); seg(f.x3, f.y3, f.x3 + f.ux * far, f.y3 + f.uy * far);
+      octx.lineWidth = 1; octx.setLineDash([4, 4]); seg(f.x2, f.y2, f.x3, f.y3); octx.setLineDash([]);
+      hd(f.x1, f.y1); hd(f.x2, f.y2); hd(f.x3, f.y3);
+      break;
+    }
+    case 'regchan': {
+      const r = regParts(d, m);
+      if (!r) { seg(x1, y1, x2, y2); hd(x1, y1); hd(x2, y2); break; }
+      const xa = m.x(r.t0), xb = m.x(r.t1), ya = m.y(r.p0), yb = m.y(r.p1), ua = m.y(r.p0 + 2 * r.sd), ub = m.y(r.p1 + 2 * r.sd), la = m.y(r.p0 - 2 * r.sd), lb = m.y(r.p1 - 2 * r.sd);
+      if ([ya, yb, ua, ub, la, lb].some(v => v == null)) break;
+      octx.fillStyle = alpha(col, 0.08); octx.beginPath(); octx.moveTo(xa, ua); octx.lineTo(xb, ub); octx.lineTo(xb, lb); octx.lineTo(xa, la); octx.closePath(); octx.fill();
+      seg(xa, ya, xb, yb); octx.lineWidth = 1.2; seg(xa, ua, xb, ub); seg(xa, la, xb, lb);
+      hd(xa, ya); hd(xb, yb);
+      break;
+    }
+    case 'fibext': {
+      octx.strokeStyle = alpha(col, 0.7); octx.lineWidth = 1; octx.setLineDash([4, 4]); seg(x1, y1, x2, y2);
+      if (!d.p3) { octx.setLineDash([]); hd(x1, y1); hd(x2, y2); break; }
+      const x3 = m.x(d.p3.t), y3 = m.y(d.p3.p); if (y3 == null) break;
+      seg(x2, y2, x3, y3); octx.setLineDash([]);
+      const move = d.p2.p - d.p1.p, xa = Math.min(x2, x3), xb = Math.max(x3, x2) + Math.max(80, Math.abs(x3 - x1) * 0.6);
+      octx.font = `500 11px ${FONT_DATA}`; octx.textBaseline = 'bottom'; octx.textAlign = 'left';
+      FIB_EXT.forEach(([lv, lc]) => {
+        const price = d.p3.p + move * lv, y = m.y(price); if (y == null) return;
+        const c = lc || C.faint; octx.strokeStyle = c; octx.lineWidth = 1.2; seg(xa, y, xb, y);
+        octx.fillStyle = c; octx.fillText(`${lv} (${fmtP(price)})`, xa + 4, y - 2);
+      });
+      hd(x1, y1); hd(x2, y2); hd(x3, y3);
+      break;
+    }
+    case 'fibtime': {
+      const unit = x2 - x1;
+      octx.font = `500 10.5px ${FONT_DATA}`; octx.textBaseline = 'top'; octx.textAlign = 'left';
+      FIB_TIME.forEach((k, i) => {
+        const x = x1 + unit * k; if (x < -2 || x > W + 2) return;
+        const c = i % 2 ? '#3f7fe6' : col;
+        octx.strokeStyle = c; octx.lineWidth = 1.2; seg(x, 0, x, H);
+        octx.fillStyle = c; octx.fillText(String(k), x + 3, 4);
+      });
+      hd(x1, y1); hd(x2, y2);
+      break;
+    }
+    case 'ellipse': {
+      const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2;
+      octx.beginPath(); octx.ellipse(cx, cy, Math.max(rx, 0.5), Math.max(ry, 0.5), 0, 0, Math.PI * 2);
+      octx.fillStyle = alpha(col, 0.12); octx.fill(); octx.lineWidth = 1.5; octx.stroke();
+      hd(x1, y1); hd(x2, y2);
+      break;
+    }
+    case 'triangle': {
+      const x3 = d.p3 ? m.x(d.p3.t) : x2, y3 = d.p3 ? m.y(d.p3.p) : y2; if (y3 == null) break;
+      octx.beginPath(); octx.moveTo(x1, y1); octx.lineTo(x2, y2); octx.lineTo(x3, y3); octx.closePath();
+      octx.fillStyle = alpha(col, 0.12); octx.fill(); octx.lineWidth = 1.5; octx.stroke();
+      hd(x1, y1); hd(x2, y2); if (d.p3) hd(x3, y3);
+      break;
+    }
+    case 'brush': case 'highlighter': {
+      const pts = d.pts || [d.p1]; if (pts.length < 1) break;
+      octx.lineCap = 'round'; octx.lineJoin = 'round';
+      octx.strokeStyle = d.type === 'highlighter' ? alpha(col === C.draw ? '#f2c94c' : col, 0.38) : col;
+      octx.lineWidth = d.type === 'highlighter' ? 14 : 2.2;
+      octx.beginPath();
+      pts.forEach((q, i) => { const x = m.x(q.t), y = m.y(q.p); if (y == null) return; if (i) octx.lineTo(x, y); else octx.moveTo(x, y); });
+      octx.stroke(); octx.lineCap = 'butt'; octx.lineJoin = 'miter';
+      if (sel) { const q = pts[pts.length - 1]; handle(m.x(pts[0].t), m.y(pts[0].p), col); handle(m.x(q.t), m.y(q.p), col); }
+      break;
+    }
+    case 'text': {
+      const b = textBox(d, m); if (!b) break;
+      if (!b.txt && !draft) break;
+      octx.fillStyle = col; octx.textBaseline = 'middle'; octx.textAlign = 'left'; octx.fillText(b.txt, b.x, b.y);
+      if (sel) { octx.strokeStyle = alpha(col, 0.6); octx.lineWidth = 1; octx.setLineDash([3, 3]); octx.strokeRect(b.bx - 3, b.by - 2, b.bw + 6, b.bh + 4); octx.setLineDash([]); }
+      break;
+    }
+    case 'pricelabel': {
+      const b = textBox(d, m); if (!b) break;
+      octx.fillStyle = col; octx.beginPath(); octx.moveTo(b.x, b.y); octx.lineTo(b.bx + 4, b.by + b.bh); octx.lineTo(b.bx + 12, b.by + b.bh); octx.closePath(); octx.fill();
+      rr(b.bx, b.by, b.bw, b.bh, 4); octx.fill();
+      octx.fillStyle = inkOn(col); octx.textBaseline = 'middle'; octx.textAlign = 'left'; octx.fillText(b.txt, b.bx + 7, b.by + b.bh / 2 + 0.5);
+      hd(b.x, b.y);
+      break;
+    }
+    case 'arrowup': case 'arrowdown': {
+      const up = d.type === 'arrowup', c = d.color || (up ? C.up : C.down), s = 1, y0 = up ? y1 + 4 : y1 - 4, dir = up ? 1 : -1;
+      octx.fillStyle = c; octx.beginPath();
+      octx.moveTo(x1, y0); octx.lineTo(x1 + 9 * s, y0 + dir * 10); octx.lineTo(x1 + 3.5 * s, y0 + dir * 10); octx.lineTo(x1 + 3.5 * s, y0 + dir * 22);
+      octx.lineTo(x1 - 3.5 * s, y0 + dir * 22); octx.lineTo(x1 - 3.5 * s, y0 + dir * 10); octx.lineTo(x1 - 9 * s, y0 + dir * 10); octx.closePath(); octx.fill();
+      if (sel) { octx.strokeStyle = C.fg; octx.lineWidth = 1; octx.stroke(); }
+      break;
+    }
+    case 'daterange': case 'pricerange': {
+      const xa = Math.min(x1, x2), ya = Math.min(y1, y2), w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
+      octx.fillStyle = alpha(col, 0.12); octx.fillRect(xa, ya, w, h);
+      octx.strokeStyle = col; octx.lineWidth = 1.3;
+      let lines;
+      if (d.type === 'daterange') {
+        seg(x1, ya, x1, ya + h); seg(x2, ya, x2, ya + h); const my = ya + h / 2; seg(x1, my, x2, my); if (w > 10) arrowHead(x1, my, x2, my);
+        const bars = Math.round(m.L(x2) - m.L(x1)); lines = [`${Math.abs(bars)} bars`, fmtSpan(Math.abs(d.p2.t - d.p1.t))];
+      } else {
+        seg(xa, y1, xa + w, y1); seg(xa, y2, xa + w, y2); const mx = xa + w / 2; seg(mx, y1, mx, y2); if (h > 10) arrowHead(mx, y1, mx, y2);
+        const dp = d.p2.p - d.p1.p; lines = [fmtSigned(dp), fmtPct(d.p1.p ? (dp / d.p1.p) * 100 : 0)];
+      }
+      octx.font = `500 11px ${FONT_DATA}`;
+      const tw = Math.max(...lines.map(s => octx.measureText(s).width)) + 14, th = 34, bx = clamp(xa + w / 2 - tw / 2, 2, W - tw - 2), by = clamp(ya + h + 6, 2, H - th - 2);
+      octx.fillStyle = col; rr(bx, by, tw, th, 4); octx.fill();
+      octx.fillStyle = inkOn(col); octx.textBaseline = 'middle'; octx.textAlign = 'center'; octx.fillText(lines[0], bx + tw / 2, by + 10); octx.fillText(lines[1], bx + tw / 2, by + 24); octx.textAlign = 'start';
+      hd(x1, y1); hd(x2, y2);
+      break;
+    }
+  }
+}
+function hitExtra(d, x, y, m, x1, y1, x2, y2, segDist) {   // how far (in pixels) a click is from one of the new drawings
+  const W = 1e5;
+  switch (d.type) {
+    case 'ext': { const [a, b, c, e] = lineFar(x1, y1, x2, y2, true); return segDist(x, y, a, b, c, e); }
+    case 'arrowline': case 'infoline': return segDist(x, y, x1, y1, x2, y2);
+    case 'hray': return x >= x1 - 4 ? Math.abs(y - y1) : Infinity;
+    case 'vline': return Math.abs(x - x1);
+    case 'cross': return Math.min(Math.abs(x - x1), Math.abs(y - y1));
+    case 'channel': {
+      if (!d.p3) return segDist(x, y, x1, y1, x2, y2);
+      const c = chanParts(d, m); if (!c) return Infinity;
+      if (x >= Math.min(c.x1, c.x2) && x <= Math.max(c.x1, c.x2)) { const k = c.x2 !== c.x1 ? (c.y2 - c.y1) / (c.x2 - c.x1) : 0, ya = c.y1 + k * (x - c.x1), yb = ya + c.dy; if (y >= Math.min(ya, yb) - 4 && y <= Math.max(ya, yb) + 4) return 0; }
+      return Math.min(segDist(x, y, c.x1, c.y1, c.x2, c.y2), segDist(x, y, c.x1, c.y1 + c.dy, c.x2, c.y2 + c.dy));
+    }
+    case 'pitchfork': {
+      if (!d.p3) return segDist(x, y, x1, y1, x2, y2);
+      const f = forkParts(d, m); if (!f) return Infinity;
+      return Math.min(segDist(x, y, f.x1, f.y1, f.x1 + f.ux * W, f.y1 + f.uy * W), segDist(x, y, f.x2, f.y2, f.x2 + f.ux * W, f.y2 + f.uy * W), segDist(x, y, f.x3, f.y3, f.x3 + f.ux * W, f.y3 + f.uy * W), segDist(x, y, f.x2, f.y2, f.x3, f.y3));
+    }
+    case 'regchan': {
+      const r = regParts(d, m); if (!r) return segDist(x, y, x1, y1, x2, y2);
+      const xa = m.x(r.t0), xb = m.x(r.t1); if (x < Math.min(xa, xb) - 4 || x > Math.max(xa, xb) + 4) return Infinity;
+      const f = xb !== xa ? (x - xa) / (xb - xa) : 0, p = r.p0 + (r.p1 - r.p0) * f, yu = m.y(p + 2 * r.sd), yl = m.y(p - 2 * r.sd);
+      return yu != null && yl != null && y >= Math.min(yu, yl) - 4 && y <= Math.max(yu, yl) + 4 ? 0 : Infinity;
+    }
+    case 'fibext': {
+      if (!d.p3) return segDist(x, y, x1, y1, x2, y2);
+      const x3 = m.x(d.p3.t), move = d.p2.p - d.p1.p, xa = Math.min(x2, x3), xb = Math.max(x3, x2) + Math.max(80, Math.abs(x3 - x1) * 0.6);
+      if (x < xa - 4 || x > xb + 4) return Math.min(segDist(x, y, x1, y1, x2, y2), segDist(x, y, x2, y2, x3, m.y(d.p3.p)));
+      const ys = FIB_EXT.map(([lv]) => m.y(d.p3.p + move * lv)).filter(v => v != null);
+      return y >= Math.min(...ys) - 4 && y <= Math.max(...ys) + 4 ? 0 : Infinity;
+    }
+    case 'fibtime': { const unit = x2 - x1; return Math.min(...FIB_TIME.map(k => Math.abs(x - (x1 + unit * k)))); }
+    case 'ellipse': case 'daterange': case 'pricerange': {
+      if (d.type === 'ellipse') { const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, rx = Math.abs(x2 - x1) / 2 + 4, ry = Math.abs(y2 - y1) / 2 + 4; return ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1 ? 0 : Infinity; }
+      return x >= Math.min(x1, x2) - 4 && x <= Math.max(x1, x2) + 4 && y >= Math.min(y1, y2) - 4 && y <= Math.max(y1, y2) + 4 ? 0 : Infinity;
+    }
+    case 'triangle': {
+      if (!d.p3) return segDist(x, y, x1, y1, x2, y2);
+      const x3 = m.x(d.p3.t), y3 = m.y(d.p3.p);
+      const s = (ax, ay, bx, by) => (x - bx) * (ay - by) - (ax - bx) * (y - by);
+      const a = s(x1, y1, x2, y2), b = s(x2, y2, x3, y3), c = s(x3, y3, x1, y1);
+      if (!((a < 0 || b < 0 || c < 0) && (a > 0 || b > 0 || c > 0))) return 0;
+      return Math.min(segDist(x, y, x1, y1, x2, y2), segDist(x, y, x2, y2, x3, y3), segDist(x, y, x3, y3, x1, y1));
+    }
+    case 'brush': case 'highlighter': {
+      const pts = d.pts || []; let best = Infinity;
+      for (let i = 1; i < pts.length; i++) { const ya = m.y(pts[i - 1].p), yb = m.y(pts[i].p); if (ya == null || yb == null) continue; best = Math.min(best, segDist(x, y, m.x(pts[i - 1].t), ya, m.x(pts[i].t), yb)); }
+      return d.type === 'highlighter' ? Math.max(0, best - 6) : best;
+    }
+    case 'text': case 'pricelabel': { const b = textBox(d, m); if (!b) return Infinity; return x >= b.bx - 4 && x <= b.bx + b.bw + 4 && y >= b.by - 4 && y <= b.by + b.bh + 4 ? 0 : Math.hypot(x - b.x, y - b.y); }
+    case 'arrowup': case 'arrowdown': { const up = d.type === 'arrowup', cy = y1 + (up ? 14 : -14); return Math.abs(x - x1) <= 10 && Math.abs(y - cy) <= 13 ? 0 : Infinity; }
+  }
+  return Infinity;
+}
+// placing: one-click tools, three-click tools, and text
+function placeExtra(t, pt) {
+  if (TOOLS_1PT.includes(t)) {
+    const d = { type: t, p1: pt };
+    if (t === 'text') { d.text = ''; addDrawing(d); finishTool(); editText(d.id, true); return true; }
+    addDrawing(d); finishTool(); return true;
+  }
+  if (TOOLS_3PT.includes(t) && S.draft) {
+    if (S.draft.p3 === undefined) { S.draft.p2 = pt; S.draft.p3 = pt; setHintStep(2); markDirty(); return true; }
+    const done = { type: t, p1: S.draft.p1, p2: S.draft.p2, p3: pt };
+    S.draft = null; addDrawing(done); finishTool(); return true;
+  }
+  return false;
+}
+function setHintStep(k) { const h = HINTS[S.tool]; if (h && h[k]) $('#hintText').textContent = h[k]; }
+// the text editor: a small box over the chart
+function editText(id, fresh) {
+  const d = findDrawing(id); if (!d || d.type !== 'text') return;
+  const m = mapper(); if (!m) return;
+  const ed = $('#txtEd'), x = m.x(d.p1.t), y = m.y(d.p1.p);
+  ed.value = d.text || ''; ed.hidden = false;
+  ed.style.left = clamp(x - 4, 4, ovW - 220) + 'px'; ed.style.top = clamp((y == null ? 40 : y) - 15, 4, ovH - 34) + 'px';
+  ed.dataset.id = id; ed.dataset.fresh = fresh ? '1' : '';
+  setTimeout(() => { ed.focus(); ed.select(); }, 0);
+}
+function closeText(save) {
+  const ed = $('#txtEd'); if (ed.hidden) return;
+  const d = findDrawing(ed.dataset.id), v = ed.value.trim().slice(0, 200);
+  ed.hidden = true;
+  if (!d) return;
+  if (save && v) { if (v !== d.text) { if (!ed.dataset.fresh) pushUndo(); d.text = v; saveDrawings(); } }
+  else if (!d.text || (save && !v)) { S.drawings[S.symbol] = curDrawings().filter(x => x.id !== d.id); saveDrawings(); select(null); }
+  markDirty();
+}
+// brushes: press, drag, let go
+let brushing = null;
+function brushStart(e, x, y) {
+  const pt = pointAt(x, y, false); if (!pt) return false;
+  brushing = { type: S.tool, p1: pt, pts: [pt], lx: x, ly: y };
+  S.draft = brushing; e.stopPropagation(); e.preventDefault(); markDirty();
+  return true;
+}
+function brushMove(e) {
+  const r = wrap.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  if (Math.hypot(x - brushing.lx, y - brushing.ly) < 3) return;
+  const pt = pointAt(x, y, false); if (!pt) return;
+  brushing.pts.push(pt); brushing.lx = x; brushing.ly = y; markDirty();
+}
+function brushEnd() {
+  const b = brushing; brushing = null; S.draft = null;
+  if (b && b.pts.length >= 2) { let pts = b.pts; if (pts.length > 300) { const k = Math.ceil(pts.length / 300); pts = pts.filter((_, i) => i % k === 0 || i === pts.length - 1); } addDrawing({ type: b.type, p1: pts[0], pts }); }
+  finishTool();
+}
+// the toolbar's group buttons and their lists
+function toolGroupOf(t) { return TOOL_GROUPS.find(g => g.tools.some(x => x[0] === t)); }
+function groupTool(g) { const v = store.get('tgrp', {}) || {}; return g.tools.some(x => x[0] === v[g.id]) ? v[g.id] : g.tools[0][0]; }
+function toolMenu(g, btn) {
+  const m = $('#toolMenu'); m.replaceChildren();
+  m.append(el('div', 'tp-menu-h', g.name));
+  for (const [id, name, key] of g.tools) {
+    const b = el('button', 'tl-li' + (S.tool === id ? ' on' : '')); b.type = 'button'; b.dataset.tool = id; b.setAttribute('role', 'menuitem');
+    b.innerHTML = svg(id); b.append(el('span', null, name)); if (key) b.append(el('kbd', null, key));
+    b.onclick = () => { m.hidden = true; const v = Object.assign({}, store.get('tgrp', {}) || {}, { [g.id]: id }); store.set('tgrp', v); setTool(id); renderGroupIcons(); };
+    m.append(b);
+  }
+  m.hidden = false;
+  const r = btn.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
+  if (innerWidth <= 880) { m.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px'; m.style.top = clamp(r.bottom + 6, 8, innerHeight - h - 8) + 'px'; }
+  else { m.style.left = (r.right + 6) + 'px'; m.style.top = clamp(r.top, 8, innerHeight - h - 8) + 'px'; }
+}
+function renderGroupIcons() {
+  document.querySelectorAll('.tool-grp').forEach(b => {
+    const g = TOOL_GROUPS.find(x => x.id === b.dataset.group); if (!g) return;
+    const cur = toolGroupOf(S.tool) === g ? S.tool : groupTool(g);
+    b.innerHTML = svg(cur) + '<span class="tg-more" aria-hidden="true"></span>';
+    const on = toolGroupOf(S.tool) === g;
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on));
+  });
+}
+document.addEventListener('pointerdown', e => { const m = $('#toolMenu'); if (m && !m.hidden && !m.contains(e.target) && !(e.target.closest && e.target.closest('.tool-grp'))) m.hidden = true; }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#toolMenu')) $('#toolMenu').hidden = true; });
+
+$('#selText').onclick = () => { if (S.selected) editText(S.selected, false); };
+$('#txtEd').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); closeText(true); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeText(false); } });
+$('#txtEd').addEventListener('blur', () => closeText(true));
+wrap.addEventListener('dblclick', e => {
+  if (S.tool !== 'cursor') return;
+  const r = wrap.getBoundingClientRect(), h = hitTest(e.clientX - r.left, e.clientY - r.top);
+  if (h && h.d.type === 'text') { e.preventDefault(); e.stopPropagation(); select(h.d.id); editText(h.d.id, false); }
+}, true);
 
 /* ---------- alerts ---------- */
 let actx = null;
@@ -2167,6 +2885,7 @@ function createAlert(id, price) {
   const dir = price >= last ? 'above' : 'below';
   const prec = precFor(id, last);
   price = Number(price.toFixed(prec));
+  if (S.alerts.length >= 1000) { toast('You have 1,000 alerts, the most there can be. Remove some to add more.'); return; }
   S.alerts.push({ id: uid(), sym: id, price, dir, at: Date.now(), hit: null });
   store.set('alerts', S.alerts); renderAlerts(); syncAlertLines(); ensureTickerSubs();
   toast(`Alert set: ${label(id)} crossing ${dir} ${fmtP(price, prec)}`);
@@ -2256,7 +2975,91 @@ function updateWatchRow(id, prev) {
   if (prev && prev.last !== t.last) { px.classList.remove('fu', 'fd'); void px.offsetWidth; px.classList.add(t.last > prev.last ? 'fu' : 'fd'); }
 }
 function addWatch(id) { if (!S.watch.includes(id)) { S.watch.push(id); store.set('watch', S.watch); renderWatch(); ensureTickerSubs(); } }
+/* ---------- several watchlists ----------
+   The list in use stays in S.watch (saved as "watch", as before), so everything that reads the watchlist keeps
+   working. The others wait in "wlists", with every list's name and the order they're shown in. */
+const WL_MAX = 20;
+function wlState() {
+  const v = store.get('wlists', null);
+  const st = v && typeof v === 'object' && Array.isArray(v.order) && v.order.length ? JSON.parse(JSON.stringify(v)) : { cur: 'main', order: ['main'], names: { main: 'Watchlist' }, lists: {} };
+  st.names = st.names && typeof st.names === 'object' ? st.names : {}; st.lists = st.lists && typeof st.lists === 'object' ? st.lists : {};
+  if (!st.order.includes(st.cur)) st.cur = st.order[0];
+  st.order.forEach(id => { if (!st.names[id]) st.names[id] = 'Watchlist'; });
+  return st;
+}
+const wlName = (st, id) => st.names[id] || 'Watchlist';
+function wlCount(st, id) { return id === st.cur ? S.watch.length : (st.lists[id] || []).length; }
+function wlUse(st, id, syms) {   // make id the list in use, with these symbols
+  if (st.cur !== id && st.order.includes(st.cur)) st.lists[st.cur] = S.watch.slice();
+  st.cur = id; S.watch = Array.from(new Set((syms || st.lists[id] || []).map(migrateId).filter(Boolean))); delete st.lists[id];
+  store.set('wlists', st); store.set('watch', S.watch);
+  renderWlName(); renderWatch(); ensureTickerSubs();
+}
+function wlSwitch(id) { const st = wlState(); if (st.order.includes(id) && id !== st.cur) wlUse(st, id); }
+function wlNew(name, copy) {
+  const st = wlState(); if (st.order.length >= WL_MAX) { toast(`You can have up to ${WL_MAX} watchlists.`); return; }
+  const id = uid(); st.order.push(id); st.names[id] = name;
+  wlUse(st, id, copy ? S.watch.slice() : []);
+  toast(copy ? `Made a copy: ${name}` : `New watchlist: ${name}. Add symbols with +`);
+}
+function wlRename(name) { const st = wlState(); st.names[st.cur] = name; store.set('wlists', st); renderWlName(); }
+function wlDelete() {
+  const st = wlState(); if (st.order.length < 2) return;
+  const gone = st.cur, i = st.order.indexOf(gone), next = st.order[i + 1] || st.order[i - 1], name = wlName(st, gone);
+  st.order = st.order.filter(x => x !== gone); delete st.names[gone]; delete st.lists[gone];
+  st.cur = next; S.watch = (st.lists[next] || []).slice(); delete st.lists[next];
+  store.set('wlists', st); store.set('watch', S.watch);
+  renderWlName(); renderWatch(); ensureTickerSubs();
+  toast(`Deleted the watchlist ${name}`);
+}
+function renderWlName() { const st = wlState(); $('#wlName').textContent = wlName(st, st.cur); $('#wlPick').title = st.order.length > 1 ? 'Switch, add or rename watchlists' : 'Add or rename watchlists'; }
+let wlDelArm = null;
+function wlMenu() {
+  const m = $('#wlMenu'), st = wlState(); m.replaceChildren();
+  m.append(el('div', 'tp-menu-h', 'Watchlists'));
+  for (const id of st.order) {
+    const b = el('button', 'wl-li' + (id === st.cur ? ' on' : '')); b.type = 'button'; b.dataset.id = id; b.setAttribute('role', 'menuitemradio'); b.setAttribute('aria-checked', String(id === st.cur));
+    b.append(el('span', null, wlName(st, id)), el('span', 'n', String(wlCount(st, id))));
+    b.onclick = () => { m.hidden = true; wlSwitch(id); };
+    m.append(b);
+  }
+  m.append(el('div', 'tp-menu-sep'));
+  const act = (txt, id, fn) => { const b = el('button', 'wl-act', txt); b.type = 'button'; b.id = id; b.onclick = fn; m.append(b); return b; };
+  act('New watchlist…', 'wlNewBtn', () => { m.hidden = true; wlAsk('new'); });
+  act('Make a copy…', 'wlCopyBtn', () => { m.hidden = true; wlAsk('copy'); });
+  act('Rename…', 'wlRenBtn', () => { m.hidden = true; wlAsk('rename'); });
+  if (st.order.length > 1) {
+    const d = act(`Delete "${wlName(st, st.cur)}"`, 'wlDelBtn', () => {
+      if (wlDelArm) { clearTimeout(wlDelArm); wlDelArm = null; m.hidden = true; wlDelete(); return; }
+      d.textContent = 'Click again to delete'; d.classList.add('arm');
+      wlDelArm = setTimeout(() => { wlDelArm = null; d.textContent = `Delete "${wlName(wlState(), wlState().cur)}"`; d.classList.remove('arm'); }, 3000);
+    });
+    d.classList.add('danger-t');
+  }
+  m.hidden = false;
+  const r = $('#wlPick').getBoundingClientRect(), w = m.offsetWidth;
+  m.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px'; m.style.top = (r.bottom + 4) + 'px';
+}
+let wlMode = 'new';
+function wlAsk(mode) {
+  wlMode = mode; const st = wlState();
+  $('#wlTitle').textContent = mode === 'new' ? 'New watchlist' : mode === 'copy' ? 'Copy this watchlist' : 'Rename watchlist';
+  $('#wlNameIn').value = mode === 'rename' ? wlName(st, st.cur) : mode === 'copy' ? `${wlName(st, st.cur)} copy`.slice(0, 40) : '';
+  $('#wlMsg').textContent = '';
+  $('#wlDlg').showModal(); setTimeout(() => { $('#wlNameIn').focus(); $('#wlNameIn').select(); }, 0);
+}
+$('#wlForm').onsubmit = e => {
+  e.preventDefault();
+  const name = $('#wlNameIn').value.replace(/\s+/g, ' ').trim().slice(0, 40);
+  if (!name) { $('#wlMsg').textContent = 'Give it a name.'; $('#wlNameIn').focus(); return; }
+  $('#wlDlg').close();
+  if (wlMode === 'rename') wlRename(name); else wlNew(name, wlMode === 'copy');
+};
+$('#wlPick').onclick = e => { e.stopPropagation(); const m = $('#wlMenu'); if (!m.hidden) { m.hidden = true; return; } wlMenu(); };
+document.addEventListener('pointerdown', e => { const m = $('#wlMenu'); if (!m.hidden && !m.contains(e.target) && !$('#wlPick').contains(e.target)) m.hidden = true; }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#wlMenu').hidden = true; });
 $('#wlAdd').onclick = () => openSearch('add');
+renderWlName();
 
 function renderDetails() {
   const id = S.symbol, cls = classOf(id), src = S.ready ? srcOf(id) : null;
@@ -3547,6 +4350,11 @@ function renderTools() {
     const b = el('button', 'tool'); b.dataset.tool = id; b.innerHTML = svg(id);
     b.title = key ? `${name} (${key})` : name; b.setAttribute('aria-label', name);
     b.onclick = () => setTool(id); bar.append(b);
+    for (const g of TOOL_GROUPS.filter(x => x.after === id)) {
+      const gb = el('button', 'tool tool-grp'); gb.type = 'button'; gb.dataset.group = g.id; gb.title = g.name; gb.setAttribute('aria-label', g.name); gb.setAttribute('aria-haspopup', 'menu');
+      gb.onclick = e => { e.stopPropagation(); const m = $('#toolMenu'); if (!m.hidden && m.dataset.group === g.id) { m.hidden = true; return; } m.dataset.group = g.id; toolMenu(g, gb); };
+      bar.append(gb);
+    }
   }
   bar.append(el('span', 'hsep'));
   const mag = el('button', 'tool'); mag.id = 'magBtn'; mag.innerHTML = svg('magnet'); mag.title = 'Magnet: snap points to open, high, low or close'; mag.setAttribute('aria-label', 'Magnet');
@@ -3566,6 +4374,7 @@ function renderTools() {
 function renderToolState() {
   document.querySelectorAll('.tool[data-tool]').forEach(b => { const on = b.dataset.tool === S.tool; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
   const mag = $('#magBtn'); if (mag) { mag.classList.toggle('on', S.magnet); mag.setAttribute('aria-pressed', String(S.magnet)); }
+  renderGroupIcons();
 }
 
 /* ---------- scale buttons, clock, countdown ---------- */
@@ -4029,7 +4838,7 @@ document.addEventListener('keydown', e => {
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
     const k = (e.code || '').replace('Key', '').toLowerCase();
     if (k === 'a') { e.preventDefault(); if (S.crossPrice != null) createAlert(S.symbol, S.crossPrice); else setTool('alert'); return; }
-    const map = { t: 'trend', h: 'hline', f: 'fib', r: 'rect', m: 'measure', l: 'long', s: 'short' };
+    const map = { t: 'trend', h: 'hline', f: 'fib', r: 'rect', m: 'measure', l: 'long', s: 'short', v: 'vline', c: 'cross' };
     if (map[k]) { e.preventDefault(); setTool(map[k]); }
     return;
   }
@@ -4067,16 +4876,21 @@ if (mq.addEventListener) mq.addEventListener('change', applyTheme);
 /* ---------- accounts: sign in with Google, profile, and syncing the setup across devices ----------
    Supabase keeps the accounts. The browser only ever holds the public "publishable" key; the database rules
    (row level security) let each person read and change only their own profile and saved setup. */
-const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset', 'paper', 'layout', 'tffav', 'tfcustom', 'ctset'];
+const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset', 'paper', 'layout', 'tffav', 'tfcustom', 'ctset', 'wlists'];
 function cleanState(d) {   // saved data is checked before it's used, whatever is in the database
   const o = {}; if (!d || typeof d !== 'object' || Array.isArray(d)) return o;
   const isId = v => typeof v === 'string' && v.length <= 40 && /^[A-Z0-9.:/_-]+$/.test(v);
   const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
   if (Array.isArray(d.watch)) o.watch = d.watch.filter(isId).slice(0, 300);
+  if (isObj(d.wlists) && Array.isArray(d.wlists.order)) {
+    const ord = d.wlists.order.filter(x => typeof x === 'string' && /^[a-z0-9]{1,16}$/.test(x)).slice(0, 20), w = { cur: ord.includes(d.wlists.cur) ? d.wlists.cur : ord[0], order: ord, names: {}, lists: {} };
+    for (const id of ord) { const n = isObj(d.wlists.names) ? d.wlists.names[id] : ''; w.names[id] = typeof n === 'string' && n.trim() ? n.trim().slice(0, 40) : 'Watchlist'; const l = isObj(d.wlists.lists) ? d.wlists.lists[id] : null; if (Array.isArray(l) && id !== w.cur) w.lists[id] = l.filter(isId).slice(0, 300); }
+    if (ord.length) o.wlists = w;
+  }
   if (Array.isArray(d.wlFold)) o.wlFold = d.wlFold.filter(v => typeof v === 'string' && /^[a-z]{3,8}$/.test(v)).slice(0, 10);
   if (isObj(d.drawings)) { o.drawings = {}; for (const [k, v] of Object.entries(d.drawings)) if (isId(k) && Array.isArray(v)) o.drawings[k] = v.filter(x => isObj(x) && typeof x.type === 'string' && x.type.length < 12).slice(0, 500); }
   if (Array.isArray(d.ind)) o.ind = d.ind.filter(x => isObj(x) && typeof x.type === 'string').slice(0, 50);
-  if (Array.isArray(d.alerts)) o.alerts = d.alerts.filter(x => isObj(x) && isId(x.sym) && typeof x.price === 'number' && isFinite(x.price) && (x.dir === 'above' || x.dir === 'below')).slice(0, 500);
+  if (Array.isArray(d.alerts)) o.alerts = d.alerts.filter(x => isObj(x) && isId(x.sym) && typeof x.price === 'number' && isFinite(x.price) && (x.dir === 'above' || x.dir === 'below')).slice(0, 1000);
   if (isId(d.symbol)) o.symbol = d.symbol;
   if (tfValid(d.tf)) o.tf = d.tf;
   if (Array.isArray(d.tffav)) o.tffav = Array.from(new Set(d.tffav.filter(tfValid))).slice(0, 30);
@@ -5025,7 +5839,7 @@ const COMMENT_COLS = 'id,idea_id,user_id,body,hidden,created_at,author:profiles(
 const MARKETS = [['all', 'All'], ['crypto', 'Crypto'], ['stock', 'Stocks'], ['fund', 'Funds'], ['forex', 'Forex'], ['index', 'Indices'], ['futures', 'Futures'], ['bond', 'Bonds']];
 const MARKET_NAME = { crypto: 'Crypto', stock: 'US stock', fund: 'Fund', forex: 'Forex', index: 'Index', futures: 'Commodity', bond: 'Bond' };
 const DIR_NAME = { long: 'Long', short: 'Short', neutral: 'Neutral' };
-const DRAW_TYPES = ['trend', 'ray', 'hline', 'rect', 'fib', 'long', 'short'];
+const DRAW_TYPES = ['trend', 'ray', 'hline', 'rect', 'fib', 'long', 'short'].concat(EXTRA_TOOLS);
 const REASONS = { spam: 'Spam', abuse: 'Abuse', misleading: 'Scam or misleading', illegal: 'Illegal', other: 'Other' };
 const isUuid = v => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const finite = v => typeof v === 'number' && isFinite(v);
@@ -5038,7 +5852,10 @@ function cleanDrawing(d) {
   const pt = q => (q && typeof q === 'object' && finite(q.t) && finite(q.p) && Math.abs(q.t) < 1e10 && Math.abs(q.p) < 1e13 ? { t: q.t, p: q.p } : null);
   const p1 = pt(d.p1); if (!p1) return null;
   const o = { type: d.type, p1, color: typeof d.color === 'string' && /^#[0-9a-f]{6}$/i.test(d.color) ? d.color : null };
-  if (d.type !== 'hline') { const p2 = pt(d.p2); if (!p2) return null; o.p2 = p2; }
+  if (d.type !== 'hline' && !TOOLS_1PT.includes(d.type) && !BRUSHES.includes(d.type)) { const p2 = pt(d.p2); if (!p2) return null; o.p2 = p2; }
+  if (TOOLS_3PT.includes(d.type)) { const p3 = pt(d.p3); if (!p3) return null; o.p3 = p3; }
+  if (BRUSHES.includes(d.type)) { if (!Array.isArray(d.pts) || d.pts.length < 2 || d.pts.length > 300) return null; const pts = d.pts.map(pt); if (pts.some(q => !q)) return null; o.pts = pts; }
+  if (d.type === 'text') { const tx = typeof d.text === 'string' ? d.text.trim().slice(0, 200) : ''; if (!tx) return null; o.text = tx; }
   if (d.type === 'long' || d.type === 'short') o.tp = finite(d.tp) && Math.abs(d.tp) < 1e13 ? d.tp : null;
   return o;
 }
