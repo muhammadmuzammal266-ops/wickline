@@ -112,17 +112,22 @@ Signals are read when a bar closes and filled at the next bar's open. Optional s
 
 ## Indicators
 
-The **Indicators** button lists 71 indicators in five groups, with a search box:
+The **Indicators** button lists 77 indicators in six groups, with a search box:
 
 - **Moving averages:** SMA, EMA, WMA, Hull, Double EMA, Triple EMA, Smoothed, Volume Weighted, Arnaud Legoux, Least Squares, McGinley Dynamic, Moving Average Ribbon, Envelope.
 - **Trend:** Ichimoku Cloud, Parabolic SAR, SuperTrend, ADX/DMI, Aroon, Vortex, Williams Alligator, Choppiness Index, Zig Zag, Williams Fractals, Trading sessions, Key levels (previous day and week).
 - **Oscillators:** RSI, MACD, Stochastic, Stochastic RSI, CCI, Williams %R, Rate of Change, Awesome Oscillator, Detrended Price Oscillator, TRIX, Price Oscillator, Ultimate Oscillator, True Strength Index, Momentum, Balance of Power, Chande Momentum, Coppock Curve, Know Sure Thing, Fisher Transform, Relative Vigor Index, Bull Bear Power, Connors RSI.
 - **Volatility:** Bollinger Bands, Keltner Channels, Donchian Channels, ATR, Bollinger BandWidth, Bollinger Bands %B, Standard Deviation, Historical Volatility, Mass Index.
-- **Volume:** Volume, VWAP, On Balance Volume, Money Flow Index, Chaikin Money Flow, Accumulation/Distribution, Chaikin Oscillator, Price Volume Trend, Ease of Movement, Volume Oscillator, Klinger Oscillator, Elder Force Index, Volume Profile (visible range), Volume Profile (each session), Liquidity heatmap (order book).
+- **Volume:** Volume, VWAP, On Balance Volume, Money Flow Index, Chaikin Money Flow, Accumulation/Distribution, Chaikin Oscillator, Price Volume Trend, Ease of Movement, Volume Oscillator, Klinger Oscillator, Elder Force Index, Volume Profile (visible range), Volume Profile (each session), Liquidity heatmap (order book), Volume Delta, Cumulative Volume Delta (CVD), Footprint (live).
+- **Crypto futures:** Open Interest, Funding Rate, Liquidations (live).
 
 **Volume profiles.** Three kinds, like TradingView's: *Volume Profile (visible range)* for the bars on screen, *Volume Profile (each session)* with one profile per day (per New York trading day for US stocks), and the *Fixed range volume profile* drawing tool (in the Ranges group of the toolbar) for any stretch of bars you pick. Each shows buying and selling volume at each price, the point of control (the most traded price) and the 70% value area. Forex and gold from OANDA count price changes (tick volume), as TradingView does for them.
 
 **Liquidity heatmap (order book).** For crypto charts from Binance: the order book's waiting buy and sell orders at each price, drawn behind the candles over time. By default only the busiest 10% of price levels show, in blue (brighter for more orders); the settings can show more levels or switch to a full heat palette. The current book shows as bars on the right. The page keeps its own copy of Binance's order book (a snapshot of 5,000 levels a side, then every change from Binance's depth stream). Binance doesn't publish past order books, so the map builds up while the chart is open, and it shows best on short timeframes (seconds to 15 minutes). Its settings choose how far from the price to show (± %), the contrast and the live book.
+
+**Order flow.** *Volume Delta* shows buying minus selling in each bar and *CVD* its running total (restarting each day below daily charts). For crypto from Binance they are exact, from Binance's taker buy volume; elsewhere they are estimated from where each bar closed in its range. *Footprint (live)* shows, inside each bar, how much was sold and bought with market orders at each price, with the busiest price outlined and the bar's delta underneath; zoom in to read the numbers, zoom out for a small profile per bar. It is built from Binance's live trades while the chart is open, so it fills in from the moment you add it.
+
+**Crypto futures data.** *Open Interest* (contracts open on Bybit's USDT perpetual, in coins) and *Funding Rate* (what longs pay shorts each funding period, with an estimate for the next payment) come from Bybit's public data. *Liquidations (live)* shows futures positions force-closed on Bybit and OKX as they happen: red bars for longs, green for shorts, in dollars, with bubbles on the chart where each happened. The exchanges don't publish past liquidations, so that one builds up while the chart is open. These work on USDT crypto pairs that Bybit lists; Bybit isn't available in every country.
 
 **Trading sessions.** Boxes around the Asia (Tokyo 09:00–18:00), London (08:00–17:00) and New York (08:00–17:00) sessions, in each city's local time with summer time handled, drawn around each session's high and low. For timeframes up to 1 hour; each session can be switched off.
 
@@ -143,6 +148,15 @@ The toolbar on the left has 31 drawing tools, plus the price alert tool. The mai
 - **Measuring and ranges:** measure, date range, price range, fixed range volume profile, long and short positions.
 
 Drawings are saved with the chart and can go into published ideas.
+
+## Order book and trades
+
+The order book button at the top right opens a panel beside the chart, for crypto from Binance:
+
+- **Order book:** the waiting sell orders above and buy orders below, with the size at each price, the running total and depth bars, and the price and spread in the middle. The menu groups prices into bigger steps (remembered for each coin). Clicking a price puts it in the alert box.
+- **Trades:** the latest trades as they happen, green for market buys and red for market sells, with trades of $100,000 or more in bold.
+
+It uses the same copy of Binance's order book as the liquidity heatmap (a snapshot, then every change), and Binance's live trade stream.
 
 ## Position size calculator
 

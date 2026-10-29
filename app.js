@@ -164,8 +164,8 @@ function tfResample(bars, tf, cls) {
     let k;
     if (session) { const dk = Math.floor(b.time / DAY); if (dk !== day) { day = dk; open0 = b.time; } k = open0 + Math.floor((b.time - open0) / f.sec) * f.sec; }
     else k = tfBucket(tf, b.time);
-    if (!cur || k !== cur.time) { if (cur) out.push(cur); cur = { time: k, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume || 0 }; }
-    else { if (b.high > cur.high) cur.high = b.high; if (b.low < cur.low) cur.low = b.low; cur.close = b.close; cur.volume += b.volume || 0; }
+    if (!cur || k !== cur.time) { if (cur) out.push(cur); cur = { time: k, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume || 0 }; if (b.tbv != null) cur.tbv = b.tbv; }
+    else { if (b.high > cur.high) cur.high = b.high; if (b.low < cur.low) cur.low = b.low; cur.close = b.close; cur.volume += b.volume || 0; if (b.tbv != null) cur.tbv = (cur.tbv || 0) + b.tbv; }
   }
   if (cur) out.push(cur);
   return out;
@@ -200,15 +200,15 @@ function onFeedBar(b) {   // a candle at the price source's own timeframe, for t
   let tail = (TF_TAIL.get(key) || []).filter(x => x.time >= start && x.time < tfNext(S.tf, start));
   if (!tail.length && start === last.time) {   // nothing kept for this bar: fold the candle into it
     if (b.time === start) TF_TAIL.set(key, [b]); else TF_TAIL.delete(key);
-    onBar({ time: last.time, open: last.open, high: Math.max(last.high, b.high), low: Math.min(last.low, b.low), close: b.close, volume: b.time === start ? b.volume || 0 : last.volume });
+    onBar({ time: last.time, open: last.open, high: Math.max(last.high, b.high), low: Math.min(last.low, b.low), close: b.close, volume: b.time === start ? b.volume || 0 : last.volume, tbv: b.time === start ? b.tbv : last.tbv });
     return;
   }
   const j = tail.findIndex(x => x.time === b.time);
   if (j >= 0) tail[j] = b; else { tail.push(b); tail.sort((x, y) => x.time - y.time); }
   TF_TAIL.set(key, tail);
-  let hi = -Infinity, lo = Infinity, vol = 0;
-  for (const x of tail) { if (x.high > hi) hi = x.high; if (x.low < lo) lo = x.low; vol += x.volume || 0; }
-  onBar({ time: start, open: tail[0].open, high: hi, low: lo, close: tail[tail.length - 1].close, volume: vol });
+  let hi = -Infinity, lo = Infinity, vol = 0, tbv = 0, hasT = true;
+  for (const x of tail) { if (x.high > hi) hi = x.high; if (x.low < lo) lo = x.low; vol += x.volume || 0; if (x.tbv != null) tbv += x.tbv; else hasT = false; }
+  onBar({ time: start, open: tail[0].open, high: hi, low: lo, close: tail[tail.length - 1].close, volume: vol, tbv: hasT ? tbv : undefined });
 }
 
 /* ----- the timeframe bar: favourites as buttons, everything else in a menu ----- */
@@ -1866,7 +1866,7 @@ const LQ = {
   rt() { return S.rts.find(r => r.inst.type === 'liq' && !r.inst.hidden) || null; },
   ok(id) { return srcOf(id) === 'binance' && Live.name === 'Binance' && !!Binance.wss; },
   sync() {   // start, follow or stop the order book to match the chart
-    const rt = this.rt(), want = rt && !R.on && !isBrick(S.type) && this.ok(S.symbol) ? S.symbol : null;
+    const rt = this.rt(), want = (rt || BK.open) && !R.on && (BK.open || !isBrick(S.type)) && this.ok(S.symbol) ? S.symbol : null;
     if (rt && !this.ok(S.symbol) && this.told !== S.symbol) { this.told = S.symbol; toast(`The liquidity heatmap works on crypto charts from Binance; ${label(S.symbol)} has no public order book here.`); }
     if (want !== this.sym) { this.stop(); if (want) this.start(want); }
     this.attach();
@@ -2293,6 +2293,419 @@ $('#tplForm').onsubmit = e => {
 document.addEventListener('pointerdown', e => { const m = $('#tplMenu'); if (!m.hidden && !m.contains(e.target) && !$('#tplBtn').contains(e.target)) m.hidden = true; }, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#tplMenu').hidden = true; });
 
+/* ---------- order flow: volume delta and cumulative volume delta ----------
+   Binance says how much of each bar's volume was bought by takers (market buy orders); buying minus selling is the
+   delta. Where a source doesn't say (other exchanges, stocks), it is estimated from where the bar closed in its range. */
+function barDelta(b) {
+  const v = b.volume || 0; if (!(v > 0)) return null;
+  if (b.tbv != null && isFinite(b.tbv)) return 2 * b.tbv - v;
+  const r = b.high - b.low; return r > 0 ? (v * ((b.close - b.low) - (b.high - b.close))) / r : 0;
+}
+function cvdOf(B, reset, sym) {
+  const o = new Array(B.length).fill(null); let t = 0, key = null;
+  for (let i = 0; i < B.length; i++) {
+    if (reset) { const k = sessKey(sym, B[i].time); if (k !== key) { key = k; t = 0; } }
+    const d = barDelta(B[i]); if (d == null) continue;
+    t += d; o[i] = t;
+  }
+  return o;
+}
+const deltaExact = B => B.length > 0 && B[B.length - 1].tbv != null;
+IND_CATS.push(['futures', 'Crypto futures']);
+Object.assign(IND, {
+  vdelta: { cat: 'volume', label: 'Volume Delta', alias: 'delta order flow buy sell volume taker aggressor', pane: true, nocolor: true, short: () => 'Delta',
+    desc: 'Buying minus selling in each bar: green when market buy orders won, red when sellers did. Exact for crypto from Binance (taker buy volume); estimated from where each bar closed in its range elsewhere.',
+    params: [], fmt: 'vol', levels: [0], series: [{ kind: 'hist' }], compute: B => [B.map(barDelta)] },
+  cvd: { cat: 'volume', label: 'Cumulative Volume Delta (CVD)', alias: 'cvd cumulative delta order flow buying selling pressure', pane: true, short: p => (p.reset ? 'CVD · daily' : 'CVD'),
+    desc: 'A running total of buying minus selling. Rising CVD means market buyers are in control; price rising while CVD falls is a warning. Exact for crypto from Binance; estimated elsewhere. Restarts each day on charts below 1 day.',
+    params: [{ k: 'reset', label: 'Restart each day (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }], fmt: 'vol', levels: [0],
+    series: [{ color: L1 }], compute: (B, p, tf, sym) => [cvdOf(B, !!p.reset && tfOf(tf || S.tf).sec < DAY, sym || S.symbol)] },
+  oi: { cat: 'futures', label: 'Open Interest', alias: 'open interest oi futures perpetual positions bybit', pane: true, short: () => 'OI · Bybit',
+    desc: 'How many futures contracts are open on Bybit’s USDT perpetual for this coin, in coins. Rising open interest with price shows new money joining the move; falling open interest shows positions closing. Crypto only.',
+    params: [], fmt: 'vol', series: [{ color: L1, lag: true }], compute: (B, p, tf, sym) => [FUT.oiOut(B, tf || S.tf, sym || S.symbol)] },
+  funding: { cat: 'futures', label: 'Funding Rate', alias: 'funding rate perpetual futures bybit longs shorts pay', pane: true, nocolor: true, short: () => 'Funding · Bybit',
+    desc: 'What longs pay shorts (positive) or shorts pay longs (negative) on Bybit’s USDT perpetual, in % per funding period, usually 8 hours. High positive funding means crowded longs. The newest bar shows the estimate for the next payment. Crypto only.',
+    params: [], fmt: 'pct4', levels: [0], series: [{ kind: 'hist' }], compute: (B, p, tf, sym) => [FUT.fundOut(B, tf || S.tf, sym || S.symbol)] },
+  liqs: { cat: 'futures', label: 'Liquidations (live)', alias: 'liquidations liquidation bubbles rekt long short squeeze bybit okx', pane: true, nocolor: true, short: () => 'Liquidations · Bybit + OKX',
+    desc: 'Futures positions force-closed on Bybit and OKX, as they happen: red bars for longs liquidated, green for shorts, in US dollars. Bubbles on the chart show where each one happened. The exchanges don’t publish past liquidations, so this builds up while the chart is open. Crypto only.',
+    params: [{ k: 'bubbles', label: 'Bubbles on the chart (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }, { k: 'min', label: 'Smallest bubble (US$)', def: 1000, min: 0, max: 1000000, step: 100 }],
+    fmt: 'vol', levels: [0], series: [{ kind: 'hist' }, { kind: 'hist' }], compute: (B, p, tf, sym) => FUT.liqOut(B, tf || S.tf, sym || S.symbol) },
+});
+
+/* ---------- crypto futures data: Bybit for open interest and funding; Bybit and OKX for liquidations ---------- */
+const FUT_TYPES = ['oi', 'funding', 'liqs'];
+const FUT = {
+  map: {},      // spot symbol -> { s: Bybit symbol, mult, okx: OKX swap, ctVal } | false (none) ; missing = not looked up yet
+  busy: {}, oi: {}, fund: {}, told: '', failTold: false,
+  liq: { sym: null, ws: [], ev: [], since: 0, dirty: false, sent: false },
+  rts() { return S.rts.filter(r => FUT_TYPES.includes(r.inst.type) && !r.inst.hidden); },
+  pair(id) {   // the coin of a USDT spot pair, or null
+    if (classOf(id) !== 'crypto') return null;
+    const [base, q] = splitSym(rawOf(id)); return q === 'USDT' && base ? base : null;
+  },
+  async resolve(id) {   // finds the Bybit perpetual for a coin (some are quoted per 1,000 coins) and the OKX one
+    const base = this.pair(id); if (!base) { this.map[id] = false; return; }
+    if (this.busy[id]) return; this.busy[id] = true;
+    try {
+      let hit = false, err = null;
+      for (const [s, mult] of [[base + 'USDT', 1], ['1000' + base + 'USDT', 1000], [base + '1000USDT', 1000], ['10000' + base + 'USDT', 10000], ['1000000' + base + 'USDT', 1e6]]) {
+        let r; try { r = await fetchT(`${Bybit.rest}/v5/market/tickers?category=linear&symbol=${s}`, 10000); } catch (e) { err = e; break; }
+        if (!r.ok) { err = new Error(String(r.status)); break; }
+        const j = await r.json(); if (j && j.retCode === 0 && j.result && (j.result.list || []).length) { hit = { s, mult }; break; }
+      }
+      if (err) throw err;
+      if (hit) {
+        try {   // OKX's swap for the same coin, and how many coins one contract is
+          const r = await fetchT(`https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=${base}-USDT-SWAP`, 10000), j = await r.json(), d = j && j.code === '0' && (j.data || [])[0];
+          if (d && +d.ctVal > 0) Object.assign(hit, { okx: d.instId, ctVal: +d.ctVal * (+d.ctMult || 1) });
+        } catch (e) { /* Bybit alone */ }
+      }
+      this.map[id] = hit || false;
+    } catch (e) {
+      this.map[id] = undefined;   // the exchange didn't answer: try again later
+      if (!this.failTold) { this.failTold = true; toast('Bybit’s futures data didn’t load. Bybit isn’t available in every country; the page will keep trying.'); }
+      await new Promise(r => setTimeout(r, 30000));
+    } finally { this.busy[id] = false; }
+    this.refresh();
+  },
+  oiIv(tf) { const s = tfOf(tf).sec; return s <= 300 ? '5min' : s <= 900 ? '15min' : s <= 1800 ? '30min' : s <= 3600 ? '1h' : s <= 14400 ? '4h' : '1d'; },
+  async loadOi(id, tf, from) {
+    const m = this.map[id]; if (!m) return;
+    const iv = this.oiIv(tf), key = id + '|' + iv, c = this.oi[key] || (this.oi[key] = { rows: [], at: 0, busy: false, full: false });
+    if (c.busy) return; c.busy = true;
+    const page = async end => {
+      const r = await Bybit.get(`/v5/market/open-interest?category=linear&symbol=${m.s}&intervalTime=${iv}&limit=200${end ? `&endTime=${end}` : ''}`);
+      // one side of the book: each open contract has a buyer and a seller ("singleOpenInterest" where Bybit gives both)
+      return (r.list || []).map(x => [+x.timestamp / 1000, +(x.singleOpenInterest != null && x.singleOpenInterest !== '' ? x.singleOpenInterest : x.openInterest) * m.mult]).filter(x => isFinite(x[0]) && isFinite(x[1]));
+    };
+    const merge = add => { const mp = new Map(c.rows.map(x => [x[0], x])); for (const x of add) mp.set(x[0], x); c.rows = [...mp.values()].sort((a, b) => a[0] - b[0]); };
+    try {
+      merge(await page(0));
+      for (let n = 1; n < 5 && !c.full && c.rows.length && c.rows[0][0] > from; n++) {   // older pages until the chart's first bar
+        const older = await page(c.rows[0][0] * 1000 - 1); if (!older.length) { c.full = true; break; } merge(older);
+      }
+      if (c.rows.length > 3000) c.rows = c.rows.slice(-3000);
+      c.at = Date.now();
+    } catch (e) { c.at = Date.now() - 30000; }   // try again in half a minute
+    finally { c.busy = false; this.refresh('oi'); }
+  },
+  oiOut(B, tf, id) {
+    const o = new Array(B.length).fill(null), c = this.oi[id + '|' + this.oiIv(tf)]; if (!c || !c.rows.length || !this.map[id]) return o;
+    const rows = c.rows, step = tfOf(tf).sec; let j = 0;
+    for (let i = 0; i < B.length; i++) {   // the open interest known when each bar closed
+      const end = B[i].time + step;
+      while (j < rows.length && rows[j][0] < end) j++;
+      if (j > 0) o[i] = rows[j - 1][1];
+    }
+    return o;
+  },
+  async loadFund(id) {
+    const m = this.map[id]; if (!m) return;
+    const c = this.fund[id] || (this.fund[id] = { rows: [], at: 0, busy: false, next: null });
+    if (c.busy) return; c.busy = true;
+    try {
+      const [h, t] = await Promise.all([Bybit.get(`/v5/market/funding/history?category=linear&symbol=${m.s}&limit=200`), Bybit.get(`/v5/market/tickers?category=linear&symbol=${m.s}`)]);
+      c.rows = (h.list || []).map(x => [+x.fundingRateTimestamp / 1000, +x.fundingRate * 100]).filter(x => isFinite(x[0]) && isFinite(x[1])).sort((a, b) => a[0] - b[0]);
+      const tk = (t.list || [])[0]; c.next = tk && isFinite(+tk.fundingRate) ? { rate: +tk.fundingRate * 100, time: +tk.nextFundingTime / 1000 } : null;
+      c.at = Date.now();
+    } catch (e) { c.at = Date.now() - 30000; }
+    finally { c.busy = false; this.refresh('funding'); }
+  },
+  fundOut(B, tf, id) {
+    const o = new Array(B.length).fill(null), c = this.fund[id]; if (!c || !this.map[id] || (!c.rows.length && !c.next)) return o;
+    const P = c.rows.slice(); if (c.next && (!P.length || c.next.time > P[P.length - 1][0])) P.push([c.next.time, c.next.rate]);   // the next payment, estimated
+    const step = tfOf(tf).sec, per = P.length > 1 ? P[P.length - 1][0] - P[P.length - 2][0] || 28800 : 28800; let j = 0;
+    for (let i = 0; i < B.length; i++) {
+      const t = B[i].time;
+      while (j < P.length && P[j][0] <= t) j++;   // the first payment after the bar opens
+      if (j >= P.length || t < P[0][0] - per) continue;
+      if (P[j][0] > t + step) { o[i] = P[j][1]; continue; }   // a short bar: the rate of the period it sits in
+      let s = 0, n = 0; for (let k = j; k < P.length && P[k][0] <= t + step; k++) { s += P[k][1]; n++; }   // a long bar: the average of its payments
+      o[i] = s / n;
+    }
+    return o;
+  },
+  // liquidations, live from both exchanges
+  liqStart(id, m) {
+    const L = this.liq; L.sym = id; L.ev = []; L.since = Date.now(); L.dirty = true;
+    const push = (t, long, coins, px) => {
+      if (!(coins > 0 && px > 0 && isFinite(t))) return;
+      L.ev.push({ t, long, coins, px, usd: coins * px }); if (L.ev.length > 6000) L.ev.splice(0, L.ev.length - 5000); L.dirty = true;
+    };
+    const topic = 'allLiquidation.' + m.s;
+    L.ws.push(sock('wss://stream.bybit.com/v5/public/linear', msg => {
+      if (msg.topic !== topic || !Array.isArray(msg.data)) return;
+      for (const d of msg.data) push(+d.T / 1000, d.S === 'Buy', +d.v * m.mult, +d.p / m.mult);   // "Buy" is a long position closed by force
+    }, 'futures', { init: send => send({ op: 'subscribe', args: [topic] }), ping: JSON.stringify({ op: 'ping' }), every: 20000 }));
+    if (m.okx) {
+      L.ws.push(sock('wss://ws.okx.com/ws/v5/public', msg => {
+        if (!msg.arg || msg.arg.channel !== 'liquidation-orders' || !Array.isArray(msg.data)) return;
+        for (const g of msg.data) if (g.instId === m.okx) for (const d of g.details || []) {
+          const long = d.posSide === 'long' || (d.posSide !== 'short' && d.side === 'sell');
+          push(+d.ts / 1000, long, +d.sz * m.ctVal, +d.bkPx);
+        }
+      }, 'futures', { init: send => send({ op: 'subscribe', args: [{ channel: 'liquidation-orders', instType: 'SWAP' }] }), ping: 'ping', every: 25000 }));
+    }
+    if (!L.sent) { L.sent = true; toast('Liquidations show live from now: the exchanges don’t publish past ones.'); }
+  },
+  liqStop() { const L = this.liq; for (const h of L.ws) { try { h.close(); } catch (e) { /* gone */ } } L.ws = []; L.sym = null; L.ev = []; L.dirty = true; },
+  liqOut(B, tf, id) {
+    const up = new Array(B.length).fill(null), dn = new Array(B.length).fill(null), L = this.liq; if (L.sym !== id || !B.length) return [dn, up];
+    const step = tfOf(tf).sec;
+    for (const e of L.ev) {
+      const i = rpIndexFor(B, e.t); if (i < 0 || e.t >= B[i].time + step) continue;
+      if (e.long) dn[i] = (dn[i] || 0) - e.usd; else up[i] = (up[i] || 0) + e.usd;
+    }
+    return [dn, up];   // longs closed below zero (red), shorts above (green)
+  },
+  refresh(type) {
+    for (const rt of S.rts) if ((type ? rt.inst.type === type : FUT_TYPES.includes(rt.inst.type)) && rt.series) { try { setRtData(rt); } catch (e) { /* chart rebuilding */ } }
+    markDirty();
+  },
+  sync() {   // runs every second: looks up the coin, refreshes the data, follows the chart's symbol
+    const list = this.rts(), id = S.symbol;
+    if (!list.length || !S.ready) { if (this.liq.sym) this.liqStop(); return; }
+    if (!this.pair(id)) {
+      if (this.told !== id) { this.told = id; toast(`Open interest, funding and liquidations come from crypto futures (USDT pairs); ${label(id)} has none.`); }
+      if (this.liq.sym) { this.liqStop(); this.refresh('liqs'); }
+      return;
+    }
+    if (!(id in this.map) || this.map[id] === undefined) { this.resolve(id); return; }
+    const m = this.map[id];
+    if (!m) { if (this.told !== id) { this.told = id; toast(`Bybit has no USDT perpetual for ${label(id)}, so there is no futures data for it.`); } if (this.liq.sym) { this.liqStop(); this.refresh('liqs'); } return; }
+    const has = t => list.some(r => r.inst.type === t), bars = R.on ? R.full : (S.raw || S.bars);
+    if (has('oi')) { const c = this.oi[id + '|' + this.oiIv(S.tf)]; if (!c || Date.now() - c.at > 60000) this.loadOi(id, S.tf, bars.length ? bars[0].time : 0); }
+    if (has('funding')) { const c = this.fund[id]; if (!c || Date.now() - c.at > 60000) this.loadFund(id); }
+    const want = has('liqs') && !R.on ? id : null;
+    if (want !== this.liq.sym) { this.liqStop(); if (want) this.liqStart(want, m); this.refresh('liqs'); }
+    else if (this.liq.dirty) { this.liq.dirty = false; this.refresh('liqs'); }
+  },
+};
+// liquidation bubbles: where on the chart each one happened, bigger for more money
+const LIQB = { last: 0 };
+function drawLiqBubbles(m, W, H) {
+  LIQB.last = 0;
+  const rt = S.rts.find(r => r.inst.type === 'liqs' && !r.inst.hidden), L = FUT.liq;
+  if (!rt || !rt.inst.params.bubbles || L.sym !== S.symbol || !L.ev.length || !S.bars.length || isBrick(S.type)) return;
+  const B = S.bars, step = tfOf(S.tf).sec, t0 = B[Math.max(0, Math.floor(m.L(0)))].time, min = rt.inst.params.min;
+  octx.save();
+  for (const e of L.ev) {
+    if (e.usd < min || e.t < t0) continue;
+    const i = rpIndexFor(B, e.t); if (i < 0 || e.t >= B[i].time + step) continue;
+    const x = m.x(B[i].time), y = m.y(e.px); if (y == null || x < -30 || x > W + 30 || y < -30 || y > H + 30) continue;
+    const r = clamp(2.5 + Math.sqrt(e.usd / 1000) * 1.6, 2.5, 26), c = e.long ? C.down : C.up;
+    octx.beginPath(); octx.arc(x, y, r, 0, Math.PI * 2); octx.fillStyle = alpha(c, 0.32); octx.fill(); octx.lineWidth = 1; octx.strokeStyle = alpha(c, 0.85); octx.stroke();
+    if (r >= 14) { octx.font = `600 9.5px ${FONT_DATA}`; octx.fillStyle = C.fg; octx.textAlign = 'center'; octx.textBaseline = 'middle'; octx.fillText(fmtVol(e.usd), x, y); }
+    LIQB.last++;
+  }
+  octx.restore();
+}
+setInterval(() => { try { FUT.sync(); } catch (e) { /* try again next second */ } }, 1000);
+
+/* ---------- live trades from Binance (aggregate trades): the trades list and footprint candles ---------- */
+const TR_MAX = 300000;   // trades kept for footprints (a few hours of Bitcoin)
+const TR = {
+  sym: null, ws: null, t: [], p: [], q: [], b: [], recent: [], since: 0, dirty: false, fpDirty: false, lastId: 0,
+  wants() { return BK.open || S.rts.some(r => r.inst.type === 'fp' && !r.inst.hidden); },
+  sync() {
+    const want = this.wants() && !R.on && LQ.ok(S.symbol) ? S.symbol : null;
+    if (want === this.sym) return;
+    this.stop(); if (want) this.start(want);
+  },
+  start(id) {
+    this.sym = id; this.since = Date.now(); this.lastId = 0;
+    const raw = rawOf(id);
+    this.ws = sock(`${Binance.wss}/ws/${raw.toLowerCase()}@aggTrade`, m => { if (m && m.e === 'aggTrade' && m.s === raw) this.add(+m.a, +m.T / 1000, +m.p, +m.q, !m.m); }, 'binance');
+    // the last few trades, so the list isn't empty at first
+    fetchT(`${Binance.rest}/api/v3/aggTrades?symbol=${raw}&limit=80`, 8000).then(r => (r.ok ? r.json() : [])).then(a => {
+      if (this.sym !== id || !Array.isArray(a)) return;
+      const have = new Set(this.recent.map(x => x.id));
+      const old = a.filter(x => !have.has(+x.a)).map(x => ({ id: +x.a, t: +x.T / 1000, p: +x.p, q: +x.q, buy: !x.m }));
+      this.recent = this.recent.concat(old).sort((x, y) => y.id - x.id).slice(0, 200); this.dirty = true;
+    }).catch(() => { /* live trades only */ });
+  },
+  stop() {
+    if (this.ws) { try { this.ws.close(); } catch (e) { /* gone */ } }
+    this.ws = null; this.sym = null; this.t = []; this.p = []; this.q = []; this.b = []; this.recent = []; this.dirty = true; this.fpDirty = true; FP.cache.clear();
+  },
+  add(id, t, p, q, buy) {   // buy: the buyer took the offer (a market buy)
+    if (!(p > 0 && q > 0) || id <= this.lastId) return;
+    this.lastId = id;
+    this.t.push(t); this.p.push(p); this.q.push(q); this.b.push(buy ? 1 : 0);
+    if (this.t.length > TR_MAX) { const k = this.t.length - TR_MAX + 20000; this.t.splice(0, k); this.p.splice(0, k); this.q.splice(0, k); this.b.splice(0, k); FP.cache.clear(); }
+    this.recent.unshift({ id, t, p, q, buy }); if (this.recent.length > 200) this.recent.length = 200;
+    this.dirty = true; this.fpDirty = true;
+  },
+  first(t) { let lo = 0, hi = this.t.length; while (lo < hi) { const m = (lo + hi) >> 1; if (this.t[m] < t) lo = m + 1; else hi = m; } return lo; },   // first trade at or after t
+};
+
+/* ---------- footprint: buying and selling at each price inside each bar, from the live trades ---------- */
+Object.assign(IND, {
+  fp: { cat: 'volume', label: 'Footprint (live)', alias: 'footprint order flow bid ask cluster delta imbalance volume at price', nocolor: true, short: p => `Footprint ${p.rows}`,
+    desc: 'Inside each bar, how much was sold (left) and bought (right) with market orders at each price, with the busiest price outlined and the bar’s delta below. Zoom in to read the numbers. Crypto from Binance, built from live trades while the chart is open.',
+    params: [{ k: 'rows', label: 'Rows per bar (about)', def: 12, min: 4, max: 40, step: 1 }],
+    series: [], compute: () => [] },
+});
+const FP = {
+  cache: new Map(), stepKey: '', step: 0, last: [],
+  rowStep(rows) {   // a round price step giving about that many rows in a typical bar
+    const key = S.symbol + '|' + S.tf + '|' + rows;
+    if (key === this.stepKey && this.step) return this.step;
+    const B = S.bars.slice(-100); if (!B.length) return 0;
+    const avg = B.reduce((a, b) => a + (b.high - b.low), 0) / B.length || B[B.length - 1].close * 0.001;
+    this.step = lqNice(avg / rows); this.stepKey = key; this.cache.clear();
+    return this.step;
+  },
+  bar(t0, t1, step) {   // { rows: Map(row -> [sell, buy]), sell, buy } for the trades in [t0, t1)
+    const i0 = TR.first(t0), i1 = TR.first(t1), key = t0 + '|' + step;
+    const c = this.cache.get(key); if (c && c.i0 === i0 && c.i1 === i1) return c;
+    const rows = new Map(); let sell = 0, buy = 0;
+    for (let i = i0; i < i1; i++) {
+      const r = Math.floor(TR.p[i] / step + 1e-9), q = TR.q[i]; let a = rows.get(r); if (!a) { a = [0, 0]; rows.set(r, a); }
+      if (TR.b[i]) { a[1] += q; buy += q; } else { a[0] += q; sell += q; }
+    }
+    const out = { i0, i1, rows, sell, buy };
+    if (this.cache.size > 3000) this.cache.clear();
+    this.cache.set(key, out); return out;
+  },
+};
+const fpNum = v => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e4 ? (v / 1e3).toFixed(0) + 'K' : v >= 1000 ? (v / 1e3).toFixed(1) + 'K' : v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v >= 0.01 ? v.toFixed(3) : v > 0 ? v.toPrecision(2) : '0');
+function drawFootprint(m, W, H) {
+  FP.last = [];
+  const rt = S.rts.find(r => r.inst.type === 'fp' && !r.inst.hidden);
+  if (!rt || TR.sym !== S.symbol || !TR.t.length || !S.bars.length || isBrick(S.type)) return;
+  const B = S.bars, tfs = tfOf(S.tf).sec, step = FP.rowStep(rt.inst.params.rows); if (!step) return;
+  const i0 = Math.max(0, Math.floor(m.L(0))), i1 = Math.min(B.length - 1, Math.ceil(m.L(W)));
+  const tFirst = TR.t[0];
+  octx.save();
+  for (let i = Math.max(i0, rpIndexFor(B, tFirst)); i <= i1; i++) {
+    if (i < 0) continue;
+    const t0 = B[i].time, t1 = i + 1 < B.length ? B[i + 1].time : t0 + tfs, f = FP.bar(t0, t1, step);
+    if (!f.rows.size) continue;
+    const x = m.x(t0), sp = m.sp, keys = [...f.rows.keys()];
+    let max = 0, poc = keys[0]; for (const k of keys) { const a = f.rows.get(k), s = a[0] + a[1]; if (s > max) { max = s; poc = k; } }
+    const yA = m.y(step), yB = m.y(2 * step), rowH = yA != null && yB != null ? Math.abs(yA - yB) : 0;
+    const numbers = sp >= 64 && rowH >= 11, half = Math.max(2, sp * 0.45);
+    for (const k of keys) {
+      const [sv, bv] = f.rows.get(k), yt = m.y((k + 1) * step), yb = m.y(k * step); if (yt == null || yb == null || yb < -20 || yt > H + 20) continue;
+      const y = Math.min(yt, yb), h = Math.max(1, Math.abs(yb - yt) - (rowH >= 4 ? 1 : 0));
+      if (numbers) {
+        const tot = sv + bv, imb = tot ? (bv - sv) / tot : 0;
+        octx.fillStyle = alpha(C.panel, 0.94); octx.fillRect(x - half, y, half * 2, h);
+        octx.fillStyle = alpha(imb >= 0 ? C.up : C.down, 0.12 + 0.5 * Math.abs(imb) * (tot / max)); octx.fillRect(x - half, y, half * 2, h);
+        if (k === poc) { octx.strokeStyle = C.accent; octx.lineWidth = 1.2; octx.strokeRect(x - half + 0.5, y + 0.5, half * 2 - 1, h - 1); }
+        octx.font = `500 ${Math.min(11, Math.max(9, h - 2))}px ${FONT_DATA}`; octx.textBaseline = 'middle';
+        octx.textAlign = 'right'; octx.fillStyle = sv > bv * 3 && sv > 0 ? C.down : C.muted; octx.fillText(fpNum(sv), x - 3, y + h / 2);
+        octx.textAlign = 'left'; octx.fillStyle = bv > sv * 3 && bv > 0 ? C.up : C.fg; octx.fillText(fpNum(bv), x + 3, y + h / 2);
+      } else {   // zoomed out: a small profile, selling to the left and buying to the right of the bar
+        const ws = (sv / max) * half, wb = (bv / max) * half;
+        octx.fillStyle = alpha(C.down, 0.55); octx.fillRect(x - ws, y, ws, h);
+        octx.fillStyle = alpha(C.up, 0.55); octx.fillRect(x, y, wb, h);
+        if (k === poc) { octx.fillStyle = C.accent; octx.fillRect(x - half, y + h / 2 - 0.5, half * 2, 1); }
+      }
+    }
+    if (numbers) {   // the bar's delta under it
+      const lo = m.y(Math.min(...keys) * step); if (lo != null) {
+        const d = f.buy - f.sell; octx.font = `600 10px ${FONT_DATA}`; octx.textAlign = 'center'; octx.textBaseline = 'top';
+        octx.fillStyle = d >= 0 ? C.up : C.down; octx.fillText(`Δ ${d >= 0 ? '+' : '−'}${fpNum(Math.abs(d))}`, x, lo + 4);
+      }
+    }
+    FP.last.push({ t: t0, rows: f.rows.size, sell: f.sell, buy: f.buy, poc: (poc + 0.5) * step, numbers });
+  }
+  octx.restore();
+}
+
+/* ---------- the order book and trades panel ---------- */
+const BK = {
+  open: !!store.get('bookOn', false), tab: store.get('bookTab', 'book') === 'trades' ? 'trades' : 'book', step: 0, stepSym: '', t: null,
+  steps(mid) {   // price steps to group the book by: the symbol's tick, then ×10 up to about 1% of the price
+    const tick = 10 ** -precFor(S.symbol, mid), out = [];
+    for (let s = tick; s <= mid * 0.01 + 1e-12 && out.length < 6; s *= 10) out.push(+s.toPrecision(6));
+    const extra = lqNice(mid * 0.0005); if (!out.includes(extra) && extra > out[0]) out.push(extra);
+    return out.sort((a, b) => a - b);
+  },
+  toggle(on) {
+    this.open = on == null ? !this.open : on; store.raw('bookOn', this.open);
+    document.body.classList.toggle('book-on', this.open); $('#book').hidden = !this.open; $('#bookBtn').setAttribute('aria-pressed', String(this.open));
+    TR.sync(); LQ.sync(); this.render();
+  },
+  setTab(t, quiet) {
+    this.tab = t; store.raw('bookTab', t);
+    for (const b of document.querySelectorAll('#bkTabs button')) b.setAttribute('aria-pressed', String(b.dataset.tab === t));
+    $('#bkLadder').hidden = t !== 'book'; $('#bkTrades').hidden = t !== 'trades'; $('#bkStepW').hidden = t !== 'book';
+    $('#bkCol3').textContent = t === 'book' ? 'Total' : 'Time';
+    if (!quiet) { TR.dirty = true; this.render(); }
+  },
+  note(msg) { const n = $('#bkNote'); n.textContent = msg || ''; n.hidden = !msg; },
+  render() {
+    if (!this.open) return;
+    const id = S.symbol;
+    if (!S.ready) { this.note('Loading…'); return; }
+    $('#bkFoot').textContent = LQ.ok(id) ? `Binance · ${label(id)}` : label(id);
+    if (!LQ.ok(id)) { this.note(`The order book and trades are for crypto charts from Binance. ${label(id)} has no public order book here.`); $('#bkAsks').replaceChildren(); $('#bkBids').replaceChildren(); $('#bkMid').textContent = ''; $('#bkTList').replaceChildren(); return; }
+    if (R.on) { this.note('The order book is live, so it pauses during bar replay.'); return; }
+    if (this.tab === 'book') this.ladder(); else this.trades();
+  },
+  ladder() {
+    if (!LQ.ready || LQ.sym !== S.symbol) { this.note('Loading the order book…'); return; }
+    let bb = -Infinity, ba = Infinity;
+    for (const p of LQ.bids.keys()) if (p > bb) bb = p;
+    for (const p of LQ.asks.keys()) if (p < ba) ba = p;
+    if (!isFinite(bb) || !isFinite(ba)) { this.note('Loading the order book…'); return; }
+    this.note('');
+    const mid = (bb + ba) / 2, steps = this.steps(mid), sel = $('#bkStep');
+    if (this.stepSym !== S.symbol || !steps.includes(this.step)) {   // a new symbol: its own steps, about 0.001% of the price to start
+      this.stepSym = S.symbol; const saved = (store.get('bkStep', {}) || {})[S.symbol];
+      this.step = steps.includes(saved) ? saved : steps.find(s => s >= mid * 0.00001) || steps[steps.length - 1];
+      sel.replaceChildren(...steps.map(s => { const o = el('option', null, fmtP(s, Math.max(0, -Math.floor(Math.log10(s) + 1e-9)))); o.value = String(s); return o; }));
+    }
+    sel.value = String(this.step);
+    const st = this.step, box = $('#bkLadder'), rowH = 19, n = clamp(Math.floor((box.clientHeight - 30) / rowH / 2), 4, 40);
+    const a0 = Math.ceil(ba / st - 1e-9), b0 = Math.floor(bb / st + 1e-9), asks = new Float64Array(n), bids = new Float64Array(n);
+    for (const [p, q] of LQ.asks) { const i = Math.ceil(p / st - 1e-9) - a0; if (i >= 0 && i < n) asks[i] += q; }
+    for (const [p, q] of LQ.bids) { const i = b0 - Math.floor(p / st + 1e-9); if (i >= 0 && i < n) bids[i] += q; }
+    const cumA = [], cumB = []; let ca = 0, cb = 0; for (let i = 0; i < n; i++) { ca += asks[i]; cb += bids[i]; cumA.push(ca); cumB.push(cb); }
+    const top = Math.max(ca, cb) || 1, dec = Math.max(0, -Math.floor(Math.log10(st) + 1e-9));
+    const row = (price, q, cum, side) => {
+      const r = el('div', 'bk-row ' + side); r.style.setProperty('--w', ((cum / top) * 100).toFixed(1) + '%');
+      r.append(el('span', 'bk-p', fmtP(price, dec)), el('span', null, q ? fpNum(q) : ''), el('span', 'bk-c', fpNum(cum)));
+      r.dataset.price = String(price); return r;
+    };
+    const A = []; for (let i = n - 1; i >= 0; i--) A.push(row((a0 + i) * st, asks[i], cumA[i], 'ask'));
+    const Bv = []; for (let i = 0; i < n; i++) Bv.push(row((b0 - i) * st, bids[i], cumB[i], 'bid'));
+    $('#bkAsks').replaceChildren(...A); $('#bkBids').replaceChildren(...Bv);
+    const spread = ba - bb;
+    $('#bkMid').replaceChildren(el('b', null, fmtP(mid)), el('span', null, `Spread ${fmtP(spread)} · ${((spread / mid) * 1e4).toFixed(2)} bp`));
+    this.last = { mid, bb, ba, step: st, n, asks: Array.from(asks), bids: Array.from(bids) };
+    // keep the book from growing without end while only the panel uses it
+    if (!LQ.rt() && LQ.bids.size + LQ.asks.size > 30000) { const far = mid * 0.2; for (const mp of [LQ.bids, LQ.asks]) for (const p of mp.keys()) if (Math.abs(p - mid) > far) mp.delete(p); }
+  },
+  trades() {
+    if (TR.sym !== S.symbol) { this.note('Loading trades…'); return; }
+    if (!TR.dirty && $('#bkTList').childElementCount) return;
+    TR.dirty = false;
+    const list = TR.recent.slice(0, 80); this.note(list.length ? '' : 'Waiting for trades…');
+    const big = 100000;   // trades worth $100,000 or more stand out
+    $('#bkTList').replaceChildren(...list.map(x => {
+      const usdv = x.p * x.q, r = el('div', 'bk-tr ' + (x.buy ? 'bid' : 'ask') + (usdv >= big ? ' big' : ''));
+      const d = new Date(x.t * 1000);
+      r.append(el('span', 'bk-p', fmtP(x.p)), el('span', null, fpNum(x.q)), el('span', 'bk-c', `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`));
+      r.title = `${x.buy ? 'Market buy' : 'Market sell'} · ${usd(usdv)}`; return r;
+    }));
+  },
+};
+$('#bookBtn').onclick = () => BK.toggle();
+$('#bkClose').onclick = () => BK.toggle(false);
+for (const b of document.querySelectorAll('#bkTabs button')) b.onclick = () => BK.setTab(b.dataset.tab);
+$('#bkStep').onchange = () => { BK.step = +$('#bkStep').value; const s = store.get('bkStep', {}) || {}; s[S.symbol] = BK.step; const k = Object.keys(s); if (k.length > 40) delete s[k[0]]; store.raw('bkStep', s); BK.render(); };
+$('#bkLadder').addEventListener('click', e => {   // a price in the book: an alert there
+  const r = e.target.closest('.bk-row'); if (!r) return;
+  const p = +r.dataset.price; if (isFinite(p) && p > 0) { $('#alPrice').value = String(+p.toPrecision(12)); $('#alPrice').focus(); toast(`Price ${fmtP(p)} is in the alert box: press Add to be told when ${label(S.symbol)} gets there.`); }
+});
+document.body.classList.toggle('book-on', BK.open); $('#book').hidden = !BK.open; $('#bookBtn').setAttribute('aria-pressed', String(BK.open));
+BK.setTab(BK.tab, true);
+setInterval(() => { try { TR.sync(); BK.render(); if (TR.fpDirty) { TR.fpDirty = false; if (S.rts.some(r => r.inst.type === 'fp' && !r.inst.hidden)) markDirty(); } } catch (e) { /* next time */ } }, 400);
+
 function normInst(inst) {
   const def = IND[inst && inst.type]; if (!def) return null;
   const params = {};
@@ -2363,7 +2776,7 @@ function indSeries(ch, inst, prec, paneIdx) {
   }
   const def = IND[inst.type];
   if (def.series) {
-    const f = def.fmt, fmt = f === 'price' ? pf : f === 'fine' ? pricePF(Math.min(8, prec + 2)) : f === 'vol' ? { type: 'volume' } : f === 'fixed3' ? { type: 'price', precision: 3, minMove: 0.001 } : { type: 'price', precision: 2, minMove: 0.01 };
+    const f = def.fmt, fmt = f === 'price' ? pf : f === 'fine' ? pricePF(Math.min(8, prec + 2)) : f === 'vol' ? { type: 'volume' } : f === 'fixed3' ? { type: 'price', precision: 3, minMove: 0.001 } : f === 'pct4' ? { type: 'custom', minMove: 0.0001, formatter: v => v.toFixed(4) + '%' } : { type: 'price', precision: 2, minMove: 0.01 };
     const range = def.range ? () => ({ priceRange: { minValue: def.range[0], maxValue: def.range[1] } }) : null;
     def.series.forEach((sp, k) => {
       const o = Object.assign({}, base, { priceFormat: fmt }, range ? { autoscaleInfoProvider: range } : {});
@@ -2523,6 +2936,7 @@ function fmtInd(rt, k, v) {
   if (f === 'vol') return fmtVol(v);
   if (t === 'rsi' || t === 'stoch' || f === 'fixed') return v.toFixed(2);
   if (f === 'fixed3') return v.toFixed(3);
+  if (f === 'pct4') return v.toFixed(4) + '%';
   if (f === 'fine') return fmtP(v, Math.min(8, S.prec + 2));
   return fmtP(v);
 }
@@ -2783,7 +3197,7 @@ function drawOverlay(m) {
   const W = ps.width, H = ps.height;
   octx.save(); octx.beginPath(); octx.rect(0, 0, W, H); octx.clip();
   if (S.idea && S.idea.symbol === S.symbol) drawIdeaLayer(m, W, H);
-  drawPnf(m, W, H); drawSessions(m, W, H); drawVolumeProfiles(m, W, H); drawSessionProfiles(m, W, H); drawLevels(m, W, H);
+  drawPnf(m, W, H); drawSessions(m, W, H); drawVolumeProfiles(m, W, H); drawSessionProfiles(m, W, H); drawLevels(m, W, H); drawLiqBubbles(m, W, H); drawFootprint(m, W, H);
   for (const d of curDrawings()) drawShape(d, m, W, H, d.id === S.selected, false);
   if (S.draft && S.draft.type !== 'measure') drawShape(S.draft, m, W, H, false, true);
   const meas = S.draft && S.draft.type === 'measure' ? S.draft : S.measure;
@@ -3720,7 +4134,7 @@ const Binance = {
     const r = await fetchT(u, 12000);
     if (!r.ok) throw new Error(r.status === 400 ? `Binance doesn't list ${sym}.` : `Binance answered with error ${r.status}.`);
     const a = await r.json();
-    return a.map(k => ({ time: k[0] / 1000, open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] }));
+    return a.map(k => ({ time: k[0] / 1000, open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5], tbv: k[9] != null ? +k[9] : undefined }));
   },
   async tickers(syms) {
     const conv = x => ({ sym: 'BINANCE:' + x.symbol, last: +x.lastPrice, ref: +x.openPrice, high: +x.highPrice, low: +x.lowPrice, vol: +x.volume, qvol: +x.quoteVolume, src: 'binance' });
@@ -3740,7 +4154,7 @@ const Binance = {
     return this.universe;
   },
   kline(id, tf, cb) {
-    return sock(`${this.wss}/ws/${rawOf(id).toLowerCase()}@kline_${tf}`, m => { const k = m.k; if (k) cb({ time: k.t / 1000, open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v }); }, 'binance');
+    return sock(`${this.wss}/ws/${rawOf(id).toLowerCase()}@kline_${tf}`, m => { const k = m.k; if (k) cb({ time: k.t / 1000, open: +k.o, high: +k.h, low: +k.l, close: +k.c, volume: +k.v, tbv: k.V != null ? +k.V : undefined }); }, 'binance');
   },
   tickerStream(syms, cb) {
     return sock(`${this.wss}/stream?streams=${syms.map(s => s.toLowerCase() + '@miniTicker').join('/')}`, m => { const x = m.data; if (x) cb({ sym: 'BINANCE:' + x.s, last: +x.c, ref: +x.o, high: +x.h, low: +x.l, vol: +x.v, qvol: +x.q, src: 'binance' }); }, 'binance');
@@ -3787,12 +4201,12 @@ const OKX = {
   async list() { if (!this.universe) this.learn(await this.get('/api/v5/market/tickers?instType=SPOT')); return this.universe; },
   kline(id, tf, cb) {
     const ch = 'candle' + OKX_BAR[tf], inst = this.inst(rawOf(id));
-    return sock('wss://ws.okx.com:8443/ws/v5/business', m => {
+    return sock('wss://ws.okx.com/ws/v5/business', m => {
       if (m.arg && m.arg.channel === ch && Array.isArray(m.data)) m.data.forEach(k => cb(this.bar(k)));
     }, 'binance', { init: send => send({ op: 'subscribe', args: [{ channel: ch, instId: inst }] }), ping: 'ping', every: 25000 });
   },
   tickerStream(syms, cb) {
-    return sock('wss://ws.okx.com:8443/ws/v5/public', m => {
+    return sock('wss://ws.okx.com/ws/v5/public', m => {
       if (m.arg && m.arg.channel === 'tickers' && Array.isArray(m.data)) m.data.forEach(x => cb(this.conv(x)));
     }, 'binance', { init: send => send({ op: 'subscribe', args: syms.map(s => ({ channel: 'tickers', instId: this.inst(s) })) }), ping: 'ping', every: 25000 });
   },

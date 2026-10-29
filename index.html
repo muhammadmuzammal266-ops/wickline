@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://s3.tradingview.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self' https://data-api.binance.vision https://api.binance.com wss://data-stream.binance.vision wss://stream.binance.com:9443 https://www.okx.com wss://ws.okx.com:8443 https://api.bybit.com wss://stream.bybit.com https://api.kraken.com https://api.gold-api.com https://api.twelvedata.com wss://ws.twelvedata.com https://*.workers.dev wss://*.workers.dev https://*.supabase.co; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src https://www.tradingview-widget.com https://s.tradingview.com; worker-src 'none'; upgrade-insecure-requests">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://s3.tradingview.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self' https://data-api.binance.vision https://api.binance.com wss://data-stream.binance.vision wss://stream.binance.com:9443 https://www.okx.com wss://ws.okx.com wss://ws.okx.com:8443 https://api.bybit.com wss://stream.bybit.com https://api.kraken.com https://api.gold-api.com https://api.twelvedata.com wss://ws.twelvedata.com https://*.workers.dev wss://*.workers.dev https://*.supabase.co; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src https://www.tradingview-widget.com https://s.tradingview.com; worker-src 'none'; upgrade-insecure-requests">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="description" content="Free live charts for crypto, US stocks, forex, indices and commodities, with indicators, drawing tools, a watchlist and price alerts.">
@@ -240,8 +240,8 @@ select option{background:var(--panel);color:var(--fg)}
 .view-tab{height:26px;padding:0 12px;border-radius:6px;display:inline-flex;align-items:center;font-weight:600;font-size:12.5px;color:var(--muted);text-decoration:none}
 .view-tab:hover{color:var(--fg)}
 .view-tab[aria-current="page"]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(8,12,20,.1)}
-body:is([data-view="journal"],[data-view="ideas"],[data-view="home"],[data-view="markets"]) .app>:is(.tools,.stage,.side){display:none}
-body:is([data-view="journal"],[data-view="ideas"],[data-view="home"],[data-view="markets"]) .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#ideaBtn,#tradeBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn,#layoutBtn,#dataBtn,#btBtn,#tplBtn,#calcBtn){display:none!important}
+body:is([data-view="journal"],[data-view="ideas"],[data-view="home"],[data-view="markets"]) .app>:is(.tools,.stage,.side,.book){display:none}
+body:is([data-view="journal"],[data-view="ideas"],[data-view="home"],[data-view="markets"]) .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#ideaBtn,#tradeBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn,#layoutBtn,#dataBtn,#btBtn,#tplBtn,#calcBtn,#bookBtn){display:none!important}
 
 
 /* markets */
@@ -371,6 +371,49 @@ button.fx-v:hover{filter:brightness(1.2)}
 .ta-h{padding:8px 12px 2px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .ta-item .c{white-space:normal;line-height:1.35}
 #taDlg{width:min(640px,calc(100vw - 24px))}
+body.book-on .app{grid-template-columns:42px minmax(0,1fr) 250px 304px;grid-template-areas:"top top top top" "tools stage book side"}
+.book{grid-area:book;display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.book[hidden]{display:none}
+.bk-h{display:flex;align-items:center;gap:6px;padding:6px 6px 6px 8px;border-bottom:1px solid var(--line)}
+.bk-tabs{display:flex;gap:2px;padding:2px;background:var(--panel-2);border-radius:7px}
+.bk-tabs button{padding:4px 8px;border-radius:5px;font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap}
+.bk-tabs button[aria-pressed="true"]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(5,8,14,.18)}
+.bk-stepw{margin-left:auto;min-width:0}
+.bk-stepw[hidden]{display:none}
+.bk-stepw select{height:26px;max-width:84px;font:500 11.5px var(--font-data)}
+#bkClose{margin-left:auto;width:26px;height:26px;flex:none}
+.bk-stepw+#bkClose{margin-left:0}
+.bk-cols,.bk-row,.bk-tr{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,1fr);gap:4px;padding:0 10px}
+.bk-cols{padding-block:5px;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+.bk-cols span:not(:first-child),.bk-row>span:not(.bk-p),.bk-tr>span:not(.bk-p){text-align:right}
+.bk-note{margin:0;padding:12px;color:var(--muted);font-size:12px;line-height:1.45}
+.bk-note[hidden]{display:none}
+#bkLadder{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+#bkLadder[hidden],#bkTrades[hidden]{display:none}
+#bkAsks,#bkBids{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+#bkAsks{justify-content:flex-end}
+.bk-row,.bk-tr{position:relative;height:19px;flex:none;align-items:center;font:500 11.5px var(--font-data);font-variant-numeric:tabular-nums;white-space:nowrap}
+.bk-row>span,.bk-tr>span{position:relative;overflow:hidden;text-overflow:ellipsis}
+.bk-row::before{content:"";position:absolute;top:1px;bottom:1px;right:0;width:var(--w);background:var(--c);opacity:.15}
+.bk-row.ask{--c:var(--down)}
+.bk-row.bid{--c:var(--up)}
+.bk-row.ask .bk-p,.bk-tr.ask .bk-p{color:var(--down-ink)}
+.bk-row.bid .bk-p,.bk-tr.bid .bk-p{color:var(--up-ink)}
+.bk-row .bk-c,.bk-tr .bk-c{color:var(--muted)}
+.bk-row:hover{background:var(--panel-2);cursor:pointer}
+.bk-mid{flex:none;display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:6px 10px;border-block:1px solid var(--line);font-family:var(--font-data);font-variant-numeric:tabular-nums}
+.bk-mid b{font-size:14px;font-weight:600}
+.bk-mid span{font-size:10.5px;color:var(--muted);white-space:nowrap}
+#bkTrades{flex:1;min-height:0;display:flex;flex-direction:column}
+#bkTList{flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin}
+.bk-tr.big{font-weight:700}
+.bk-tr.big.bid{background:color-mix(in srgb,var(--up) 14%,transparent)}
+.bk-tr.big.ask{background:color-mix(in srgb,var(--down) 14%,transparent)}
+.bk-foot{flex:none;padding:5px 10px;border-top:1px solid var(--line);font-size:11px;color:var(--faint)}
+@media (max-width: 880px){
+  body.book-on .app{grid-template-columns:minmax(0,1fr);grid-template-areas:"top" "tools" "stage" "book" "side"}
+  .book{height:440px}
+}
 #psDlg{width:min(560px,calc(100vw - 24px))}
 #tplDlg{width:min(420px,calc(100vw - 24px))}
 .ps-sym{font:500 13px var(--font-data);color:var(--muted);margin-left:6px}
@@ -1347,6 +1390,7 @@ a.h-btn.primary{color:var(--panel)}
     <button class="btn trade-btn" id="tradeBtn" title="Paper trading: practise buying and selling with virtual money (Shift B or Shift S)"><svg viewBox="0 0 24 24"><path d="M7.5 20V5M4 8.5l3.5-3.5L11 8.5"/><path d="M16.5 4v15M13 15.5l3.5 3.5 3.5-3.5"/></svg><span class="rp-btn-lbl">Trade</span></button>
     <span class="spacer"></span>
     <button class="feed" id="feedBtn" data-state="connecting" title="Data sources"><span class="dot"></span><span class="lbl" id="feedLbl">Connecting</span></button>
+    <button class="icon-btn" id="bookBtn" aria-pressed="false" aria-label="Order book and trades" title="Order book and trades"><svg viewBox="0 0 24 24"><path d="M4 5.5h8M4 9.5h11M4 14.5h6M4 18.5h9"/><path d="M19 4v16" stroke-dasharray="2 2"/></svg></button>
     <button class="icon-btn" id="calcBtn" aria-label="Position size calculator" title="Position size calculator"><svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01M8.5 15h.01M12 15h.01M15.5 15h.01M8.5 18h.01M12 18h3.5" stroke-width="2.2"/></svg></button>
     <button class="icon-btn" id="snapBtn" hidden aria-label="Save the chart as an image" title="Save chart image"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
     <button class="icon-btn" id="dataBtn" hidden aria-label="Download chart data as a CSV file" title="Download chart data (CSV)"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg></button>
@@ -1437,6 +1481,15 @@ a.h-btn.primary{color:var(--panel)}
       <div class="tp-body" id="tpBody" hidden></div>
     </section>
   </main>
+
+  <section class="book" id="book" hidden aria-label="Order book and trades">
+    <div class="bk-h"><div class="bk-tabs" id="bkTabs" role="group" aria-label="Show"><button type="button" data-tab="book" aria-pressed="true">Order book</button><button type="button" data-tab="trades" aria-pressed="false">Trades</button></div><span class="selwrap bk-stepw" id="bkStepW"><select id="bkStep" aria-label="Group prices by"></select></span><button class="icon-btn" id="bkClose" type="button" aria-label="Close the order book" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="bk-cols"><span>Price</span><span>Size</span><span id="bkCol3">Total</span></div>
+    <p class="bk-note" id="bkNote" hidden></p>
+    <div id="bkLadder"><div id="bkAsks"></div><div class="bk-mid" id="bkMid"></div><div id="bkBids"></div></div>
+    <div id="bkTrades" hidden><div id="bkTList"></div></div>
+    <div class="bk-foot" id="bkFoot"></div>
+  </section>
 
   <aside class="side">
     <section class="card watch" aria-label="Watchlist">
@@ -1986,7 +2039,7 @@ a.h-btn.primary{color:var(--panel)}
 <script src="vendor/lightweight-charts-5.1.0.js"></script>
 <script src="vendor/supabase-js-2.117.2.js"></script>
 <script src="config.js"></script>
-<script src="app.js?v=5728d0a1c8"></script>
+<script src="app.js?v=b53099728b"></script>
 
 </body>
 </html>
