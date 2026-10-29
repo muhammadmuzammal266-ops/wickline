@@ -1841,7 +1841,7 @@ function drawSessionProfiles(m, W, H) {
    The page keeps its own copy of Binance's order book (a snapshot, then every change from the depth stream, as Binance
    describes for a local order book) and, once a second, records how much is waiting to be bought or sold at each
    price. Binance doesn't publish past order books, so the map builds up while the chart is open. */
-const LQ_KEEP = 2 * 3600;   // seconds of history kept (one column a second)
+const LQ_KEEP = 3600;   // seconds of history kept (one column a second)
 const LQ_RAMP = [[0, 20, 40, 110, 0], [0.12, 25, 45, 130, 120], [0.35, 0, 120, 200, 175], [0.62, 60, 200, 160, 205], [0.82, 245, 205, 50, 230], [1, 255, 252, 225, 245]];
 function lqColor(k) {   // dark blue through cyan and yellow to white, like an order book heatmap
   k = clamp(k, 0, 1); let i = 1; while (i < LQ_RAMP.length - 1 && LQ_RAMP[i][0] < k) i++;
@@ -1857,7 +1857,7 @@ Object.assign(IND, {
 });
 const LQ = {
   sym: null, ws: null, bids: new Map(), asks: new Map(), lastId: 0, ready: false, buf: [], snapBusy: false, snapAt: 0, snaps: 0, resyncs: 0,
-  cols: [], bin: 0, since: 0, sideNow: null, prim: null, primOn: null, req: null, cache: null, told: '', drawnCells: 0, waitT: null,
+  cols: [], bin: 0, binRange: 0, since: 0, sideNow: null, prim: null, primOn: null, req: null, cache: null, told: '', drawnCells: 0, waitT: null,
   rt() { return S.rts.find(r => r.inst.type === 'liq' && !r.inst.hidden) || null; },
   ok(id) { return srcOf(id) === 'binance' && Live.name === 'Binance' && !!Binance.wss; },
   sync() {   // start, follow or stop the order book to match the chart
@@ -1914,7 +1914,8 @@ const LQ = {
     for (const p of this.asks.keys()) if (p < ba) ba = p;
     if (!isFinite(bb) || !isFinite(ba)) return;
     const mid = (bb + ba) / 2, rng = rt.inst.params.range / 100;
-    if (!this.bin) this.bin = lqNice(mid * 0.0002);
+    // fine price steps (0.005% of the price, about $5 for Bitcoin), coarser only when a wide range would need too many
+    if (!this.bin || this.binRange !== rng) { this.bin = Math.max(lqNice(mid * 0.00005), lqNice((mid * rng * 2) / 800)); this.binRange = rng; this.cols = []; }
     const bin = this.bin, lo = Math.floor((mid * (1 - rng)) / bin), hi = Math.ceil((mid * (1 + rng)) / bin), n = hi - lo + 1;
     if (n <= 0 || n > 4000) return;
     const arr = new Float32Array(n), bid = new Float32Array(n), ask = new Float32Array(n);
@@ -1971,7 +1972,9 @@ const LQ = {
     }
     if (!vals.length) return { img: null, cells: 0 };
     vals.sort((a, b) => a - b);
-    const top = vals[Math.min(vals.length - 1, Math.floor(vals.length * (0.995 - p.contrast * 0.012)))] || vals[vals.length - 1];
+    // most levels sit in the blues; only the biggest few per cent of resting orders reach yellow and white
+    const top = vals[Math.min(vals.length - 1, Math.floor(vals.length * clamp(0.999 - p.contrast * 0.005, 0.9, 0.999)))] || vals[vals.length - 1];
+    const gam = clamp(1.35 - p.contrast * 0.1, 0.4, 1.4);
     const off = document.createElement('canvas'); off.width = W; off.height = H;
     const g = off.getContext('2d'), img = g.createImageData(W, H), px = img.data;
     const yOf = price => { const y = S.main.priceToCoordinate(price); return y == null ? null : y * vr; };
@@ -1983,7 +1986,7 @@ const LQ = {
         const v = acc[i]; if (!(v > 0)) continue;
         const yt = yOf((lo + i + 1) * bin), yb = yOf((lo + i) * bin); if (yt == null || yb == null) continue;
         let ya = Math.max(0, Math.round(Math.min(yt, yb))), yz = Math.min(H, Math.round(Math.max(yt, yb))); if (yz <= ya) { if (ya >= H) continue; yz = ya + 1; }
-        const [r, gg, bb, a] = lqColor(Math.pow(Math.min(1, v / top), 0.55)); if (a < 3) continue;
+        const [r, gg, bb, a] = lqColor(Math.pow(Math.min(1, v / top), gam)); if (a < 3) continue;
         n++;
         for (let y = ya; y < yz; y++) { let o = (y * W + xa) * 4; for (let x = xa; x < xb; x++, o += 4) { if (a > px[o + 3]) { px[o] = r; px[o + 1] = gg; px[o + 2] = bb; px[o + 3] = a; } } }
       }
