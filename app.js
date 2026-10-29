@@ -1856,7 +1856,7 @@ function lqNice(v) { const p = 10 ** Math.floor(Math.log10(v)), x = v / p; retur
 Object.assign(IND, {
   liq: { cat: 'volume', label: 'Liquidity heatmap (order book)', alias: 'liquidity heatmap order book depth bookmap walls limit orders', nocolor: true, short: () => 'Liquidity',
     desc: 'Where the most buy and sell orders wait in the order book, over time, behind the candles: brighter blue means more. Crypto from Binance; it builds up while the chart is open, and shows best on short timeframes.',
-    params: [{ k: 'range', label: 'Price range (± %)', def: 1, min: 0.25, max: 10, step: 0.25 }, { k: 'contrast', label: 'Contrast', def: 5, min: 1, max: 10, step: 1 }, { k: 'min', label: 'Hide the quieter levels (%)', def: 70, min: 0, max: 98, step: 1 }, { k: 'style', label: 'Colours (0 blue, 1 heat)', def: 0, min: 0, max: 1, step: 1 }, { k: 'book', label: 'Live book on the right (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }],
+    params: [{ k: 'range', label: 'Price range (± %)', def: 1, min: 0.25, max: 10, step: 0.25 }, { k: 'contrast', label: 'Contrast', def: 5, min: 1, max: 10, step: 1 }, { k: 'top', label: 'Show only the busiest levels (%)', def: 10, min: 1, max: 100, step: 1 }, { k: 'style', label: 'Colours (0 blue, 1 heat)', def: 0, min: 0, max: 1, step: 1 }, { k: 'book', label: 'Live book on the right (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }],
     series: [], compute: () => [] },
 });
 const LQ = {
@@ -1960,7 +1960,7 @@ const LQ = {
     target.useBitmapCoordinateSpace(sc => {
       const ctx = sc.context, hr = sc.horizontalPixelRatio, vr = sc.verticalPixelRatio, W = sc.bitmapSize.width, H = sc.bitmapSize.height;
       const ts = chart.timeScale(), sp = ts.options().barSpacing, vis = ts.getVisibleLogicalRange(); if (!vis) return;
-      const key = [W, H, vis.from.toFixed(2), vis.to.toFixed(2), S.main.coordinateToPrice(0), S.main.coordinateToPrice(H / vr), this.cols.length, this.cols[this.cols.length - 1].t, S.bars.length, rt.inst.params.contrast, rt.inst.params.book, rt.inst.params.min, rt.inst.params.style, document.documentElement.dataset.theme || ''].join('|');
+      const key = [W, H, vis.from.toFixed(2), vis.to.toFixed(2), S.main.coordinateToPrice(0), S.main.coordinateToPrice(H / vr), this.cols.length, this.cols[this.cols.length - 1].t, S.bars.length, rt.inst.params.contrast, rt.inst.params.book, rt.inst.params.top, rt.inst.params.style, document.documentElement.dataset.theme || ''].join('|');
       if (!this.cache || this.cache.key !== key) this.cache = Object.assign(this.render(W, H, hr, vr, sp, vis, rt.inst.params), { key });
       if (this.cache.img) ctx.drawImage(this.cache.img, 0, 0);
       this.drawnCells = this.cache.cells;
@@ -1994,7 +1994,7 @@ const LQ = {
     // most levels sit in the blues; only the biggest few per cent of resting orders reach yellow and white
     const top = vals[Math.min(vals.length - 1, Math.floor(vals.length * clamp(0.999 - p.contrast * 0.005, 0.9, 0.999)))] || vals[vals.length - 1];
     const gam = clamp(1.35 - p.contrast * 0.1, 0.4, 1.4);
-    const thr = p.min > 0 ? vals[Math.min(vals.length - 1, Math.floor((vals.length * p.min) / 100))] : 0;   // levels below this aren't drawn
+    const thr = p.top < 100 ? vals[Math.min(vals.length - 1, Math.floor((vals.length * (100 - p.top)) / 100))] : 0;   // only the busiest levels are drawn
     const paint = p.style === 1 ? lqColor : lqBlue;
     const off = document.createElement('canvas'); off.width = W; off.height = H;
     const g = off.getContext('2d'), img = g.createImageData(W, H), px = img.data;
