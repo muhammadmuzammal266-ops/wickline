@@ -241,7 +241,7 @@ select option{background:var(--panel);color:var(--fg)}
 .view-tab:hover{color:var(--fg)}
 .view-tab[aria-current="page"]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(8,12,20,.1)}
 body:is([data-view="journal"],[data-view="ideas"],[data-view="home"],[data-view="markets"]) .app>:is(.tools,.stage,.side){display:none}
-body:is([data-view="journal"],[data-view="ideas"],[data-view="home"],[data-view="markets"]) .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#ideaBtn,#tradeBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn,#layoutBtn,#dataBtn,#btBtn){display:none!important}
+body:is([data-view="journal"],[data-view="ideas"],[data-view="home"],[data-view="markets"]) .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#ideaBtn,#tradeBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn,#layoutBtn,#dataBtn,#btBtn,#tplBtn,#calcBtn){display:none!important}
 
 
 /* markets */
@@ -371,6 +371,21 @@ button.fx-v:hover{filter:brightness(1.2)}
 .ta-h{padding:8px 12px 2px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .ta-item .c{white-space:normal;line-height:1.35}
 #taDlg{width:min(640px,calc(100vw - 24px))}
+#psDlg{width:min(560px,calc(100vw - 24px))}
+#tplDlg{width:min(420px,calc(100vw - 24px))}
+.ps-sym{font:500 13px var(--font-data);color:var(--muted);margin-left:6px}
+.ps-out{margin:14px 0 4px;min-height:40px}
+.ps-res{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}
+.ps-res dt{color:var(--muted);font-size:12.5px}
+.ps-res dd{margin:0;font:500 13px var(--font-data);color:var(--fg);text-align:right;font-variant-numeric:tabular-nums}
+.tpl-menu{width:280px}
+.tpl-row{display:flex;align-items:center;gap:2px}
+.tpl-li{flex:1;min-width:0;display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:7px 10px;border-radius:6px;text-align:left;font-size:13px}
+.tpl-li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tpl-li small{color:var(--faint);font-size:11px;white-space:nowrap}
+.tpl-li:hover{background:var(--panel-2)}
+.tpl-x{width:26px;height:26px;flex:none}
+.tpl-x svg{width:14px;height:14px}
 .ta-body{display:flex;flex-direction:column;gap:10px;padding:14px 16px;overflow:auto}
 .ta-mk{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
 .ta-mk b{font-family:var(--font-data)}
@@ -1325,12 +1340,14 @@ a.h-btn.primary{color:var(--panel)}
     <button class="icon-btn" id="ctGear" type="button" hidden title="Box size and other settings for this chart type" aria-label="Chart type settings" aria-haspopup="menu"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
     <button class="btn" id="layoutBtn" title="Chart layout: up to 16 charts" aria-haspopup="menu" aria-label="Chart layout"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/></svg><span class="rp-btn-lbl">Layout</span></button>
     <button class="btn" id="indBtn"><svg viewBox="0 0 24 24"><path d="M3 17c3 0 4-10 7-10s3 10 6 10 3-6 5-6"/></svg>Indicators</button>
+    <button class="icon-btn" id="tplBtn" aria-haspopup="menu" aria-label="Chart templates: saved sets of indicators" title="Chart templates"><svg viewBox="0 0 24 24"><path d="M12 4l8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16l8 4 8-4"/></svg></button>
     <button class="btn" id="replayBtn" aria-pressed="false" title="Bar replay: replay the market from a past bar"><svg viewBox="0 0 24 24"><path d="M11.5 7l-6 5 6 5z"/><path d="M19.5 7l-6 5 6 5z"/></svg><span class="rp-btn-lbl">Replay</span></button>
     <button class="btn" id="btBtn" title="Strategy tester: test buy and sell rules on this chart"><svg viewBox="0 0 24 24"><path d="M4 19h16"/><path d="M6 15l4-5 3 3 5-7"/><circle cx="18" cy="6" r="1.4"/></svg><span class="rp-btn-lbl">Strategy</span></button>
     <button class="btn" id="ideaBtn" title="Publish your view of this chart as an idea"><svg viewBox="0 0 24 24"><path d="M9.5 18h5M10.5 21h3"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></svg><span class="rp-btn-lbl">Publish idea</span></button>
     <button class="btn trade-btn" id="tradeBtn" title="Paper trading: practise buying and selling with virtual money (Shift B or Shift S)"><svg viewBox="0 0 24 24"><path d="M7.5 20V5M4 8.5l3.5-3.5L11 8.5"/><path d="M16.5 4v15M13 15.5l3.5 3.5 3.5-3.5"/></svg><span class="rp-btn-lbl">Trade</span></button>
     <span class="spacer"></span>
     <button class="feed" id="feedBtn" data-state="connecting" title="Data sources"><span class="dot"></span><span class="lbl" id="feedLbl">Connecting</span></button>
+    <button class="icon-btn" id="calcBtn" aria-label="Position size calculator" title="Position size calculator"><svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01M8.5 15h.01M12 15h.01M15.5 15h.01M8.5 18h.01M12 18h3.5" stroke-width="2.2"/></svg></button>
     <button class="icon-btn" id="snapBtn" hidden aria-label="Save the chart as an image" title="Save chart image"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
     <button class="icon-btn" id="dataBtn" hidden aria-label="Download chart data as a CSV file" title="Download chart data (CSV)"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg></button>
     <button class="icon-btn" id="linkBtn" hidden aria-label="Copy a link to this chart" title="Copy link to this chart"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg></button>
@@ -1830,6 +1847,32 @@ a.h-btn.primary{color:var(--panel)}
   </form>
 </dialog>
 
+<dialog id="psDlg" aria-labelledby="psTitle">
+  <div class="dlg-h"><h2 id="psTitle">Position size <span class="ps-sym" id="psSym"></span></h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <form class="dlg-body" id="psForm" novalidate onsubmit="return false">
+    <div class="t-grid ps-grid">
+      <label class="t-f"><span>Account size <i>(US$)</i></span><input class="field" id="psAcct" inputmode="decimal" autocomplete="off"></label>
+      <label class="t-f"><span>Risk per trade <i>(%)</i></span><input class="field" id="psRisk" inputmode="decimal" autocomplete="off"></label>
+      <label class="t-f"><span>Entry price</span><input class="field" id="psEntry" inputmode="decimal" autocomplete="off"></label>
+      <label class="t-f"><span>Stop loss</span><input class="field" id="psStop" inputmode="decimal" autocomplete="off"></label>
+      <label class="t-f"><span>Take profit <i>(optional)</i></span><input class="field" id="psTp" inputmode="decimal" autocomplete="off"></label>
+    </div>
+    <div class="ps-out" id="psOut" aria-live="polite"></div>
+    <p class="fine">A guide only. Contract sizes, costs and currency rates differ between brokers, so check them before you trade.</p>
+    <div class="t-actions"><span class="spacer"></span><button class="primary" type="button" data-close>Done</button></div>
+  </form>
+</dialog>
+
+<dialog id="tplDlg" aria-labelledby="tplTitle">
+  <div class="dlg-h"><h2 id="tplTitle">Save a chart template</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <form class="dlg-body" id="tplForm" novalidate>
+    <p class="fine">Saves the indicators on this chart, with their settings, and the chart type. Saving with the name of an existing template replaces it.</p>
+    <label class="t-f"><span>Name</span><input class="field" id="tplName" maxlength="40" autocomplete="off" spellcheck="false" placeholder="For example: Scalping, Swing, ICT"></label>
+    <p class="fine" id="tplMsg" aria-live="polite"></p>
+    <div class="t-actions"><span class="spacer"></span><button class="ghost" type="button" data-close>Cancel</button><button class="primary" type="submit">Save</button></div>
+  </form>
+</dialog>
+
 <dialog id="ptConfirm" aria-labelledby="pcTitle">
   <div class="dlg-h"><h2 id="pcTitle">Are you sure?</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="dlg-body">
@@ -1937,12 +1980,13 @@ a.h-btn.primary{color:var(--panel)}
 <div class="ctx-menu tp-menu" id="ctMenu" hidden role="dialog" aria-label="Chart type settings"></div>
 <div class="ctx-menu tp-menu tl-menu" id="toolMenu" hidden role="menu" aria-label="Drawing tools"></div>
 <div class="ctx-menu tp-menu wl-menu" id="wlMenu" hidden role="menu" aria-label="Watchlists"></div>
+<div class="ctx-menu tp-menu tpl-menu" id="tplMenu" hidden role="menu" aria-label="Chart templates"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
 <script src="vendor/lightweight-charts-5.1.0.js"></script>
 <script src="vendor/supabase-js-2.117.2.js"></script>
 <script src="config.js"></script>
-<script src="app.js?v=fad7d279e6"></script>
+<script src="app.js?v=5728d0a1c8"></script>
 
 </body>
 </html>

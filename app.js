@@ -60,16 +60,17 @@ Object.assign(ICON, {
   pricerange: '<path d="M4 4h16M4 20h16M12 6v12"/><path d="M9 9l3-3 3 3M9 15l3 3 3-3"/>',
   frvp: '<path d="M4 3v18M20 3v18"/><path d="M4 7h6M4 10h10M4 13h13M4 16h8M4 19h4" stroke-width="2.2"/>',
   chev: '<path d="M10 7l5 5-5 5"/>',
+  avwap: '<circle cx="5" cy="17" r="2"/><path d="M7 15.5c3-2 4-6 7-6.5s4 1.5 7-1"/><path d="M5 4v9" stroke-dasharray="2 2"/>',
 });
 // The toolbar keeps the original tools as buttons; each group button opens a list of more tools.
 const TOOL_GROUPS = [
-  { id: 'lines', name: 'More lines', after: 'hline', tools: [['ext', 'Extended line'], ['infoline', 'Info line'], ['arrowline', 'Arrow'], ['hray', 'Horizontal ray'], ['vline', 'Vertical line', 'Alt+V'], ['cross', 'Cross line', 'Alt+C']] },
+  { id: 'lines', name: 'More lines', after: 'hline', tools: [['ext', 'Extended line'], ['infoline', 'Info line'], ['arrowline', 'Arrow'], ['hray', 'Horizontal ray'], ['vline', 'Vertical line', 'Alt+V'], ['cross', 'Cross line', 'Alt+C'], ['avwap', 'Anchored VWAP']] },
   { id: 'shapes', name: 'Shapes and brushes', after: 'rect', tools: [['ellipse', 'Ellipse'], ['triangle', 'Triangle'], ['brush', 'Brush'], ['highlighter', 'Highlighter']] },
   { id: 'fibs', name: 'Fibonacci, channels and pitchforks', after: 'fib', tools: [['fibext', 'Trend-based Fib extension'], ['fibtime', 'Fib time zones'], ['channel', 'Parallel channel'], ['regchan', 'Regression trend'], ['pitchfork', 'Pitchfork']] },
   { id: 'notes', name: 'Text and marks', after: 'fib', tools: [['text', 'Text'], ['pricelabel', 'Price label'], ['arrowup', 'Arrow mark up'], ['arrowdown', 'Arrow mark down']] },
   { id: 'ranges', name: 'Ranges', after: 'measure', tools: [['daterange', 'Date range'], ['pricerange', 'Price range'], ['frvp', 'Fixed range volume profile']] },
 ];
-const TOOLS_1PT = ['hray', 'vline', 'cross', 'text', 'pricelabel', 'arrowup', 'arrowdown'];
+const TOOLS_1PT = ['hray', 'vline', 'cross', 'text', 'pricelabel', 'arrowup', 'arrowdown', 'avwap'];
 const TOOLS_3PT = ['channel', 'pitchfork', 'fibext', 'triangle'];
 const BRUSHES = ['brush', 'highlighter'];
 const EXTRA_TOOLS = TOOL_GROUPS.flatMap(g => g.tools.map(t => t[0]));
@@ -2039,6 +2040,259 @@ const LQ = {
 };
 setInterval(() => { LQ.sync(); LQ.sample(); }, 1000);
 
+/* ---------- tools professional traders use: anchored VWAP, trading sessions, key levels ---------- */
+// Anchored VWAP: the volume-weighted average price from a bar you pick to now (typical price × volume / volume).
+function avwapLine(d) {
+  const B = S.bars, out = []; if (!B.length || !d.p1) return out;
+  let j = rpIndexFor(B, d.p1.t); if (j < 0) j = 0;
+  const vols = B.slice(j).some(b => b.volume > 0);
+  let pv = 0, v = 0;
+  for (let i = j; i < B.length; i++) {
+    const b = B[i], w = vols ? b.volume || 0 : 1, tp = (b.high + b.low + b.close) / 3;
+    pv += tp * w; v += w; if (v > 0) out.push({ t: b.time, p: pv / v });
+  }
+  return out;
+}
+function avwapAnchor(pt) {   // starts on the bar that was clicked, at its typical price
+  const j = rpIndexFor(S.bars, pt.t); if (j < 0) return pt;
+  const b = S.bars[j]; return { t: b.time, p: (b.high + b.low + b.close) / 3 };
+}
+function drawAvwap(d, m, W, H, sel, draft, col, x1, y1) {
+  const pts = avwapLine(d); if (!pts.length) return;
+  octx.strokeStyle = col; octx.lineWidth = 1.8; octx.setLineDash([]); octx.beginPath();
+  let started = false;
+  for (const q of pts) { const x = m.x(q.t), y = m.y(q.p); if (y == null) continue; if (!started) { octx.moveTo(x, y); started = true; } else octx.lineTo(x, y); }
+  octx.stroke();
+  octx.textAlign = 'left';
+  const last = pts[pts.length - 1], yl = m.y(last.p); if (yl != null) priceTag(W, yl, last.p, col);
+  const y0 = m.y(pts[0].p), x0 = m.x(pts[0].t);
+  if (y0 != null) {
+    octx.font = `600 10.5px ${FONT_DATA}`; octx.fillStyle = col; octx.textAlign = 'left'; octx.textBaseline = 'bottom'; octx.fillText('AVWAP', x0 + 6, y0 - 6);
+    if (sel || draft) handle(x0, y0, col);
+  }
+}
+function hitAvwap(d, x, y, m, segDist) {
+  const pts = avwapLine(d); if (!pts.length) return Infinity;
+  const y0 = m.y(pts[0].p); let best = y0 == null ? Infinity : Math.hypot(x - m.x(pts[0].t), y - y0);
+  for (let i = 1; i < pts.length; i++) { const ya = m.y(pts[i - 1].p), yb = m.y(pts[i].p); if (ya == null || yb == null) continue; const xa = m.x(pts[i - 1].t), xb = m.x(pts[i].t); if (Math.max(xa, xb) < x - 30 || Math.min(xa, xb) > x + 30) continue; best = Math.min(best, segDist(x, y, xa, ya, xb, yb)); }
+  return best;
+}
+// time zones: a wall-clock time in a city, as a moment in UTC (summer time included)
+const TZF = {};
+function tzOffset(sec, tz) {   // minutes the city is ahead of UTC at that moment
+  const f = TZF[tz] || (TZF[tz] = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }));
+  const p = Object.fromEntries(f.formatToParts(new Date(sec * 1000)).filter(x => x.type !== 'literal').map(x => [x.type, +x.value]));
+  return (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) / 1000 - Math.floor(sec / 60) * 60) / 60;
+}
+function zoned(y, mo, d, h, mi, tz) { let t = Date.UTC(y, mo, d, h, mi) / 1000; for (let k = 0; k < 2; k++) t = Date.UTC(y, mo, d, h, mi) / 1000 - tzOffset(t, tz) * 60; return t; }
+const SESSIONS = [
+  { k: 'asia', name: 'Asia', tz: 'Asia/Tokyo', from: [9, 0], to: [18, 0], color: '#13a3b8' },
+  { k: 'london', name: 'London', tz: 'Europe/London', from: [8, 0], to: [17, 0], color: '#3f7fe6' },
+  { k: 'ny', name: 'New York', tz: 'America/New_York', from: [8, 0], to: [17, 0], color: '#e8902e' },
+];
+const SESS_AT = new Map();   // "day|session" -> [start, end] in UTC
+function sessWindows(t0, t1) {   // every session that touches t0…t1, as [start, end] in UTC
+  const out = [];
+  for (let day = Math.floor(t0 / DAY) - 1; day <= Math.floor(t1 / DAY) + 1; day++) {
+    const dt = new Date(day * DAY * 1000), y = dt.getUTCFullYear(), mo = dt.getUTCMonth(), d = dt.getUTCDate();
+    const wd = dt.getUTCDay(); if (wd === 0 || wd === 6) continue;   // weekdays, as forex sessions
+    for (const s of SESSIONS) {
+      const key = day + '|' + s.k; let w = SESS_AT.get(key);
+      if (!w) { w = [zoned(y, mo, d, s.from[0], s.from[1], s.tz), zoned(y, mo, d, s.to[0], s.to[1], s.tz)]; if (SESS_AT.size > 6000) SESS_AT.clear(); SESS_AT.set(key, w); }
+      const [a, z] = w;
+      if (z > t0 && a < t1) out.push({ s, a, z });
+    }
+  }
+  return out;
+}
+Object.assign(IND, {
+  sess: { cat: 'trend', label: 'Trading sessions', alias: 'sessions asia tokyo london new york market hours boxes killzones', nocolor: true, short: () => 'Sessions',
+    desc: 'Boxes for the Asia (Tokyo 09:00–18:00), London (08:00–17:00) and New York (08:00–17:00) sessions in local time, summer time included, around each session’s high and low. For timeframes up to 1 hour.',
+    params: [{ k: 'asia', label: 'Asia (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }, { k: 'london', label: 'London (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }, { k: 'ny', label: 'New York (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }],
+    series: [], compute: () => [] },
+  levels: { cat: 'trend', label: 'Key levels (previous day and week)', alias: 'pdh pdl pwh pwl previous day high low week open key levels', nocolor: true, short: () => 'Key levels',
+    desc: 'Lines at yesterday’s high and low (PDH, PDL), last week’s high and low (PWH, PWL) and today’s open, days in UTC (New York days for US stocks).',
+    params: [{ k: 'day', label: 'Previous day (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }, { k: 'week', label: 'Previous week (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }, { k: 'open', label: 'Today’s open (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }],
+    series: [], compute: () => [] },
+});
+const SESS = { last: [] };
+function drawSessions(m, W, H) {
+  SESS.last = [];
+  const rt = S.rts.find(r => r.inst.type === 'sess' && !r.inst.hidden); if (!rt || !S.bars.length || isBrick(S.type) || tfOf(S.tf).sec > 3600) return;
+  const B = S.bars, i0 = Math.max(0, Math.floor(m.L(0))), i1 = Math.min(B.length - 1, Math.ceil(m.L(W))); if (i1 < i0) return;
+  const step = tfOf(S.tf).sec, p = rt.inst.params, placed = [];
+  octx.save(); octx.font = `600 10.5px ${FONT_BODY}`; octx.textAlign = 'left'; octx.textBaseline = 'bottom';
+  for (const w of sessWindows(B[i0].time, B[i1].time + step)) {
+    if (!p[w.s.k]) continue;
+    const a = rpIndexFor(B, w.a - 1) + 1, z = rpIndexFor(B, w.z - 1); if (z < a || a < 0) continue;
+    let hi = -Infinity, lo = Infinity; for (let i = a; i <= z; i++) { if (B[i].high > hi) hi = B[i].high; if (B[i].low < lo) lo = B[i].low; }
+    const xa = m.x(B[a].time) - m.sp / 2, xb = m.x(B[z].time) + m.sp / 2, ya = m.y(hi), yb = m.y(lo); if (ya == null || yb == null || xb < 0 || xa > W) continue;
+    octx.fillStyle = alpha(w.s.color, 0.09); octx.fillRect(xa, ya, xb - xa, yb - ya);
+    octx.strokeStyle = alpha(w.s.color, 0.55); octx.lineWidth = 1; octx.strokeRect(xa + 0.5, ya + 0.5, xb - xa - 1, yb - ya - 1);
+    // the name above the box; under it when another name is in the way (London and New York overlap)
+    const tw = octx.measureText(w.s.name).width, lx = Math.max(2, xa + 4), clash = y => placed.some(r => lx < r.x + r.w + 6 && lx + tw + 6 > r.x && Math.abs(y - r.y) < 12);
+    let ly = ya - 3; if (ly < 12 || clash(ly)) ly = yb + 14; if (clash(ly) || ly > H - 2) ly = ya + 14;
+    octx.fillStyle = w.s.color; octx.fillText(w.s.name, lx, ly); placed.push({ x: lx, y: ly, w: tw });
+    SESS.last.push({ k: w.s.k, from: B[a].time, to: B[z].time, start: w.a, end: w.z, hi, lo });
+  }
+  octx.restore();
+}
+// key levels: from daily and weekly bars of the price source (fetched now and then), or, for sources with small
+// allowances, from the chart's own bars
+const LV = { cache: {}, busy: {}, last: [] };
+const LV_STINGY = ['td', 'metal'];
+function lvBars(id) {
+  if (LV_STINGY.includes(srcOf(id))) {
+    if (id !== S.symbol || !S.bars.length || tfOf(S.tf).sec > DAY) return null;
+    const raw = S.raw && S.raw.length ? S.raw : S.bars, cls = classOf(id);
+    return { d: tfOf(S.tf).sec === DAY ? raw : tfResample(raw, '1d', cls), w: tfResample(raw, '1w', cls) };
+  }
+  const c = LV.cache[id]; return c && (c.d || c.w) ? c : null;
+}
+function lvLevels(id) {
+  const c = lvBars(id), out = [], now = Date.now() / 1000; if (!c) return out;
+  if (c.d && c.d.length) {
+    const d = c.d, n = d.length, live = now - d[n - 1].time < DAY;   // the newest daily bar is still going: it is today's
+    const prev = d[live ? n - 2 : n - 1];
+    if (prev) out.push(['day', 'PDH', prev.high], ['day', 'PDL', prev.low]);
+    if (live) out.push(['open', 'Today open', d[n - 1].open]);
+  }
+  if (c.w && c.w.length) {
+    const w = c.w, n = w.length, prev = w[now - w[n - 1].time < 7 * DAY ? n - 2 : n - 1];
+    if (prev) out.push(['week', 'PWH', prev.high], ['week', 'PWL', prev.low]);
+  }
+  return out;
+}
+async function lvLoad(id) {
+  if (LV_STINGY.includes(srcOf(id)) || LV.busy[id] || (LV.cache[id] && Date.now() - LV.cache[id].at < 600000)) return;
+  LV.busy[id] = true;
+  try {
+    const f = feedFor(id); if (!f) return;
+    const [d, w] = await Promise.all([f.klines(id, '1d'), f.klines(id, '1w')]);
+    LV.cache[id] = { at: Date.now(), d, w }; markDirty();
+  } catch (e) { LV.cache[id] = { at: Date.now() - 480000, d: null, w: null }; }   // try again in two minutes
+  finally { LV.busy[id] = false; }
+}
+function drawLevels(m, W, H) {
+  LV.last = [];
+  const rt = S.rts.find(r => r.inst.type === 'levels' && !r.inst.hidden); if (!rt || !S.bars.length || isBrick(S.type)) return;
+  lvLoad(S.symbol);
+  const p = rt.inst.params, cols = { PDH: C.up, PDL: C.down, PWH: '#2fa39a', PWL: '#e0506b', 'Today open': C.muted };
+  octx.save(); octx.font = `600 10.5px ${FONT_DATA}`; octx.textBaseline = 'bottom'; octx.textAlign = 'right';
+  const shown = [];
+  for (const [k, name, price] of lvLevels(S.symbol)) {
+    if (!p[k] || !isFinite(price)) continue;
+    const y = m.y(price); LV.last.push({ name, price }); if (y == null || y < 0 || y > H) continue;
+    const c = cols[name] || C.muted;
+    octx.strokeStyle = alpha(c, 0.8); octx.lineWidth = 1; octx.setLineDash(k === 'week' ? [6, 4] : k === 'open' ? [2, 3] : []); seg(0, y, W, y); octx.setLineDash([]);
+    shown.push({ y, c, txt: `${name} ${fmtP(price)}`, ly: y - 2 < 13 ? y + 13 : y - 2 });
+  }
+  // labels on the right, nudged apart so close levels stay readable
+  shown.sort((a, b) => a.ly - b.ly);
+  for (let i = 1; i < shown.length; i++) if (shown[i].ly - shown[i - 1].ly < 12) shown[i].ly = shown[i - 1].ly + 12;
+  for (const q of shown) { octx.fillStyle = q.c; octx.fillText(q.txt, W - 6, q.ly); }
+  octx.restore();
+}
+
+/* ---------- position size calculator ---------- */
+const PS = {
+  open() {
+    const px = lastPrice(S.symbol); if (!isFinite(px)) { toast('Wait for the price to load first.'); return; }
+    const prec = precFor(S.symbol, px), st = store.get('psset', {}) || {};
+    let acct = isFinite(+st.acct) && +st.acct > 0 ? +st.acct : null;
+    try { if (acct == null) { const e = ptMetrics(ptA()).equity; if (isFinite(e) && e > 0) acct = Math.round(e); } } catch (e) { /* no paper account */ }
+    $('#psSym').textContent = label(S.symbol);
+    $('#psAcct').value = String(acct || 10000); $('#psRisk').value = String(isFinite(+st.risk) && +st.risk > 0 ? +st.risk : 1);
+    $('#psEntry').value = px.toFixed(prec); $('#psStop').value = (px * 0.99).toFixed(prec); $('#psTp').value = '';
+    this.calc(); $('#psDlg').showModal();
+  },
+  usdPerQuote(id) {   // dollars per unit of the symbol's quote currency (the same rates paper trading uses)
+    if (classOf(id) === 'forex' && rawOf(id).startsWith('USD/')) { const px = lastPrice(id); if (px > 0) return 1 / px; }
+    try { const k = ptConv(id); return k > 0 ? k : 1; } catch (e) { return 1; }
+  },
+  lotSize(id) {   // standard lots: 100,000 of the currency, 100 oz of gold, 5,000 oz of silver
+    if (id === GOLD) return [100, 'oz']; if (id === SILVER) return [5000, 'oz'];
+    if (classOf(id) === 'forex' && !CFD[id] && /^[A-Z]{3}\/[A-Z]{3}$/.test(rawOf(id))) return [100000, rawOf(id).slice(0, 3)];
+    return null;
+  },
+  calc() {
+    const num = s => parseFloat(String($(s).value).replace(/,/g, ''));
+    const acct = num('#psAcct'), risk = num('#psRisk'), entry = num('#psEntry'), stop = num('#psStop'), tp = num('#psTp');
+    const out = $('#psOut'); out.replaceChildren();
+    const bad = msg => { out.append(el('p', 'fine', msg)); return null; };
+    if (!(acct > 0) || !(risk > 0) || risk > 100 || !(entry > 0) || !(stop > 0)) return bad('Fill in the account size, risk, entry and stop loss.');
+    if (stop === entry) return bad('The stop loss must be away from the entry.');
+    store.set('psset', { acct, risk });
+    const dir = stop < entry ? 1 : -1, dist = Math.abs(entry - stop), money = (acct * risk) / 100, k = this.usdPerQuote(S.symbol);
+    const units = money / (dist * k), value = units * entry * k, lot = this.lotSize(S.symbol);
+    const cls = classOf(S.symbol), base = cls === 'crypto' ? splitSym(rawOf(S.symbol))[0] : cls === 'stock' ? 'shares' : S.symbol === GOLD || S.symbol === SILVER ? 'oz' : cls === 'forex' && !CFD[S.symbol] && rawOf(S.symbol).includes('/') ? rawOf(S.symbol).split('/')[0] : 'units';
+    const rows = [['Direction', dir > 0 ? 'Long (buy)' : 'Short (sell)'], ['Money at risk', usd(money)], ['Stop distance', `${fmtP(dist)} (${((dist / entry) * 100).toFixed(2)}%)`],
+      ['Position size', `${units >= 100 ? Math.round(units).toLocaleString('en-GB') : units.toPrecision(4)} ${base}`]];
+    if (lot) rows.push(['In lots', `${(units / lot[0]).toFixed(2)} lots (1 lot = ${lot[0].toLocaleString('en-GB')} ${lot[1]})`]);
+    rows.push(['Position value', usd(value)], ['Leverage needed', `${(value / acct).toFixed(1)}×`]);
+    if (tp > 0) { const rw = (tp - entry) * dir; rows.push(rw > 0 ? ['Reward : risk', `${(rw / dist).toFixed(2)} : 1 · ${usd(units * rw * k)} at the target`] : ['Take profit', 'It is on the wrong side of the entry']); }
+    const dl = el('dl', 'ps-res'); for (const [a, b] of rows) dl.append(el('dt', null, a), el('dd', null, b));
+    out.append(dl);
+    return { dir, money, units, value };
+  },
+};
+$('#calcBtn').onclick = () => PS.open();
+['#psAcct', '#psRisk', '#psEntry', '#psStop', '#psTp'].forEach(s => { $(s).oninput = () => PS.calc(); });
+
+/* ---------- chart templates: saved sets of indicators (and the chart type) ---------- */
+const TPL_MAX = 30;
+function tplClean(v) {
+  if (!Array.isArray(v)) return [];
+  return v.filter(t => t && typeof t.name === 'string' && t.name.trim() && Array.isArray(t.inds)).slice(0, TPL_MAX)
+    .map(t => ({ name: t.name.replace(/\s+/g, ' ').trim().slice(0, 40), type: TYPE_IDS.includes(t.type) ? t.type : null, inds: t.inds.map(normInst).filter(Boolean).slice(0, 50) }));
+}
+const TPL = {
+  list() { return tplClean(store.get('tpls', [])); },
+  save(name) {
+    const l = this.list().filter(t => t.name.toLowerCase() !== name.toLowerCase());
+    if (l.length >= TPL_MAX) { toast(`You can keep up to ${TPL_MAX} templates.`); return; }
+    l.push({ name, type: S.type, inds: S.rts.map(r => JSON.parse(JSON.stringify(r.inst))) }); store.set('tpls', l);
+    toast(`Saved the template "${name}" (${S.rts.length} indicator${S.rts.length === 1 ? '' : 's'})`);
+  },
+  apply(name) {
+    const t = this.list().find(x => x.name === name); if (!t) return;
+    for (const rt of S.rts.slice()) removeRt(rt);
+    for (const inst of t.inds) addRt(Object.assign({}, inst, { id: uid() }));
+    saveInd(); if (t.type && t.type !== S.type) setChartType(t.type);
+    updateLegend(); markDirty(); toast(`Applied the template "${name}"`);
+  },
+  remove(name) { store.set('tpls', this.list().filter(t => t.name !== name)); },
+  menu() {
+    const m = $('#tplMenu'); m.replaceChildren(); m.append(el('div', 'tp-menu-h', 'Chart templates'));
+    const l = this.list();
+    if (!l.length) m.append(el('p', 'tp-menu-note', 'Save the indicators on this chart as a template, then switch setups in one click.'));
+    for (const t of l) {
+      const row = el('div', 'tpl-row');
+      const b = el('button', 'tpl-li'); b.type = 'button'; b.dataset.name = t.name; b.append(el('span', null, t.name), el('small', null, `${t.inds.length} indicator${t.inds.length === 1 ? '' : 's'}`));
+      b.onclick = () => { m.hidden = true; this.apply(t.name); };
+      const x = el('button', 'icon-btn tpl-x'); x.type = 'button'; x.innerHTML = svg('x'); x.title = 'Delete this template'; x.setAttribute('aria-label', `Delete the template ${t.name}`);
+      x.onclick = e => { e.stopPropagation(); this.remove(t.name); this.menu(); };
+      row.append(b, x); m.append(row);
+    }
+    m.append(el('div', 'tp-menu-sep'));
+    const sv = el('button', 'wl-act', 'Save these indicators as a template…'); sv.type = 'button'; sv.id = 'tplSave';
+    sv.onclick = () => { m.hidden = true; $('#tplName').value = ''; $('#tplMsg').textContent = ''; $('#tplDlg').showModal(); setTimeout(() => $('#tplName').focus(), 0); };
+    m.append(sv);
+    m.hidden = false;
+    const r = $('#tplBtn').getBoundingClientRect(), w = m.offsetWidth;
+    m.style.left = clamp(r.left, 8, innerWidth - w - 8) + 'px'; m.style.top = (r.bottom + 6) + 'px';
+  },
+};
+$('#tplBtn').onclick = e => { e.stopPropagation(); const m = $('#tplMenu'); if (!m.hidden) { m.hidden = true; return; } TPL.menu(); };
+$('#tplForm').onsubmit = e => {
+  e.preventDefault(); const name = $('#tplName').value.replace(/\s+/g, ' ').trim().slice(0, 40);
+  if (!name) { $('#tplMsg').textContent = 'Give it a name.'; return; }
+  if (!S.rts.length) { $('#tplMsg').textContent = 'Add some indicators to the chart first.'; return; }
+  $('#tplDlg').close(); TPL.save(name);
+};
+document.addEventListener('pointerdown', e => { const m = $('#tplMenu'); if (!m.hidden && !m.contains(e.target) && !$('#tplBtn').contains(e.target)) m.hidden = true; }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#tplMenu').hidden = true; });
+
 function normInst(inst) {
   const def = IND[inst && inst.type]; if (!def) return null;
   const params = {};
@@ -2529,7 +2783,7 @@ function drawOverlay(m) {
   const W = ps.width, H = ps.height;
   octx.save(); octx.beginPath(); octx.rect(0, 0, W, H); octx.clip();
   if (S.idea && S.idea.symbol === S.symbol) drawIdeaLayer(m, W, H);
-  drawPnf(m, W, H); drawVolumeProfiles(m, W, H); drawSessionProfiles(m, W, H);
+  drawPnf(m, W, H); drawSessions(m, W, H); drawVolumeProfiles(m, W, H); drawSessionProfiles(m, W, H); drawLevels(m, W, H);
   for (const d of curDrawings()) drawShape(d, m, W, H, d.id === S.selected, false);
   if (S.draft && S.draft.type !== 'measure') drawShape(S.draft, m, W, H, false, true);
   const meas = S.draft && S.draft.type === 'measure' ? S.draft : S.measure;
@@ -2802,6 +3056,7 @@ Object.assign(HINTS, {
   infoline: ['Click where the line starts', 'Click where the line ends'],
   arrowline: ['Click where the arrow starts', 'Click where it points'],
   hray: ['Click where the ray starts'],
+  avwap: ['Click the bar to start the VWAP from (a high, a low or a news bar)'],
   vline: ['Click a moment in time'],
   cross: ['Click a point'],
   channel: ['Click where the channel starts', 'Click where it ends', 'Click to set the channel\'s width'],
@@ -2873,6 +3128,7 @@ function drawShape2(d, m, W, H, sel, draft, col, x1, y1, x2, y2) {
       octx.fillStyle = C.fg; octx.textBaseline = 'middle'; octx.textAlign = 'left'; octx.fillText(lines[0], bx + 7, by + 11); octx.fillText(lines[1], bx + 7, by + 25);
       break;
     }
+    case 'avwap': drawAvwap(d, m, W, H, sel, draft, col, x1, y1); break;
     case 'hray': seg(x1, y1, W, y1); priceTag(W, y1, d.p1.p, col); hd(x1, y1); break;
     case 'vline': seg(x1, 0, x1, H); hd(x1, clamp(y1, 12, H - 12)); break;
     case 'cross': seg(0, y1, W, y1); seg(x1, 0, x1, H); priceTag(W, y1, d.p1.p, col); hd(x1, y1); break;
@@ -3007,6 +3263,7 @@ function hitExtra(d, x, y, m, x1, y1, x2, y2, segDist) {   // how far (in pixels
   switch (d.type) {
     case 'ext': { const [a, b, c, e] = lineFar(x1, y1, x2, y2, true); return segDist(x, y, a, b, c, e); }
     case 'arrowline': case 'infoline': return segDist(x, y, x1, y1, x2, y2);
+    case 'avwap': return hitAvwap(d, x, y, m, segDist);
     case 'hray': return x >= x1 - 4 ? Math.abs(y - y1) : Infinity;
     case 'vline': return Math.abs(x - x1);
     case 'cross': return Math.min(Math.abs(x - x1), Math.abs(y - y1));
@@ -3061,7 +3318,7 @@ function hitExtra(d, x, y, m, x1, y1, x2, y2, segDist) {   // how far (in pixels
 // placing: one-click tools, three-click tools, and text
 function placeExtra(t, pt) {
   if (TOOLS_1PT.includes(t)) {
-    const d = { type: t, p1: pt };
+    const d = { type: t, p1: t === 'avwap' ? avwapAnchor(pt) : pt };
     if (t === 'text') { d.text = ''; addDrawing(d); finishTool(); editText(d.id, true); return true; }
     addDrawing(d); finishTool(); return true;
   }
@@ -5180,7 +5437,7 @@ if (mq.addEventListener) mq.addEventListener('change', applyTheme);
 /* ---------- accounts: sign in with Google, profile, and syncing the setup across devices ----------
    Supabase keeps the accounts. The browser only ever holds the public "publishable" key; the database rules
    (row level security) let each person read and change only their own profile and saved setup. */
-const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset', 'paper', 'layout', 'tffav', 'tfcustom', 'ctset', 'wlists', 'talerts'];
+const SYNC_KEYS = ['watch', 'wlFold', 'drawings', 'ind', 'alerts', 'symbol', 'tf', 'type', 'scale', 'magnet', 'rpSpeed', 'theme', 'jset', 'paper', 'layout', 'tffav', 'tfcustom', 'ctset', 'wlists', 'talerts', 'tpls'];
 function cleanState(d) {   // saved data is checked before it's used, whatever is in the database
   const o = {}; if (!d || typeof d !== 'object' || Array.isArray(d)) return o;
   const isId = v => typeof v === 'string' && v.length <= 40 && /^[A-Z0-9.:/_-]+$/.test(v);
@@ -5194,6 +5451,7 @@ function cleanState(d) {   // saved data is checked before it's used, whatever i
   if (Array.isArray(d.wlFold)) o.wlFold = d.wlFold.filter(v => typeof v === 'string' && /^[a-z]{3,8}$/.test(v)).slice(0, 10);
   if (isObj(d.drawings)) { o.drawings = {}; for (const [k, v] of Object.entries(d.drawings)) if (isId(k) && Array.isArray(v)) o.drawings[k] = v.filter(x => isObj(x) && typeof x.type === 'string' && x.type.length < 12).slice(0, 500); }
   if (Array.isArray(d.ind)) o.ind = d.ind.filter(x => isObj(x) && typeof x.type === 'string').slice(0, 50);
+  if (Array.isArray(d.tpls)) o.tpls = tplClean(d.tpls);
   if (Array.isArray(d.talerts)) o.talerts = d.talerts.map(taClean).filter(Boolean).slice(0, TA_MAX);
   if (Array.isArray(d.alerts)) o.alerts = d.alerts.filter(x => isObj(x) && isId(x.sym) && typeof x.price === 'number' && isFinite(x.price) && (x.dir === 'above' || x.dir === 'below')).slice(0, 1000);
   if (isId(d.symbol)) o.symbol = d.symbol;
