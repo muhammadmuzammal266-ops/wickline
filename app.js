@@ -1843,6 +1843,10 @@ function drawSessionProfiles(m, W, H) {
    price. Binance doesn't publish past order books, so the map builds up while the chart is open. */
 const LQ_KEEP = 3600;   // seconds of history kept (one column a second)
 const LQ_RAMP = [[0, 20, 40, 110, 0], [0.12, 25, 45, 130, 120], [0.35, 0, 120, 200, 175], [0.62, 60, 200, 160, 205], [0.82, 245, 205, 50, 230], [1, 255, 252, 225, 245]];
+function lqBlue(k) {   // the default: only the busier levels, in blue, brighter where more orders wait
+  k = clamp(k, 0, 1);
+  return k < 0.6 ? [41, 98, 255, 70 + (170 - 70) * (k / 0.6)] : [41 + (140 - 41) * ((k - 0.6) / 0.4), 98 + (185 - 98) * ((k - 0.6) / 0.4), 255, 170 + (240 - 170) * ((k - 0.6) / 0.4)];
+}
 function lqColor(k) {   // dark blue through cyan and yellow to white, like an order book heatmap
   k = clamp(k, 0, 1); let i = 1; while (i < LQ_RAMP.length - 1 && LQ_RAMP[i][0] < k) i++;
   const a = LQ_RAMP[i - 1], b = LQ_RAMP[i], f = (k - a[0]) / (b[0] - a[0] || 1);
@@ -1851,8 +1855,8 @@ function lqColor(k) {   // dark blue through cyan and yellow to white, like an o
 function lqNice(v) { const p = 10 ** Math.floor(Math.log10(v)), x = v / p; return (x <= 1 ? 1 : x <= 2 ? 2 : x <= 2.5 ? 2.5 : x <= 5 ? 5 : 10) * p; }
 Object.assign(IND, {
   liq: { cat: 'volume', label: 'Liquidity heatmap (order book)', alias: 'liquidity heatmap order book depth bookmap walls limit orders', nocolor: true, short: () => 'Liquidity',
-    desc: 'The order book’s waiting buy and sell orders at each price, over time, behind the candles: brighter means more. Crypto from Binance; it builds up while the chart is open, and shows best on short timeframes.',
-    params: [{ k: 'range', label: 'Price range (± %)', def: 1, min: 0.25, max: 10, step: 0.25 }, { k: 'contrast', label: 'Contrast', def: 5, min: 1, max: 10, step: 1 }, { k: 'book', label: 'Live book on the right (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }],
+    desc: 'Where the most buy and sell orders wait in the order book, over time, behind the candles: brighter blue means more. Crypto from Binance; it builds up while the chart is open, and shows best on short timeframes.',
+    params: [{ k: 'range', label: 'Price range (± %)', def: 1, min: 0.25, max: 10, step: 0.25 }, { k: 'contrast', label: 'Contrast', def: 5, min: 1, max: 10, step: 1 }, { k: 'min', label: 'Hide the quieter levels (%)', def: 70, min: 0, max: 98, step: 1 }, { k: 'style', label: 'Colours (0 blue, 1 heat)', def: 0, min: 0, max: 1, step: 1 }, { k: 'book', label: 'Live book on the right (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }],
     series: [], compute: () => [] },
 });
 const LQ = {
@@ -1946,7 +1950,7 @@ const LQ = {
     target.useBitmapCoordinateSpace(sc => {
       const ctx = sc.context, hr = sc.horizontalPixelRatio, vr = sc.verticalPixelRatio, W = sc.bitmapSize.width, H = sc.bitmapSize.height;
       const ts = chart.timeScale(), sp = ts.options().barSpacing, vis = ts.getVisibleLogicalRange(); if (!vis) return;
-      const key = [W, H, vis.from.toFixed(2), vis.to.toFixed(2), S.main.coordinateToPrice(0), S.main.coordinateToPrice(H / vr), this.cols.length, this.cols[this.cols.length - 1].t, S.bars.length, rt.inst.params.contrast, rt.inst.params.book, document.documentElement.dataset.theme || ''].join('|');
+      const key = [W, H, vis.from.toFixed(2), vis.to.toFixed(2), S.main.coordinateToPrice(0), S.main.coordinateToPrice(H / vr), this.cols.length, this.cols[this.cols.length - 1].t, S.bars.length, rt.inst.params.contrast, rt.inst.params.book, rt.inst.params.min, rt.inst.params.style, document.documentElement.dataset.theme || ''].join('|');
       if (!this.cache || this.cache.key !== key) this.cache = Object.assign(this.render(W, H, hr, vr, sp, vis, rt.inst.params), { key });
       if (this.cache.img) ctx.drawImage(this.cache.img, 0, 0);
       this.drawnCells = this.cache.cells;
@@ -1975,6 +1979,8 @@ const LQ = {
     // most levels sit in the blues; only the biggest few per cent of resting orders reach yellow and white
     const top = vals[Math.min(vals.length - 1, Math.floor(vals.length * clamp(0.999 - p.contrast * 0.005, 0.9, 0.999)))] || vals[vals.length - 1];
     const gam = clamp(1.35 - p.contrast * 0.1, 0.4, 1.4);
+    const thr = p.min > 0 ? vals[Math.min(vals.length - 1, Math.floor((vals.length * p.min) / 100))] : 0;   // levels below this aren't drawn
+    const paint = p.style === 1 ? lqColor : lqBlue;
     const off = document.createElement('canvas'); off.width = W; off.height = H;
     const g = off.getContext('2d'), img = g.createImageData(W, H), px = img.data;
     const yOf = price => { const y = S.main.priceToCoordinate(price); return y == null ? null : y * vr; };
@@ -1983,10 +1989,10 @@ const LQ = {
       const xc = chart.timeScale().timeToCoordinate(B[j].time); if (xc == null) continue;
       const xa = Math.max(0, Math.round((xc - sp / 2) * hr)), xb = Math.min(W, Math.round((xc + sp / 2) * hr)); if (xb <= xa) continue;
       for (let i = 0; i < acc.length; i++) {
-        const v = acc[i]; if (!(v > 0)) continue;
+        const v = acc[i]; if (!(v > 0) || v < thr) continue;
         const yt = yOf((lo + i + 1) * bin), yb = yOf((lo + i) * bin); if (yt == null || yb == null) continue;
         let ya = Math.max(0, Math.round(Math.min(yt, yb))), yz = Math.min(H, Math.round(Math.max(yt, yb))); if (yz <= ya) { if (ya >= H) continue; yz = ya + 1; }
-        const [r, gg, bb, a] = lqColor(Math.pow(Math.min(1, v / top), gam)); if (a < 3) continue;
+        const [r, gg, bb, a] = paint(Math.pow(Math.min(1, Math.max(0, (v - thr) / Math.max(1e-9, top - thr))), gam)); if (a < 3) continue;
         n++;
         for (let y = ya; y < yz; y++) { let o = (y * W + xa) * 4; for (let x = xa; x < xb; x++, o += 4) { if (a > px[o + 3]) { px[o] = r; px[o + 1] = gg; px[o + 2] = bb; px[o + 3] = a; } } }
       }
