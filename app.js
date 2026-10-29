@@ -1861,7 +1861,7 @@ Object.assign(IND, {
 });
 const LQ = {
   sym: null, ws: null, bids: new Map(), asks: new Map(), lastId: 0, ready: false, buf: [], snapBusy: false, snapAt: 0, snaps: 0, resyncs: 0,
-  cols: [], bin: 0, binRange: 0, since: 0, sideNow: null, prim: null, primOn: null, req: null, cache: null, told: '', drawnCells: 0, waitT: null,
+  cols: [], bin: 0, fbin: 0, binRange: 0, since: 0, sideNow: null, prim: null, primOn: null, req: null, cache: null, told: '', drawnCells: 0, waitT: null,
   rt() { return S.rts.find(r => r.inst.type === 'liq' && !r.inst.hidden) || null; },
   ok(id) { return srcOf(id) === 'binance' && Live.name === 'Binance' && !!Binance.wss; },
   sync() {   // start, follow or stop the order book to match the chart
@@ -1871,7 +1871,7 @@ const LQ = {
     this.attach();
   },
   start(id) {
-    this.sym = id; this.cols = []; this.bin = 0; this.since = Date.now(); this.told = '';
+    this.sym = id; this.cols = []; this.bin = 0; this.fbin = 0; this.since = Date.now(); this.told = '';
     const raw = rawOf(id).toLowerCase();
     // As Binance describes: open the stream first, keep its changes, and fetch the snapshot once the first one arrives.
     this.ws = sock(`${Binance.wss}/ws/${raw}@depth@1000ms`, m => this.onDiff(m), 'binance');
@@ -1929,9 +1929,19 @@ const LQ = {
     if (this.bids.size + this.asks.size > 30000) { const far = mid * 0.2; for (const m of [this.bids, this.asks]) for (const p of m.keys()) if (Math.abs(p - mid) > far) m.delete(p); }
     const t = Math.floor(Date.now() / 1000);
     if (this.cols.length && this.cols[this.cols.length - 1].t === t) this.cols.pop();
-    this.cols.push({ t, lo, arr, mid });
+    // a fine layer close to the price (0.0002%, about 20 cents for Bitcoin, within ±0.08%), for charts zoomed in that far
+    if (!this.fbin) this.fbin = lqNice(mid * 0.000002);
+    const fb = this.fbin, flo = Math.floor((mid * 0.9992) / fb), fn = Math.ceil((mid * 1.0008) / fb) - flo + 1;
+    let farr = null, fbid = null, fask = null;
+    if (fn > 0 && fn <= 2000) {
+      farr = new Float32Array(fn); fbid = new Float32Array(fn); fask = new Float32Array(fn);
+      for (const [p, q] of this.bids) { const i = Math.floor(p / fb) - flo; if (i >= 0 && i < fn) { farr[i] += p * q; fbid[i] += p * q; } }
+      for (const [p, q] of this.asks) { const i = Math.floor(p / fb) - flo; if (i >= 0 && i < fn) { farr[i] += p * q; fask[i] += p * q; } }
+    }
+    this.cols.push({ t, lo, arr, mid, flo, farr });
+    for (const c of this.cols) { if (c.t >= t - 1800) break; c.farr = null; }   // the fine layer keeps the last 30 minutes
     while (this.cols.length && this.cols[0].t < t - LQ_KEEP) this.cols.shift();
-    this.sideNow = { lo, bid, ask, mid };
+    this.sideNow = { lo, bid, ask, mid, flo, fbid, fask };
     if (this.req) this.req();
   },
   attach() {   // the drawing lives on the main price series, under the candles
@@ -1957,7 +1967,11 @@ const LQ = {
     });
   },
   render(W, H, hr, vr, sp, vis, p) {
-    const B = S.bars, bin = this.bin, i0 = Math.max(0, Math.floor(vis.from) - 1), i1 = Math.min(B.length - 1, Math.ceil(vis.to) + 1);
+    const B = S.bars, i0 = Math.max(0, Math.floor(vis.from) - 1), i1 = Math.min(B.length - 1, Math.ceil(vis.to) + 1);
+    // zoomed in so far that a normal step would be a big block: use the fine layer
+    const pA = S.main.coordinateToPrice(0), pZ = S.main.coordinateToPrice(H / vr), span = pA != null && pZ != null ? Math.abs(pA - pZ) : Infinity;
+    const fine = !!this.fbin && span / this.bin < 40, bin = fine ? this.fbin : this.bin;
+    const LO = c => (fine ? c.flo : c.lo), ARR = c => (fine ? c.farr : c.arr);
     if (!bin || i1 < i0) return { img: null, cells: 0 };
     // each visible bar's columns, averaged per price step
     const firstT = B[i0].time, groups = new Map();
@@ -1969,9 +1983,10 @@ const LQ = {
     if (!groups.size) return { img: null, cells: 0 };
     const cells = []; const vals = [];
     for (const [j, cs] of groups) {
-      let lo = Infinity, hi = -Infinity; for (const c of cs) { lo = Math.min(lo, c.lo); hi = Math.max(hi, c.lo + c.arr.length - 1); }
-      const acc = new Float32Array(hi - lo + 1); for (const c of cs) for (let i = 0; i < c.arr.length; i++) acc[c.lo - lo + i] += c.arr[i];
-      for (let i = 0; i < acc.length; i++) acc[i] /= cs.length;
+      const use = cs.filter(c => ARR(c)); if (!use.length) continue;
+      let lo = Infinity, hi = -Infinity; for (const c of use) { lo = Math.min(lo, LO(c)); hi = Math.max(hi, LO(c) + ARR(c).length - 1); }
+      const acc = new Float32Array(hi - lo + 1); for (const c of use) { const a = ARR(c), l = LO(c); for (let i = 0; i < a.length; i++) acc[l - lo + i] += a[i]; }
+      for (let i = 0; i < acc.length; i++) acc[i] /= use.length;
       cells.push({ j, lo, acc }); for (let i = 0; i < acc.length; i++) if (acc[i] > 0) vals.push(acc[i]);
     }
     if (!vals.length) return { img: null, cells: 0 };
@@ -2000,7 +2015,7 @@ const LQ = {
     g.putImageData(img, 0, 0);
     // the live book on the right edge: bids green, asks red
     if (p.book && this.sideNow) {
-      const s = this.sideNow, maxW = W * 0.12; let mx = 0;
+      const s0 = this.sideNow, s = fine && s0.fbid ? { lo: s0.flo, bid: s0.fbid, ask: s0.fask } : s0, maxW = W * 0.12; let mx = 0;
       for (let i = 0; i < s.bid.length; i++) mx = Math.max(mx, s.bid[i], s.ask[i]);
       if (mx > 0) {
         g.globalAlpha = 0.55;
@@ -2019,7 +2034,7 @@ const LQ = {
     const hm = `${pad(since.getHours())}:${pad(since.getMinutes())}`, xr = W - 8 * hr - (p.book ? W * 0.12 : 0);
     const txt = [`Order book heatmap · Binance · since ${hm}`, `Order book · since ${hm}`].find(t => g.measureText(t).width < xr - 8 * hr);
     if (txt) g.fillText(txt, xr, H - 6 * vr);
-    return { img: off, cells: n };
+    return { img: off, cells: n, fine };
   },
 };
 setInterval(() => { LQ.sync(); LQ.sample(); }, 1000);
