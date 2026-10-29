@@ -58,6 +58,7 @@ Object.assign(ICON, {
   arrowdown: '<path d="M12 20l7-8h-4V4H9v8H5z"/>',
   daterange: '<path d="M4 4v16M20 4v16M6 12h12"/><path d="M9 9l-3 3 3 3M15 9l3 3-3 3"/>',
   pricerange: '<path d="M4 4h16M4 20h16M12 6v12"/><path d="M9 9l3-3 3 3M9 15l3 3 3-3"/>',
+  frvp: '<path d="M4 3v18M20 3v18"/><path d="M4 7h6M4 10h10M4 13h13M4 16h8M4 19h4" stroke-width="2.2"/>',
   chev: '<path d="M10 7l5 5-5 5"/>',
 });
 // The toolbar keeps the original tools as buttons; each group button opens a list of more tools.
@@ -66,7 +67,7 @@ const TOOL_GROUPS = [
   { id: 'shapes', name: 'Shapes and brushes', after: 'rect', tools: [['ellipse', 'Ellipse'], ['triangle', 'Triangle'], ['brush', 'Brush'], ['highlighter', 'Highlighter']] },
   { id: 'fibs', name: 'Fibonacci, channels and pitchforks', after: 'fib', tools: [['fibext', 'Trend-based Fib extension'], ['fibtime', 'Fib time zones'], ['channel', 'Parallel channel'], ['regchan', 'Regression trend'], ['pitchfork', 'Pitchfork']] },
   { id: 'notes', name: 'Text and marks', after: 'fib', tools: [['text', 'Text'], ['pricelabel', 'Price label'], ['arrowup', 'Arrow mark up'], ['arrowdown', 'Arrow mark down']] },
-  { id: 'ranges', name: 'Ranges', after: 'measure', tools: [['daterange', 'Date range'], ['pricerange', 'Price range']] },
+  { id: 'ranges', name: 'Ranges', after: 'measure', tools: [['daterange', 'Date range'], ['pricerange', 'Price range'], ['frvp', 'Fixed range volume profile']] },
 ];
 const TOOLS_1PT = ['hray', 'vline', 'cross', 'text', 'pricelabel', 'arrowup', 'arrowdown'];
 const TOOLS_3PT = ['channel', 'pitchfork', 'fibext', 'triangle'];
@@ -1756,6 +1757,264 @@ function drawVolumeProfiles(m, W, H) {
   }
 }
 
+/* ---------- more volume profiles: a fixed range you draw, and one profile per session ----------
+   Both use the same calculation as the visible-range profile (vpCompute): each bar's volume spread over its high–low
+   range, split into buying (up bars) and selling (down bars), with the point of control and the 70% value area. */
+Object.assign(IND, {
+  svp: { cat: 'volume', label: 'Volume Profile (each session)', alias: 'session volume profile svp poc value area daily', nocolor: true, short: p => `SVP ${p.rows}`,
+    desc: 'A volume profile for each trading session (each day; for US stocks, each New York trading day), with its point of control. For timeframes shorter than a day.',
+    params: [{ k: 'rows', label: 'Rows', def: 24, min: 6, max: 100, step: 1 }, { k: 'va', label: 'Value area (%)', def: 70, min: 10, max: 95, step: 1 }, { k: 'width', label: 'Width (% of the session)', def: 70, min: 10, max: 100, step: 5 }],
+    series: [], compute: () => [] },
+});
+const FRVP_ROWS = 24, FRVP_VA = 70;
+function frvpBars(d) {   // the chart's bars between the drawing's two times
+  const a = Math.min(d.p1.t, d.p2 ? d.p2.t : d.p1.t), z = Math.max(d.p1.t, d.p2 ? d.p2.t : d.p1.t);
+  return S.bars.filter(b => b.time >= a && b.time <= z);
+}
+function frvpOf(d) { const B = frvpBars(d); return { B, vp: B.length >= 2 ? vpCompute(B, FRVP_ROWS, FRVP_VA) : null }; }
+function vpRows(vp, m, xa, maxW, va, alphaIn, alphaOut) {   // the histogram, growing to the right from xa
+  for (let r = 0; r < vp.tot.length; r++) {
+    const yTop = m.y(vp.lo + (r + 1) * vp.step), yBot = m.y(vp.lo + r * vp.step); if (yTop == null || yBot == null) continue;
+    const h = Math.max(1, Math.abs(yBot - yTop) - 1), y = Math.min(yTop, yBot) + 0.5, inVa = va && r >= vp.vaLo && r <= vp.vaHi;
+    const wu = (vp.up[r] / vp.max) * maxW, wd = (vp.dn[r] / vp.max) * maxW;
+    octx.fillStyle = alpha(C.up, inVa ? alphaIn : alphaOut); octx.fillRect(xa, y, wu, h);
+    octx.fillStyle = alpha(C.down, inVa ? alphaIn : alphaOut); octx.fillRect(xa + wu, y, wd, h);
+  }
+}
+function drawFrvp(d, m, W, H, sel, draft, col, x1, y1, x2, y2) {
+  const xa = Math.min(x1, x2), xb = Math.max(x1, x2), { vp } = frvpOf(d);
+  const hd = (x, y) => { if (sel || draft) handle(x, y, col); };
+  if (!vp) {   // too few bars, or a market without volume
+    octx.fillStyle = alpha(col, 0.08); octx.fillRect(xa, Math.min(y1, y2), xb - xa, Math.abs(y2 - y1) || 1);
+    octx.strokeStyle = col; octx.lineWidth = 1; seg(x1, 0, x1, H); seg(x2, 0, x2, H);
+    octx.font = `500 11px ${FONT_DATA}`; octx.fillStyle = C.muted; octx.textAlign = 'left'; octx.textBaseline = 'top';
+    octx.fillText(hasVolume(frvpBars(d)) ? 'Pick a wider range' : 'No volume for this market', xa + 4, Math.min(y1, y2) + 4);
+    hd(x1, y1); hd(x2, y2); return;
+  }
+  const yHi = m.y(vp.hi), yLo = m.y(vp.lo); if (yHi == null || yLo == null) return;
+  octx.fillStyle = alpha(col, 0.05); octx.fillRect(xa, yHi, xb - xa, yLo - yHi);
+  octx.strokeStyle = alpha(col, 0.55); octx.lineWidth = 1; octx.strokeRect(xa + 0.5, yHi + 0.5, Math.max(1, xb - xa - 1), Math.max(1, yLo - yHi - 1));
+  vpRows(vp, m, xa, Math.max(30, (xb - xa) * 0.7), true, 0.5, 0.2);
+  const yp = m.y(vp.lo + (vp.poc + 0.5) * vp.step), yvh = m.y(vp.lo + (vp.vaHi + 1) * vp.step), yvl = m.y(vp.lo + vp.vaLo * vp.step);
+  octx.lineWidth = 1.5; octx.strokeStyle = C.accent; if (yp != null) seg(xa, yp, xb, yp);
+  octx.lineWidth = 1; octx.setLineDash([4, 3]); octx.strokeStyle = alpha(C.fg, 0.55); if (yvh != null) seg(xa, yvh, xb, yvh); if (yvl != null) seg(xa, yvl, xb, yvl); octx.setLineDash([]);
+  octx.font = `500 10.5px ${FONT_DATA}`; octx.textBaseline = 'middle'; octx.textAlign = 'left';
+  const lbl = (y, t, c) => { if (y == null) return; octx.fillStyle = c; octx.fillText(t, xb + 4, y); };
+  if (xb + 60 < W) { lbl(yp, `POC ${fmtP(vp.lo + (vp.poc + 0.5) * vp.step)}`, C.accent); lbl(yvh, `VAH ${fmtP(vp.lo + (vp.vaHi + 1) * vp.step)}`, C.muted); lbl(yvl, `VAL ${fmtP(vp.lo + vp.vaLo * vp.step)}`, C.muted); }
+  hd(x1, y1); hd(x2, y2);
+}
+function hitFrvp(d, x, y, m, x1, y1, x2, y2) {
+  const xa = Math.min(x1, x2) - 4, xb = Math.max(x1, x2) + 4; if (x < xa || x > xb) return Infinity;
+  const { vp } = frvpOf(d);
+  const ya = vp ? m.y(vp.hi) : Math.min(y1, y2), yb = vp ? m.y(vp.lo) : Math.max(y1, y2);
+  return ya != null && yb != null && y >= Math.min(ya, yb) - 4 && y <= Math.max(ya, yb) + 4 ? 0 : Infinity;
+}
+// one profile per session: UTC days for crypto, forex and the rest; New York trading days for US stocks
+function sessKey(id, t) { if (classOf(id) === 'stock') { const p = ny(t); return p.y * 10000 + p.m * 100 + p.d; } return Math.floor(t / DAY); }
+const SVP = { last: [] };
+function drawSessionProfiles(m, W, H) {
+  SVP.last = [];
+  const list = S.rts.filter(r => r.inst.type === 'svp' && !r.inst.hidden); if (!list.length || !S.bars.length || isBrick(S.type)) return;
+  if (tfOf(S.tf).sec >= DAY) return;   // a daily bar is a whole session already
+  const B = S.bars, i0 = Math.max(0, Math.floor(m.L(0)) - 1), i1 = Math.min(B.length - 1, Math.ceil(m.L(W)) + 1); if (i1 < i0) return;
+  // whole sessions that show on screen
+  let a = i0, z = i1; const k0 = sessKey(S.symbol, B[a].time), k1 = sessKey(S.symbol, B[z].time);
+  while (a > 0 && sessKey(S.symbol, B[a - 1].time) === k0) a--;
+  while (z < B.length - 1 && sessKey(S.symbol, B[z + 1].time) === k1) z++;
+  const groups = []; let cur = null;
+  for (let i = a; i <= z; i++) { const k = sessKey(S.symbol, B[i].time); if (!cur || cur.k !== k) { cur = { k, i: i, j: i }; groups.push(cur); } else cur.j = i; }
+  for (const rt of list) {
+    const p = rt.inst.params;
+    for (const g of groups) {
+      const bars = B.slice(g.i, g.j + 1), vp = bars.length >= 2 ? vpCompute(bars, p.rows, p.va) : null; if (!vp) continue;
+      const xa = m.x(bars[0].time) - m.sp / 2, xb = m.x(bars[bars.length - 1].time) + m.sp / 2; if (xb < 0 || xa > W) continue;
+      vpRows(vp, m, xa, ((xb - xa) * p.width) / 100, true, 0.42, 0.16);
+      const yp = m.y(vp.lo + (vp.poc + 0.5) * vp.step);
+      if (yp != null) { octx.strokeStyle = C.accent; octx.lineWidth = 1.3; octx.setLineDash([]); seg(xa, yp, xb, yp); }
+      octx.strokeStyle = alpha(C.fg, 0.18); octx.lineWidth = 1; octx.setLineDash([3, 4]); seg(xa, 0, xa, H); octx.setLineDash([]);
+      SVP.last.push({ k: g.k, from: bars[0].time, to: bars[bars.length - 1].time, poc: vp.lo + (vp.poc + 0.5) * vp.step, rows: vp.tot.length });
+    }
+  }
+}
+
+/* ---------- liquidity heatmap: the order book's resting orders over time, drawn behind the candles ----------
+   The page keeps its own copy of Binance's order book (a snapshot, then every change from the depth stream, as Binance
+   describes for a local order book) and, once a second, records how much is waiting to be bought or sold at each
+   price. Binance doesn't publish past order books, so the map builds up while the chart is open. */
+const LQ_KEEP = 2 * 3600;   // seconds of history kept (one column a second)
+const LQ_RAMP = [[0, 20, 40, 110, 0], [0.12, 25, 45, 130, 120], [0.35, 0, 120, 200, 175], [0.62, 60, 200, 160, 205], [0.82, 245, 205, 50, 230], [1, 255, 252, 225, 245]];
+function lqColor(k) {   // dark blue through cyan and yellow to white, like an order book heatmap
+  k = clamp(k, 0, 1); let i = 1; while (i < LQ_RAMP.length - 1 && LQ_RAMP[i][0] < k) i++;
+  const a = LQ_RAMP[i - 1], b = LQ_RAMP[i], f = (k - a[0]) / (b[0] - a[0] || 1);
+  return [0, 1, 2, 3].map(j => a[j + 1] + (b[j + 1] - a[j + 1]) * f);
+}
+function lqNice(v) { const p = 10 ** Math.floor(Math.log10(v)), x = v / p; return (x <= 1 ? 1 : x <= 2 ? 2 : x <= 2.5 ? 2.5 : x <= 5 ? 5 : 10) * p; }
+Object.assign(IND, {
+  liq: { cat: 'volume', label: 'Liquidity heatmap (order book)', alias: 'liquidity heatmap order book depth bookmap walls limit orders', nocolor: true, short: () => 'Liquidity',
+    desc: 'The order book’s waiting buy and sell orders at each price, over time, behind the candles: brighter means more. Crypto from Binance; it builds up while the chart is open, and shows best on short timeframes.',
+    params: [{ k: 'range', label: 'Price range (± %)', def: 1, min: 0.25, max: 10, step: 0.25 }, { k: 'contrast', label: 'Contrast', def: 5, min: 1, max: 10, step: 1 }, { k: 'book', label: 'Live book on the right (1 on, 0 off)', def: 1, min: 0, max: 1, step: 1 }],
+    series: [], compute: () => [] },
+});
+const LQ = {
+  sym: null, ws: null, bids: new Map(), asks: new Map(), lastId: 0, ready: false, buf: [], snapBusy: false, snapAt: 0, snaps: 0, resyncs: 0,
+  cols: [], bin: 0, since: 0, sideNow: null, prim: null, primOn: null, req: null, cache: null, told: '', drawnCells: 0, waitT: null,
+  rt() { return S.rts.find(r => r.inst.type === 'liq' && !r.inst.hidden) || null; },
+  ok(id) { return srcOf(id) === 'binance' && Live.name === 'Binance' && !!Binance.wss; },
+  sync() {   // start, follow or stop the order book to match the chart
+    const rt = this.rt(), want = rt && !R.on && !isBrick(S.type) && this.ok(S.symbol) ? S.symbol : null;
+    if (rt && !this.ok(S.symbol) && this.told !== S.symbol) { this.told = S.symbol; toast(`The liquidity heatmap works on crypto charts from Binance; ${label(S.symbol)} has no public order book here.`); }
+    if (want !== this.sym) { this.stop(); if (want) this.start(want); }
+    this.attach();
+  },
+  start(id) {
+    this.sym = id; this.cols = []; this.bin = 0; this.since = Date.now(); this.told = '';
+    const raw = rawOf(id).toLowerCase();
+    // As Binance describes: open the stream first, keep its changes, and fetch the snapshot once the first one arrives.
+    this.ws = sock(`${Binance.wss}/ws/${raw}@depth@1000ms`, m => this.onDiff(m), 'binance');
+    this.ws.onReconnect = () => { this.ready = false; this.buf = []; };
+  },
+  stop() {
+    if (this.ws) { try { this.ws.close(); } catch (e) { /* gone */ } }
+    clearTimeout(this.waitT); this.waitT = null; this.snapAt = 0;
+    this.ws = null; this.sym = null; this.ready = false; this.bids.clear(); this.asks.clear(); this.buf = []; this.cols = []; this.sideNow = null; this.cache = null;
+    if (this.req) this.req();
+  },
+  async resync() {   // a fresh snapshot; stream changes wait in the buffer meanwhile
+    if (!this.sym || this.snapBusy) return;
+    if (Date.now() - this.snapAt < 5000) { if (!this.waitT) this.waitT = setTimeout(() => { this.waitT = null; this.resync(); }, 5000 - (Date.now() - this.snapAt)); return; }   // the snapshot costs Binance allowance: at most every 5 s
+    this.snapBusy = true; this.ready = false; this.snapAt = Date.now(); const id = this.sym;
+    try {
+      const r = await fetchT(`${Binance.rest}/api/v3/depth?symbol=${rawOf(id)}&limit=5000`, 12000);
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json(); if (id !== this.sym) return;
+      this.bids = new Map(j.bids.map(([p, q]) => [+p, +q])); this.asks = new Map(j.asks.map(([p, q]) => [+p, +q]));
+      this.lastId = j.lastUpdateId; this.snaps++;
+      const buf = this.buf; this.buf = []; this.ready = true;
+      for (const e of buf) if (!this.apply(e)) return;
+    } catch (e) { if (!this.waitT) this.waitT = setTimeout(() => { this.waitT = null; this.resync(); }, 8000); }
+    finally { this.snapBusy = false; }
+  },
+  onDiff(e) {
+    if (!e || e.e !== 'depthUpdate' || !this.sym || rawOf(this.sym) !== e.s) return;
+    if (!this.ready) { this.buf.push(e); if (this.buf.length > 120) this.buf.shift(); if (!this.snapBusy && !this.waitT) this.resync(); return; }
+    this.apply(e);
+  },
+  apply(e) {   // Binance's rules for a local order book: skip what the snapshot has, resync on a gap
+    if (e.u <= this.lastId) return true;
+    if (e.U > this.lastId + 1) { this.resyncs++; this.ready = false; this.buf = [e]; this.resync(); return false; }
+    for (const [p, q] of e.b) { const k = +p, v = +q; if (v) this.bids.set(k, v); else this.bids.delete(k); }
+    for (const [p, q] of e.a) { const k = +p, v = +q; if (v) this.asks.set(k, v); else this.asks.delete(k); }
+    this.lastId = e.u;
+    return true;
+  },
+  sample() {   // once a second: how much waits at each price near the market
+    const rt = this.rt(); if (!this.ready || !rt || !this.sym) return;
+    let bb = -Infinity, ba = Infinity;
+    for (const p of this.bids.keys()) if (p > bb) bb = p;
+    for (const p of this.asks.keys()) if (p < ba) ba = p;
+    if (!isFinite(bb) || !isFinite(ba)) return;
+    const mid = (bb + ba) / 2, rng = rt.inst.params.range / 100;
+    if (!this.bin) this.bin = lqNice(mid * 0.0002);
+    const bin = this.bin, lo = Math.floor((mid * (1 - rng)) / bin), hi = Math.ceil((mid * (1 + rng)) / bin), n = hi - lo + 1;
+    if (n <= 0 || n > 4000) return;
+    const arr = new Float32Array(n), bid = new Float32Array(n), ask = new Float32Array(n);
+    for (const [p, q] of this.bids) { const i = Math.floor(p / bin) - lo; if (i >= 0 && i < n) { arr[i] += p * q; bid[i] += p * q; } }
+    for (const [p, q] of this.asks) { const i = Math.floor(p / bin) - lo; if (i >= 0 && i < n) { arr[i] += p * q; ask[i] += p * q; } }
+    // keep the book from growing without end: drop levels far from the market
+    if (this.bids.size + this.asks.size > 30000) { const far = mid * 0.2; for (const m of [this.bids, this.asks]) for (const p of m.keys()) if (Math.abs(p - mid) > far) m.delete(p); }
+    const t = Math.floor(Date.now() / 1000);
+    if (this.cols.length && this.cols[this.cols.length - 1].t === t) this.cols.pop();
+    this.cols.push({ t, lo, arr, mid });
+    while (this.cols.length && this.cols[0].t < t - LQ_KEEP) this.cols.shift();
+    this.sideNow = { lo, bid, ask, mid };
+    if (this.req) this.req();
+  },
+  attach() {   // the drawing lives on the main price series, under the candles
+    if (!S.main || !this.rt()) { if (this.prim && this.primOn) { try { this.primOn.detachPrimitive(this.prim); } catch (e) { /* gone */ } } this.primOn = null; return; }
+    if (this.primOn === S.main) return;
+    if (!this.prim) {
+      const self = this, view = { zOrder: () => 'bottom', renderer: () => ({ draw: target => self.draw(target) }) };
+      this.prim = { attached(p) { self.req = p.requestUpdate; }, detached() { self.req = null; }, updateAllViews() {}, paneViews() { return [view]; } };
+    }
+    if (this.primOn) { try { this.primOn.detachPrimitive(this.prim); } catch (e) { /* gone */ } }
+    try { S.main.attachPrimitive(this.prim); this.primOn = S.main; } catch (e) { this.primOn = null; }
+  },
+  draw(target) {
+    const rt = this.rt(); this.drawnCells = 0;
+    if (!rt || !this.cols.length || R.on || isBrick(S.type) || this.sym !== S.symbol || !S.bars.length) return;
+    target.useBitmapCoordinateSpace(sc => {
+      const ctx = sc.context, hr = sc.horizontalPixelRatio, vr = sc.verticalPixelRatio, W = sc.bitmapSize.width, H = sc.bitmapSize.height;
+      const ts = chart.timeScale(), sp = ts.options().barSpacing, vis = ts.getVisibleLogicalRange(); if (!vis) return;
+      const key = [W, H, vis.from.toFixed(2), vis.to.toFixed(2), S.main.coordinateToPrice(0), S.main.coordinateToPrice(H / vr), this.cols.length, this.cols[this.cols.length - 1].t, S.bars.length, rt.inst.params.contrast, rt.inst.params.book, document.documentElement.dataset.theme || ''].join('|');
+      if (!this.cache || this.cache.key !== key) this.cache = Object.assign(this.render(W, H, hr, vr, sp, vis, rt.inst.params), { key });
+      if (this.cache.img) ctx.drawImage(this.cache.img, 0, 0);
+      this.drawnCells = this.cache.cells;
+    });
+  },
+  render(W, H, hr, vr, sp, vis, p) {
+    const B = S.bars, bin = this.bin, i0 = Math.max(0, Math.floor(vis.from) - 1), i1 = Math.min(B.length - 1, Math.ceil(vis.to) + 1);
+    if (!bin || i1 < i0) return { img: null, cells: 0 };
+    // each visible bar's columns, averaged per price step
+    const firstT = B[i0].time, groups = new Map();
+    for (const c of this.cols) {
+      if (c.t < firstT) continue;
+      const j = rpIndexFor(B, c.t); if (j < i0 || j > i1) continue;
+      let g = groups.get(j); if (!g) { g = []; groups.set(j, g); } g.push(c);
+    }
+    if (!groups.size) return { img: null, cells: 0 };
+    const cells = []; const vals = [];
+    for (const [j, cs] of groups) {
+      let lo = Infinity, hi = -Infinity; for (const c of cs) { lo = Math.min(lo, c.lo); hi = Math.max(hi, c.lo + c.arr.length - 1); }
+      const acc = new Float32Array(hi - lo + 1); for (const c of cs) for (let i = 0; i < c.arr.length; i++) acc[c.lo - lo + i] += c.arr[i];
+      for (let i = 0; i < acc.length; i++) acc[i] /= cs.length;
+      cells.push({ j, lo, acc }); for (let i = 0; i < acc.length; i++) if (acc[i] > 0) vals.push(acc[i]);
+    }
+    if (!vals.length) return { img: null, cells: 0 };
+    vals.sort((a, b) => a - b);
+    const top = vals[Math.min(vals.length - 1, Math.floor(vals.length * (0.995 - p.contrast * 0.012)))] || vals[vals.length - 1];
+    const off = document.createElement('canvas'); off.width = W; off.height = H;
+    const g = off.getContext('2d'), img = g.createImageData(W, H), px = img.data;
+    const yOf = price => { const y = S.main.priceToCoordinate(price); return y == null ? null : y * vr; };
+    let n = 0;
+    for (const { j, lo, acc } of cells) {
+      const xc = chart.timeScale().timeToCoordinate(B[j].time); if (xc == null) continue;
+      const xa = Math.max(0, Math.round((xc - sp / 2) * hr)), xb = Math.min(W, Math.round((xc + sp / 2) * hr)); if (xb <= xa) continue;
+      for (let i = 0; i < acc.length; i++) {
+        const v = acc[i]; if (!(v > 0)) continue;
+        const yt = yOf((lo + i + 1) * bin), yb = yOf((lo + i) * bin); if (yt == null || yb == null) continue;
+        let ya = Math.max(0, Math.round(Math.min(yt, yb))), yz = Math.min(H, Math.round(Math.max(yt, yb))); if (yz <= ya) { if (ya >= H) continue; yz = ya + 1; }
+        const [r, gg, bb, a] = lqColor(Math.pow(Math.min(1, v / top), 0.55)); if (a < 3) continue;
+        n++;
+        for (let y = ya; y < yz; y++) { let o = (y * W + xa) * 4; for (let x = xa; x < xb; x++, o += 4) { if (a > px[o + 3]) { px[o] = r; px[o + 1] = gg; px[o + 2] = bb; px[o + 3] = a; } } }
+      }
+    }
+    g.putImageData(img, 0, 0);
+    // the live book on the right edge: bids green, asks red
+    if (p.book && this.sideNow) {
+      const s = this.sideNow, maxW = W * 0.12; let mx = 0;
+      for (let i = 0; i < s.bid.length; i++) mx = Math.max(mx, s.bid[i], s.ask[i]);
+      if (mx > 0) {
+        g.globalAlpha = 0.55;
+        for (let i = 0; i < s.bid.length; i++) {
+          const v = s.bid[i] || s.ask[i]; if (!v) continue;
+          const yt = yOf((s.lo + i + 1) * bin), yb = yOf((s.lo + i) * bin); if (yt == null || yb == null) continue;
+          g.fillStyle = s.bid[i] ? C.up : C.down; const w = (v / mx) * maxW;
+          g.fillRect(W - w, Math.min(yt, yb), w, Math.max(1, Math.abs(yb - yt) - 1));
+        }
+        g.globalAlpha = 1;
+      }
+    }
+    // how long the map has been building
+    const since = new Date(this.since);
+    g.font = `${Math.round(10.5 * vr)}px ${FONT_DATA}`; g.fillStyle = alpha(C.muted, 0.9); g.textBaseline = 'bottom'; g.textAlign = 'right';
+    const hm = `${pad(since.getHours())}:${pad(since.getMinutes())}`, xr = W - 8 * hr - (p.book ? W * 0.12 : 0);
+    const txt = [`Order book heatmap · Binance · since ${hm}`, `Order book · since ${hm}`].find(t => g.measureText(t).width < xr - 8 * hr);
+    if (txt) g.fillText(txt, xr, H - 6 * vr);
+    return { img: off, cells: n };
+  },
+};
+setInterval(() => { LQ.sync(); LQ.sample(); }, 1000);
+
 function normInst(inst) {
   const def = IND[inst && inst.type]; if (!def) return null;
   const params = {};
@@ -2246,7 +2505,7 @@ function drawOverlay(m) {
   const W = ps.width, H = ps.height;
   octx.save(); octx.beginPath(); octx.rect(0, 0, W, H); octx.clip();
   if (S.idea && S.idea.symbol === S.symbol) drawIdeaLayer(m, W, H);
-  drawPnf(m, W, H); drawVolumeProfiles(m, W, H);
+  drawPnf(m, W, H); drawVolumeProfiles(m, W, H); drawSessionProfiles(m, W, H);
   for (const d of curDrawings()) drawShape(d, m, W, H, d.id === S.selected, false);
   if (S.draft && S.draft.type !== 'measure') drawShape(S.draft, m, W, H, false, true);
   const meas = S.draft && S.draft.type === 'measure' ? S.draft : S.measure;
@@ -2535,6 +2794,7 @@ Object.assign(HINTS, {
   arrowup: ['Click where the arrow points'],
   arrowdown: ['Click where the arrow points'],
   daterange: ['Click where the range starts', 'Click where it ends'],
+  frvp: ['Click the first bar of the range', 'Click the last bar'],
   pricerange: ['Click the first price', 'Click the second price'],
 });
 const FIB_EXT = [[0, null], [0.382, '#e8902e'], [0.618, '#13a3b8'], [1, '#3aa76d'], [1.272, '#9b5de5'], [1.618, '#e2494f'], [2, '#3f7fe6'], [2.618, '#d8487f']];
@@ -2696,6 +2956,7 @@ function drawShape2(d, m, W, H, sel, draft, col, x1, y1, x2, y2) {
       if (sel) { octx.strokeStyle = C.fg; octx.lineWidth = 1; octx.stroke(); }
       break;
     }
+    case 'frvp': drawFrvp(d, m, W, H, sel, draft, col, x1, y1, x2, y2); break;
     case 'daterange': case 'pricerange': {
       const xa = Math.min(x1, x2), ya = Math.min(y1, y2), w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
       octx.fillStyle = alpha(col, 0.12); octx.fillRect(xa, ya, w, h);
@@ -2750,6 +3011,7 @@ function hitExtra(d, x, y, m, x1, y1, x2, y2, segDist) {   // how far (in pixels
       return y >= Math.min(...ys) - 4 && y <= Math.max(...ys) + 4 ? 0 : Infinity;
     }
     case 'fibtime': { const unit = x2 - x1; return Math.min(...FIB_TIME.map(k => Math.abs(x - (x1 + unit * k)))); }
+    case 'frvp': return hitFrvp(d, x, y, m, x1, y1, x2, y2);
     case 'ellipse': case 'daterange': case 'pricerange': {
       if (d.type === 'ellipse') { const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, rx = Math.abs(x2 - x1) / 2 + 4, ry = Math.abs(y2 - y1) / 2 + 4; return ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1 ? 0 : Infinity; }
       return x >= Math.min(x1, x2) - 4 && x <= Math.max(x1, x2) + 4 && y >= Math.min(y1, y2) - 4 && y <= Math.max(y1, y2) + 4 ? 0 : Infinity;

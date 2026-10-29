@@ -112,25 +112,29 @@ Signals are read when a bar closes and filled at the next bar's open. Optional s
 
 ## Indicators
 
-The **Indicators** button lists 67 indicators in five groups, with a search box:
+The **Indicators** button lists 69 indicators in five groups, with a search box:
 
 - **Moving averages:** SMA, EMA, WMA, Hull, Double EMA, Triple EMA, Smoothed, Volume Weighted, Arnaud Legoux, Least Squares, McGinley Dynamic, Moving Average Ribbon, Envelope.
 - **Trend:** Ichimoku Cloud, Parabolic SAR, SuperTrend, ADX/DMI, Aroon, Vortex, Williams Alligator, Choppiness Index, Zig Zag, Williams Fractals.
 - **Oscillators:** RSI, MACD, Stochastic, Stochastic RSI, CCI, Williams %R, Rate of Change, Awesome Oscillator, Detrended Price Oscillator, TRIX, Price Oscillator, Ultimate Oscillator, True Strength Index, Momentum, Balance of Power, Chande Momentum, Coppock Curve, Know Sure Thing, Fisher Transform, Relative Vigor Index, Bull Bear Power, Connors RSI.
 - **Volatility:** Bollinger Bands, Keltner Channels, Donchian Channels, ATR, Bollinger BandWidth, Bollinger Bands %B, Standard Deviation, Historical Volatility, Mass Index.
-- **Volume:** Volume, VWAP, On Balance Volume, Money Flow Index, Chaikin Money Flow, Accumulation/Distribution, Chaikin Oscillator, Price Volume Trend, Ease of Movement, Volume Oscillator, Klinger Oscillator, Elder Force Index, Volume Profile (visible range).
+- **Volume:** Volume, VWAP, On Balance Volume, Money Flow Index, Chaikin Money Flow, Accumulation/Distribution, Chaikin Oscillator, Price Volume Trend, Ease of Movement, Volume Oscillator, Klinger Oscillator, Elder Force Index, Volume Profile (visible range), Volume Profile (each session), Liquidity heatmap (order book).
+
+**Volume profiles.** Three kinds, like TradingView's: *Volume Profile (visible range)* for the bars on screen, *Volume Profile (each session)* with one profile per day (per New York trading day for US stocks), and the *Fixed range volume profile* drawing tool (in the Ranges group of the toolbar) for any stretch of bars you pick. Each shows buying and selling volume at each price, the point of control (the most traded price) and the 70% value area. Forex and gold from OANDA count price changes (tick volume), as TradingView does for them.
+
+**Liquidity heatmap (order book).** For crypto charts from Binance: the order book's waiting buy and sell orders at each price, drawn behind the candles over time, darker blue for little and yellow to white for a lot, with the current book as bars on the right. The page keeps its own copy of Binance's order book (a snapshot of 5,000 levels a side, then every change from Binance's depth stream). Binance doesn't publish past order books, so the map builds up while the chart is open, and it shows best on short timeframes (seconds to 15 minutes). Its settings choose how far from the price to show (± %), the contrast and the live book.
 
 Up to 50 can be on a chart. Each can be shown, hidden, recoloured or set up from its name on the chart, and the formulas follow the usual TradingView defaults. With many indicators on the chart, the list of names can be folded away with the small arrow under them.
 
 ## Drawing tools
 
-The toolbar on the left has 29 drawing tools, plus the price alert tool. The main ones sit on the bar; the rest open from small groups next to them:
+The toolbar on the left has 30 drawing tools, plus the price alert tool. The main ones sit on the bar; the rest open from small groups next to them:
 
 - **Lines:** trend line, ray, horizontal line, extended line, info line, arrow, horizontal ray, vertical line, cross line.
 - **Shapes:** rectangle, ellipse, triangle, brush, highlighter.
 - **Fibonacci, channels and pitchforks:** Fib retracement, trend-based Fib extension, Fib time zones, parallel channel, regression trend, pitchfork.
 - **Text and marks:** text, price label, arrow marks up and down.
-- **Measuring and ranges:** measure, date range, price range, long and short positions.
+- **Measuring and ranges:** measure, date range, price range, fixed range volume profile, long and short positions.
 
 Drawings are saved with the chart and can go into published ideas.
 
