@@ -592,3 +592,5 @@ export class CTHub {
     await this.ctx.storage.setAlarm(Date.now() + 12 * 3600000);
   }
 }
+
+// Build trigger: cTrader (FP Markets) go-live, 2026-11-01.
