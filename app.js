@@ -4856,6 +4856,14 @@ const CT_ALIAS = {
 const CT_REGION_MSG = "The broker's prices aren't available in your country, so these markets use other price sources.";
 const CT_REGION_NOTE = 'Not shown in the United States, Canada, the European Economic Area, India, Russia and other restricted countries.';
 const ctNorm = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+// cTrader reports a raw server code (e.g. "fpmarketsstl"); show the broker's real name instead.
+const CT_BROKERS = [['fpmarkets', 'FP Markets'], ['icmarkets', 'IC Markets'], ['pepperstone', 'Pepperstone'], ['tickmill', 'Tickmill'], ['fxpro', 'FxPro'], ['vantage', 'Vantage'], ['axi', 'Axi']];
+function ctBrokerName(raw) {
+  if (!raw) return '';
+  const k = String(raw).toLowerCase().replace(/[^a-z0-9]/g, '');
+  for (const [key, name] of CT_BROKERS) if (k.includes(key)) return name;
+  return raw;   // unknown broker: show whatever it reported
+}
 const CT = {
   state: 'off', broker: '', live: false, map: {}, rev: {}, refs: {}, refsAt: 0, syncAt: 0, busy: false, fails: 0,
   configured() { return !!API; },
@@ -4886,7 +4894,7 @@ const CT = {
     this.state = 'ok'; this.fails = 0;
   },
   index(j) {
-    this.broker = j.broker || 'cTrader'; this.live = !!j.live; this.map = {}; this.rev = {};
+    this.broker = ctBrokerName(j.broker) || 'cTrader'; this.live = !!j.live; this.map = {}; this.rev = {};
     SRC_NAME.ctrader = this.broker;   // the broker name on its own, as TradingView shows it
     const keys = {};
     for (const s of j.symbols || []) {
