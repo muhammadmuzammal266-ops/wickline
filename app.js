@@ -4887,7 +4887,7 @@ const CT = {
   },
   index(j) {
     this.broker = j.broker || 'cTrader'; this.live = !!j.live; this.map = {}; this.rev = {};
-    SRC_NAME.ctrader = `cTrader · ${this.broker}`;
+    SRC_NAME.ctrader = this.broker;   // the broker name on its own, as TradingView shows it
     const keys = {};
     for (const s of j.symbols || []) {
       const n = ctNorm(s.name), base = ctNorm(String(s.name).split(/[._]/)[0]);
@@ -5571,7 +5571,7 @@ function renderFeed() {
     if (src === 'demo') { state = 'demo'; lbl = 'Not live'; }
     else if (src === 'binance' || src === 'paxg') { state = conn.binance === 'reconnecting' ? 'reconnecting' : 'live'; lbl = state !== 'live' ? 'Reconnecting' : src === 'paxg' ? 'Live · PAXG' : 'Live · ' + Live.name; }
     else if (src === 'oanda') { state = 'live'; lbl = 'Live · OANDA'; }
-    else if (src === 'ctrader') { state = 'live'; lbl = 'Live · cTrader'; }
+    else if (src === 'ctrader') { state = 'live'; lbl = 'Live · ' + (CT.broker || 'cTrader'); }
     else if (src === 'metal') { state = 'live'; lbl = 'Live price'; }
     else if (src === 'kraken') { state = 'live'; lbl = S.symbol === GOLD ? 'Live · PAXG' : 'Live · Kraken'; }
     else { state = 'live'; lbl = 'Live · Twelve Data'; }
@@ -5621,7 +5621,7 @@ function renderSources() {
   // forex, indices and commodities from a cTrader broker
   if (CT.configured() && CT.state !== 'off') {
     const xb = el('div', 'src'), xh = el('div', 'src-h');
-    xh.append(el('b', null, `Forex, indices & commodities · cTrader${CT.broker ? ' (' + CT.broker + ')' : ''}`), CT.active() ? stateChip(CTLive.ws && !CTLive.live ? 'Connecting' : 'Connected', CTLive.ws && !CTLive.live ? 'warn' : 'ok') : CT.state === 'region' ? stateChip('Not in your country', 'warn') : stateChip("Can't reach cTrader", 'warn'));
+    xh.append(el('b', null, `Forex, indices & commodities · ${CT.broker || 'cTrader'}`), CT.active() ? stateChip(CTLive.ws && !CTLive.live ? 'Connecting' : 'Connected', CTLive.ws && !CTLive.live ? 'warn' : 'ok') : CT.state === 'region' ? stateChip('Not in your country', 'warn') : stateChip("Can't reach cTrader", 'warn'));
     xb.append(xh, el('p', 'fine', CT.active()
       ? `Live prices for ${Object.keys(CT.map).length} of the site’s markets come from ${CT.broker}’s cTrader feed, through the site’s own helper. These are the broker’s prices, which follow the market closely.`
       : CT.state === 'region' ? `${CT_REGION_MSG} ${CT_REGION_NOTE}` : 'The site’s cTrader prices aren’t answering right now, so these markets use the sources below. They come back by themselves.'));
