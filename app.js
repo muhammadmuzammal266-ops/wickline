@@ -3849,6 +3849,7 @@ const AL_COND_T = Object.fromEntries(AL_CONDS);
 function alCond(a) { return AL_COND_T[a.cond] ? a.cond : (a.dir === 'below' ? 'down' : a.dir === 'above' ? 'up' : 'cross'); }   // legacy alerts used dir
 function alDesc(a) { return `${AL_COND_T[alCond(a)]} ${fmtP(a.price, precFor(a.sym, a.price))}`; }
 function openAlertDlg(price) {
+  if (Auth.enabled() && !Auth.user) { toast('Sign in to set alerts, so they follow you across your devices.'); openSignIn(); return; }
   const id = S.symbol, last = lastPrice(id);
   const v = isFinite(price) && price > 0 ? price : last;
   $('#alDlgSym').textContent = label(id);
@@ -3869,6 +3870,7 @@ if ($('#alertForm')) $('#alertForm').addEventListener('submit', e => {
 
 function lastPrice(id) { const t = S.tickers[id]; if (t) return t.last; const a = R.on ? R.full : (S.raw || S.bars); if (id === S.symbol && a.length) return a[a.length - 1].close; return null; }
 function createAlert(id, price, opts) {
+  if (Auth.enabled() && !Auth.user) { toast('Sign in to set alerts, so they follow you across your devices.'); openSignIn(); return; }
   const last = lastPrice(id);
   if (last == null || !isFinite(price) || price <= 0) { toast('Prices are still loading. Try again in a moment.'); return; }
   const prec = precFor(id, last); price = Number(price.toFixed(prec));
@@ -3914,7 +3916,7 @@ function renderAlerts() {
   const list = $('#alList'); list.replaceChildren();
   const active = S.alerts.filter(a => !a.hit).length;
   $('#alCount').textContent = S.alerts.length ? String(active) : '';
-  if (!S.alerts.length) { list.append(el('li', 'empty', 'No alerts yet. Use “Create alert”, the quick box below, or the bell tool on the chart.')); return; }
+  if (!S.alerts.length) { list.append(el('li', 'empty', (Auth.enabled() && !Auth.user) ? 'Sign in to set price alerts that follow you across your devices.' : 'No alerts yet. Use “Create alert”, the quick box below, or the bell tool on the chart.')); return; }
   const items = S.alerts.slice().sort((a, b) => (!!a.hit - !!b.hit) || b.at - a.at);
   for (const a of items) {
     const li = el('li', 'al-item' + (a.hit ? ' hit' : ''));
@@ -10082,6 +10084,7 @@ const TA = {
   minSec(id) { return srcOf(id) === 'td' ? 900 : 60; },   // stocks use the small Twelve Data allowance
   tfs(id) { return tfAll().filter(t => tfOf(t).u !== 's' && tfOf(t).sec >= this.minSec(id)); },
   open() {
+    if (Auth.enabled() && !Auth.user) { toast('Sign in to set alerts, so they follow you across your devices.'); openSignIn(); return; }
     if (srcOf(S.symbol) === 'demo') { toast(`Indicator alerts need live prices, and ${label(S.symbol)} shows saved prices right now.`); return; }
     if (this.list.filter(a => !a.hit).length >= TA_MAX) { toast(`You have ${TA_MAX} indicator alerts, the most there can be. Remove some to add more.`); return; }
     const tfs = this.tfs(S.symbol), tf = tfs.includes(S.tf) ? S.tf : tfs.find(t => tfOf(t).sec >= tfOf(S.tf).sec) || tfs[0];
