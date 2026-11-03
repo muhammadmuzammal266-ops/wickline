@@ -166,6 +166,8 @@ The calculator button at the top right works out how big a trade to take: enter 
 
 People can keep up to 20 watchlists. Click the watchlist's name to switch, make a new one, copy, rename or delete one. Up to 1,000 price alerts can be set; they're checked while the site is open.
 
+**Price alerts.** The **Create alert** button in the Alerts card opens a dialog like TradingView's: pick a condition — *Crossing*, *Crossing up*, *Crossing down*, *Greater than* or *Less than* — a price, and how often it fires: **Once only** (fires one time, then stops) or **Every time** (fires again on each cross, or about once a minute while a greater/less-than condition holds). The quick price box under it still adds a one‑time crossing alert in one step, and the bell tool opens the same dialog with the price you click already filled in. Active alerts show as a dashed line on the chart; each one pops up, beeps and (if allowed) sends a desktop notification when it triggers.
+
 **Alert on indicators** (in the Alerts card) sets up to 100 alerts on indicator conditions, using the same rules as the strategy tester, for example "RSI 14 crosses above 70 on BTCUSDT 1h". Each alert watches its own market and timeframe, whatever the chart shows, and is checked when each bar closes, once or every time. They need live prices; for stocks the shortest timeframe is 15 minutes, to stay within Twelve Data's free allowance.
 
 ## Trade journal

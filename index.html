@@ -436,6 +436,14 @@ body.book-on .app{grid-template-columns:42px minmax(0,1fr) 250px 304px;grid-temp
 .ta-opts{display:flex;gap:10px;flex-wrap:wrap}
 .ta-opts label{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted)}
 .ta-opts #taName{width:220px}
+#alertDlg{width:min(420px,calc(100vw - 24px))}
+.al-dlg-sym{font:500 13px var(--font-data);color:var(--muted);margin-left:6px}
+.al-dlg-body{display:flex;flex-direction:column;gap:12px;padding:14px 16px}
+.al-cond-row{display:flex;gap:8px}
+.al-cond-row .selwrap{flex:1;min-width:0}
+.al-cond-row select{width:100%}
+.al-new{width:100%;justify-content:center}
+.al-freq{margin-left:6px;font-size:10px;font-weight:600;color:var(--accent);background:var(--accent-soft);padding:1px 6px;border-radius:999px;vertical-align:middle}
 /* journal */
 .journal{grid-column:1/-1;grid-row:2/-1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px}
 .j-head{display:flex;align-items:flex-end;gap:10px 16px;flex-wrap:wrap;padding:6px 4px 2px}
@@ -1519,6 +1527,7 @@ a.h-btn.primary{color:var(--panel)}
         <label for="alPrice" id="alLabel">Alert me when BTCUSDT crosses</label>
         <div class="al-row"><input class="field" id="alPrice" inputmode="decimal" autocomplete="off" placeholder="Price"><button class="primary" type="submit">Add</button></div>
         <p class="fine">Alerts check prices while this page is open.</p>
+        <button class="ghost al-new" id="alNew" type="button">+ Create alert</button>
         <button class="ghost ta-new" id="taNew" type="button">+ Alert on indicators</button>
       </form>
       <ul class="ta-list" id="taList" hidden></ul>
@@ -1875,6 +1884,17 @@ a.h-btn.primary{color:var(--panel)}
   </div>
 </dialog>
 
+<dialog id="alertDlg" aria-labelledby="alDlgTitle">
+  <div class="dlg-h"><h2 id="alDlgTitle">Create alert <span class="al-dlg-sym" id="alDlgSym"></span></h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <form class="al-dlg-body" id="alertForm" novalidate>
+    <label class="t-f"><span>Condition</span><span class="al-cond-row"><span class="selwrap"><select class="field" id="alCondKind" aria-label="What to watch"><option>Price</option></select></span><span class="selwrap"><select class="field" id="alCond" aria-label="Condition"><option value="cross">Crossing</option><option value="up">Crossing up</option><option value="down">Crossing down</option><option value="gt">Greater than</option><option value="lt">Less than</option></select></span></span></label>
+    <label class="t-f"><span>Value</span><input class="field" id="alVal" inputmode="decimal" autocomplete="off" placeholder="Price"></label>
+    <label class="t-f"><span>Trigger</span><span class="selwrap"><select class="field" id="alFreq"><option value="once">Once only</option><option value="every">Every time</option></select></span></label>
+    <p class="fine">“Once only” fires one time then stops. “Every time” fires again on each cross, or about once a minute while the condition holds. Alerts check prices while this page is open.</p>
+    <p class="fine" id="alDlgMsg" aria-live="polite"></p>
+    <div class="t-actions"><span class="spacer"></span><button class="ghost" type="button" data-close>Cancel</button><button class="primary" type="submit">Create</button></div>
+  </form>
+</dialog>
 <dialog id="taDlg" aria-labelledby="taTitle">
   <div class="dlg-h"><h2 id="taTitle">Indicator alert</h2><button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <form class="ta-body" id="taForm" novalidate>
@@ -2039,7 +2059,7 @@ a.h-btn.primary{color:var(--panel)}
 <script src="vendor/lightweight-charts-5.1.0.js"></script>
 <script src="vendor/supabase-js-2.117.2.js"></script>
 <script src="config.js"></script>
-<script src="app.js?v=20b3fa40e7"></script>
+<script src="app.js?v=989be5e70a"></script>
 
 </body>
 </html>

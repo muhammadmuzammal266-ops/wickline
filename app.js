@@ -3370,7 +3370,7 @@ function placeAt(x, y) {
   const pt = pointAt(x, y, true); if (!pt) return;
   const t = S.tool;
   if (t === 'hline') { addDrawing({ type: 'hline', p1: pt }); finishTool(); return; }
-  if (t === 'alert') { const ap = pointAt(x, y, false); if (ap) createAlert(S.symbol, ap.p); finishTool(); return; }
+  if (t === 'alert') { const ap = pointAt(x, y, false); finishTool(); if (ap) openAlertDlg(ap.p); return; }
   if (placeExtra(t, pt)) return;
   if (BRUSHES.includes(t)) return;
   if (!S.draft) { S.draft = { type: t, p1: pt, p2: pt }; setHint(); markDirty(); return; }
@@ -3843,28 +3843,65 @@ function notify(title, body) {
   try { if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification(title, { body, icon: 'icon-192.png' }); }
   catch (e) { /* some phones only allow notifications from installed apps */ }
 }
+/* ---------- Create-alert dialog: TradingView-style price alerts (condition + once/every) ---------- */
+const AL_CONDS = [['cross', 'Crossing'], ['up', 'Crossing up'], ['down', 'Crossing down'], ['gt', 'Greater than'], ['lt', 'Less than']];
+const AL_COND_T = Object.fromEntries(AL_CONDS);
+function alCond(a) { return AL_COND_T[a.cond] ? a.cond : (a.dir === 'below' ? 'down' : a.dir === 'above' ? 'up' : 'cross'); }   // legacy alerts used dir
+function alDesc(a) { return `${AL_COND_T[alCond(a)]} ${fmtP(a.price, precFor(a.sym, a.price))}`; }
+function openAlertDlg(price) {
+  const id = S.symbol, last = lastPrice(id);
+  const v = isFinite(price) && price > 0 ? price : last;
+  $('#alDlgSym').textContent = label(id);
+  $('#alVal').value = v != null && isFinite(v) ? String(Number(v.toFixed(precFor(id, v || 1)))) : '';
+  $('#alCond').value = 'cross'; $('#alFreq').value = 'once'; $('#alDlgMsg').textContent = '';
+  $('#alertDlg').showModal(); setTimeout(() => { $('#alVal').focus(); $('#alVal').select(); }, 0);
+}
+if ($('#alNew')) $('#alNew').onclick = () => openAlertDlg();
+if ($('#alertForm')) $('#alertForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const v = parseFloat(String($('#alVal').value).replace(/,/g, ''));
+  if (!isFinite(v) || v <= 0) { $('#alDlgMsg').textContent = 'Enter a price above zero.'; $('#alVal').focus(); return; }
+  const cond = AL_COND_T[$('#alCond').value] ? $('#alCond').value : 'cross';
+  const freq = $('#alFreq').value === 'every' ? 'every' : 'once';
+  $('#alertDlg').close();
+  createAlert(S.symbol, v, { cond, freq });
+});
+
 function lastPrice(id) { const t = S.tickers[id]; if (t) return t.last; const a = R.on ? R.full : (S.raw || S.bars); if (id === S.symbol && a.length) return a[a.length - 1].close; return null; }
-function createAlert(id, price) {
+function createAlert(id, price, opts) {
   const last = lastPrice(id);
   if (last == null || !isFinite(price) || price <= 0) { toast('Prices are still loading. Try again in a moment.'); return; }
-  const dir = price >= last ? 'above' : 'below';
-  const prec = precFor(id, last);
-  price = Number(price.toFixed(prec));
+  const prec = precFor(id, last); price = Number(price.toFixed(prec));
   if (S.alerts.length >= 1000) { toast('You have 1,000 alerts, the most there can be. Remove some to add more.'); return; }
-  S.alerts.push({ id: uid(), sym: id, price, dir, at: Date.now(), hit: null });
+  opts = opts || {};
+  const cond = AL_COND_T[opts.cond] ? opts.cond : (price >= last ? 'up' : 'down');   // a bare price keeps the old "crosses toward it" feel
+  const freq = opts.freq === 'every' ? 'every' : 'once';
+  S.alerts.push({ id: uid(), sym: id, price, cond, freq, at: Date.now(), hit: null });
   store.set('alerts', S.alerts); renderAlerts(); syncAlertLines(); ensureTickerSubs();
-  toast(`Alert set: ${label(id)} crossing ${dir} ${fmtP(price, prec)}`);
+  toast(`Alert set: ${label(id)} ${AL_COND_T[cond].toLowerCase()} ${fmtP(price, prec)}${freq === 'every' ? ' · every time' : ''}`);
   askNotify();
 }
-function checkAlerts(id, last) {
+function checkAlerts(id, last, prev) {
   let changed = false;
   for (const a of S.alerts) {
     if (a.sym !== id || a.hit) continue;
-    if ((a.dir === 'above' && last >= a.price) || (a.dir === 'below' && last <= a.price)) {
-      a.hit = Date.now(); changed = true;
-      const msg = `${label(id)} crossed ${a.dir} ${fmtP(a.price, precFor(id, a.price))}`;
-      toast(msg, 'alert'); beep(); notify(`${label(id)} price alert`, `${msg}. Last price ${fmtP(last, precFor(id, last))}.`);
+    const lvl = a.price, cond = alCond(a), freq = a.freq || 'once';
+    let fire = false;
+    if (cond === 'gt' || cond === 'lt') {
+      const met = cond === 'gt' ? last > lvl : last < lvl;
+      if (met) {
+        if (freq === 'every') fire = !a.lastFire || Date.now() - a.lastFire >= 60000;   // repeat about once a minute while it holds
+        else { const was = prev != null && (cond === 'gt' ? prev > lvl : prev < lvl); fire = !was; }   // once: only as it becomes true
+      }
+    } else if (prev != null) {
+      const upC = prev < lvl && last >= lvl, dnC = prev > lvl && last <= lvl;
+      fire = cond === 'cross' ? (upC || dnC) : cond === 'up' ? upC : dnC;
     }
+    if (!fire) continue;
+    const msg = `${label(id)} ${AL_COND_T[cond].toLowerCase()} ${fmtP(lvl, precFor(id, lvl))}`;
+    toast(msg, 'alert'); beep(); notify(`${label(id)} price alert`, `${msg}. Last price ${fmtP(last, precFor(id, last))}.`);
+    if (freq === 'every') a.lastFire = Date.now(); else a.hit = Date.now();
+    changed = true;
   }
   if (changed) { store.set('alerts', S.alerts); renderAlerts(); syncAlertLines(); }
 }
@@ -3877,12 +3914,13 @@ function renderAlerts() {
   const list = $('#alList'); list.replaceChildren();
   const active = S.alerts.filter(a => !a.hit).length;
   $('#alCount').textContent = S.alerts.length ? String(active) : '';
-  if (!S.alerts.length) { list.append(el('li', 'empty', 'No alerts yet. Add one below, or pick the bell tool and click the chart.')); return; }
+  if (!S.alerts.length) { list.append(el('li', 'empty', 'No alerts yet. Use “Create alert”, the quick box below, or the bell tool on the chart.')); return; }
   const items = S.alerts.slice().sort((a, b) => (!!a.hit - !!b.hit) || b.at - a.at);
   for (const a of items) {
     const li = el('li', 'al-item' + (a.hit ? ' hit' : ''));
     const txt = el('div');
-    txt.append(el('div', 's', label(a.sym)), el('div', 'c', `Crosses ${a.dir} ${fmtP(a.price, precFor(a.sym, a.price))}`));
+    const c = el('div', 'c', alDesc(a)); if ((a.freq || 'once') === 'every') c.append(el('span', 'al-freq', 'every time'));
+    txt.append(el('div', 's', label(a.sym)), c);
     const chip = el('span', 'chip' + (a.hit ? '' : ' live'), a.hit ? `Hit ${pad(new Date(a.hit).getHours())}:${pad(new Date(a.hit).getMinutes())}` : 'Active');
     const rm = el('button', 'wl-x'); rm.innerHTML = svg('x'); rm.style.opacity = 1; rm.setAttribute('aria-label', `Delete alert for ${label(a.sym)}`);
     rm.onclick = () => { S.alerts = S.alerts.filter(x => x.id !== a.id); store.set('alerts', S.alerts); renderAlerts(); syncAlertLines(); };
@@ -4085,7 +4123,7 @@ function onTicker(t) {
   updateWatchRow(t.sym, prev);
   if (t.sym === S.symbol) renderDetails();
   Home.onTicker(t); MC.onTicker(t); MK.onTicker(t);
-  if (!t.stand) { checkAlerts(t.sym, t.last); Paper.onPrice(t.sym); }   // a saved stand-in price never sets off an alert or fills an order
+  if (!t.stand) { checkAlerts(t.sym, t.last, prev ? prev.last : null); Paper.onPrice(t.sym); }   // a saved stand-in price never sets off an alert or fills an order
 }
 function tickerSet() { const set = new Set(S.watch); set.add(S.symbol); S.alerts.forEach(a => { if (!a.hit) set.add(a.sym); }); Paper.symbols().forEach(id => set.add(id)); Home.symbols().forEach(id => set.add(id)); MC.symbols().forEach(id => set.add(id)); MK.symbols().forEach(id => set.add(id)); return Array.from(set); }
 
@@ -5875,7 +5913,7 @@ function cleanState(d) {   // saved data is checked before it's used, whatever i
   if (Array.isArray(d.ind)) o.ind = d.ind.filter(x => isObj(x) && typeof x.type === 'string').slice(0, 50);
   if (Array.isArray(d.tpls)) o.tpls = tplClean(d.tpls);
   if (Array.isArray(d.talerts)) o.talerts = d.talerts.map(taClean).filter(Boolean).slice(0, TA_MAX);
-  if (Array.isArray(d.alerts)) o.alerts = d.alerts.filter(x => isObj(x) && isId(x.sym) && typeof x.price === 'number' && isFinite(x.price) && (x.dir === 'above' || x.dir === 'below')).slice(0, 1000);
+  if (Array.isArray(d.alerts)) o.alerts = d.alerts.filter(x => isObj(x) && isId(x.sym) && typeof x.price === 'number' && isFinite(x.price) && x.price > 0 && (!x.cond || ['cross', 'up', 'down', 'gt', 'lt'].includes(x.cond)) && (!x.dir || x.dir === 'above' || x.dir === 'below') && (!x.freq || x.freq === 'once' || x.freq === 'every')).slice(0, 1000);
   if (isId(d.symbol)) o.symbol = d.symbol;
   if (tfValid(d.tf)) o.tf = d.tf;
   if (Array.isArray(d.tffav)) o.tffav = Array.from(new Set(d.tffav.filter(tfValid))).slice(0, 30);
