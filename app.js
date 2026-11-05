@@ -4074,7 +4074,7 @@ function renderDetails() {
   const t = S.tickers[id];
   $('#dName').textContent = nameOf(id) + (t && t.exchange ? ' · ' + t.exchange : '');
   $('#dFeed').textContent = !src ? '' : src === 'demo' ? 'Saved price · not live' : src === 'binance' ? `${Live.name} · Spot` : src === 'paxg' ? `${Live.name} · PAXG/USDT` : src === 'metal' ? 'gold-api.com · live' : src === 'kraken' ? `Kraken · ${id === GOLD ? 'PAXG/USD' : rawOf(id)}`
-    : src === 'oanda' ? 'OANDA · live' : `Twelve Data · ${kindOf(id)}`;
+    : src === 'ctrader' ? `${CT.broker} · cTrader` : src === 'oanda' ? 'OANDA · live' : `Twelve Data · ${kindOf(id)}`;
   $('#alLabel').textContent = `Alert me when ${label(id)} crosses`;
   const open = openNow(id), allDay = cls === 'crypto' || src === 'paxg' || (src === 'kraken' && id === GOLD), roll24 = cls === 'crypto' || src === 'paxg';
   const mk = $('#dMkt'); mk.className = 'mkt' + (open ? ' open' : '');
@@ -10222,7 +10222,14 @@ const Push = {
     }
     return sub;
   },
-  activeAlerts() { return S.alerts.filter(a => !a.hit).map(a => ({ id: a.id, sym: a.sym, cond: alCond(a), price: a.price, freq: a.freq || 'once' })); },
+  activeAlerts() {
+    return S.alerts.filter(a => !a.hit).map(a => {
+      const o = { id: a.id, sym: a.sym, cond: alCond(a), price: a.price, freq: a.freq || 'once' };
+      const m = typeof CT !== 'undefined' && CT.map && CT.map[a.sym];   // the broker's symbol id, so the watcher uses FP Markets prices
+      if (m && m.id) o.ct = m.id;
+      return o;
+    });
+  },
   async sync() {
     if (!this.on || !Auth.user || !this.supported()) return;
     let sub; try { sub = await this.ensure(); } catch (e) { return; }   // re-subscribe if needed (e.g. after a reload)

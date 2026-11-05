@@ -605,7 +605,7 @@ export class CTHub {
 
 /* ================= Web Push: phone/desktop notifications when an alert hits =================
    The site registers a push subscription and sends its active alerts here. A once-a-minute
-   scheduled run fetches prices (Binance for crypto, OANDA for forex/metals/indices/commodities,
+   scheduled run fetches prices (Binance for crypto, FP Markets (cTrader) for forex/metals/indices/commodities,
    Twelve Data for US stocks), spots the crossings, and pushes a notification to each device.
    Keys and subscriptions live in the PUSH Durable Object; nothing is a secret you manage. */
 
@@ -676,7 +676,7 @@ async function sendOnePush(sub, payloadObj, vapid) {
 
 // ---- prices for the scheduled check ----
 function pushClassOf(id) { return id.startsWith('US:') ? 'stock' : id.startsWith('FX:') ? 'forex' : id.startsWith('BINANCE:') ? 'crypto' : (id.includes(':') ? 'other' : 'crypto'); }
-async function pushPrices(env, ids) {
+async function pushPrices(env, ids, ctMap) {
   const out = {};
   const crypto_ = ids.filter(i => pushClassOf(i) === 'crypto'), fx = ids.filter(i => pushClassOf(i) === 'forex'), st = ids.filter(i => pushClassOf(i) === 'stock');
   if (crypto_.length) {
@@ -688,15 +688,19 @@ async function pushPrices(env, ids) {
       for (const i of crypto_) { const p = by[i.split(':')[1]]; if (p > 0) out[i] = p; }
     } catch (e) { /* skip crypto this tick */ }
   }
-  if (fx.length && env.OANDA_TOKEN) {
-    try {
-      const where = await locate(env);
-      const insts = fx.map(i => i.slice(3).replace('/', '_'));
-      const u = `${rest(where.env)}/v3/accounts/${where.account}/pricing?instruments=${encodeURIComponent(insts.join(','))}`;
-      const j = await (await fetch(u, { headers: { Authorization: `Bearer ${env.OANDA_TOKEN}` } })).json();
-      const by = {}; for (const p of (j && j.prices) || []) { const bid = +((p.bids && p.bids[0] && p.bids[0].price) || p.closeoutBid), ask = +((p.asks && p.asks[0] && p.asks[0].price) || p.closeoutAsk); if (bid > 0 && ask > 0) by[p.instrument] = (bid + ask) / 2; }
-      for (const i of fx) { const p = by[i.slice(3).replace('/', '_')]; if (p > 0) out[i] = p; }
-    } catch (e) { /* skip forex this tick */ }
+  // Forex, metals, indices and commodities: the broker's own prices (FP Markets via cTrader), the same feed the chart
+  // shows. The client sends the broker's symbol id with each alert; we read the latest 1-minute close from the hub.
+  if (fx.length && env.CT_HUB) {
+    const hub = env.CT_HUB.get(env.CT_HUB.idFromName('hub'));
+    const byCt = {};
+    for (const i of fx) { const c = ctMap && ctMap[i]; if (c) (byCt[c] = byCt[c] || []).push(i); }
+    await Promise.all(Object.keys(byCt).map(async ct => {
+      try {
+        const j = await (await hub.fetch('https://hub/bars?id=' + encodeURIComponent(ct) + '&tf=1m&count=2')).json();
+        const bars = j && j.bars, close = bars && bars.length ? +bars[bars.length - 1].close : 0;
+        if (close > 0) for (const i of byCt[ct]) out[i] = close;
+      } catch (e) { /* skip this symbol this tick */ }
+    }));
   }
   if (st.length && env.TD_KEY) {
     try {
@@ -751,7 +755,7 @@ export class PushHub {
       const key = 'sub:' + b.sub.endpoint;
       const old = await this.ctx.storage.get(key) || { fired: {} };
       const alerts = b.alerts.filter(a => a && typeof a.price === 'number' && isFinite(a.price) && a.price > 0 && typeof a.sym === 'string').slice(0, 1000)
-        .map(a => ({ id: String(a.id || ''), sym: a.sym, cond: ['cross', 'up', 'down', 'gt', 'lt'].includes(a.cond) ? a.cond : 'cross', price: a.price, freq: a.freq === 'every' ? 'every' : 'once' }));
+        .map(a => ({ id: String(a.id || ''), sym: a.sym, cond: ['cross', 'up', 'down', 'gt', 'lt'].includes(a.cond) ? a.cond : 'cross', price: a.price, freq: a.freq === 'every' ? 'every' : 'once', ct: Number.isFinite(+a.ct) && +a.ct > 0 ? +a.ct : undefined }));
       const ids = new Set(alerts.map(a => a.id)), fired = {};
       for (const k in (old.fired || {})) if (ids.has(k)) fired[k] = old.fired[k];   // keep fired state for alerts still present
       await this.ctx.storage.put(key, { sub: b.sub, alerts, fired, at: Date.now() });
@@ -776,7 +780,9 @@ export class PushHub {
     const syms = new Set();
     for (const rec of subsMap.values()) for (const a of rec.alerts || []) if (!(a.freq === 'once' && rec.fired && rec.fired[a.id])) syms.add(a.sym);
     if (!syms.size) return 0;
-    const prices = await pushPrices(this.env, [...syms]);
+    const ctMap = {};
+    for (const rec of subsMap.values()) for (const al of rec.alerts || []) if (al.ct) ctMap[al.sym] = al.ct;
+    const prices = await pushPrices(this.env, [...syms], ctMap);
     const prev = (await this.ctx.storage.get('px')) || {};
     const vapid = await this.vapid();
     let sent = 0; const writes = [];
