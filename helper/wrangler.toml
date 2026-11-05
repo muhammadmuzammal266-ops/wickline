@@ -10,6 +10,19 @@ keep_vars = true   # keep ALLOWED_ORIGIN and the other settings made in the dash
 name = "CT_HUB"
 class_name = "CTHub"
 
+# Holds push subscriptions + alerts and watches prices for phone/desktop notifications.
+[[durable_objects.bindings]]
+name = "PUSH"
+class_name = "PushHub"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["CTHub"]   # SQLite storage: the kind the free plan offers
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["PushHub"]
+
+# Check alerts once a minute and send notifications.
+[triggers]
+crons = ["* * * * *"]

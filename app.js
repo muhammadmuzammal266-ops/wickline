@@ -10197,5 +10197,69 @@ async function boot() {
   MK.ready();
   await first;
 }
+/* ---------- Phone/desktop push notifications: alerts that reach you when the site is closed ---------- */
+function pushApi() { return (CFG.proxy || '').replace(/\/$/, ''); }
+function b64uToU8(s) { s = String(s).replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; const b = atob(s), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; }
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+const Push = {
+  reg: null, syncT: null,
+  supported() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && !!pushApi(); },
+  get on() { return !!store.get('pushOn', false); },
+  async init() {
+    if (!this.supported()) { this.render(); return; }
+    try { this.reg = await navigator.serviceWorker.register('/sw.js'); } catch (e) { this.reg = null; }
+    this.render();
+    if (this.on && Auth.user) { try { await this.ensure(); await this.sync(); } catch (e) { /* retry on next change */ } }
+  },
+  async ensure() {   // make sure this browser has a push subscription
+    if (!this.reg) this.reg = await navigator.serviceWorker.ready;
+    let sub = await this.reg.pushManager.getSubscription();
+    if (!sub) {
+      const j = await (await fetch(pushApi() + '/push/key')).json();
+      if (!j || !j.key) throw new Error('no key');
+      sub = await this.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToU8(j.key) });
+    }
+    return sub;
+  },
+  activeAlerts() { return S.alerts.filter(a => !a.hit).map(a => ({ id: a.id, sym: a.sym, cond: alCond(a), price: a.price, freq: a.freq || 'once' })); },
+  async sync() {
+    if (!this.on || !Auth.user || !this.supported()) return;
+    let sub; try { sub = await this.ensure(); } catch (e) { return; }   // re-subscribe if needed (e.g. after a reload)
+    if (!sub) return;
+    try { await fetch(pushApi() + '/push/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sub: sub.toJSON(), alerts: this.activeAlerts() }) }); } catch (e) { /* next time */ }
+  },
+  syncSoon() { if (!this.on) return; clearTimeout(this.syncT); this.syncT = setTimeout(() => this.sync(), 1200); },
+  async enable() {
+    if (!Auth.user) { toast('Sign in first, then you can turn on phone notifications.'); openSignIn(); return; }
+    if (!this.supported()) { toast('This browser can’t show push notifications.'); return; }
+    if (isIOS && !isStandalone()) { toast('On iPhone, first add RealChart to your Home Screen (Share → Add to Home Screen), then open it from there and turn this on.'); this.render(); return; }
+    let perm;
+    try { perm = await Notification.requestPermission(); } catch (e) { perm = Notification.permission; }
+    if (perm !== 'granted') { toast('Allow notifications to get alerts on this device.'); return; }
+    try { await this.ensure(); store.raw('pushOn', true); await this.sync(); toast('Phone notifications on. Alerts will reach this device even when the site is closed.'); }
+    catch (e) { toast('Couldn’t turn on notifications here. Try again in a moment.'); store.raw('pushOn', false); }
+    this.render();
+  },
+  async disable() {
+    store.raw('pushOn', false);
+    try { const sub = this.reg && await this.reg.pushManager.getSubscription(); if (sub) { await fetch(pushApi() + '/push/off', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {}); await sub.unsubscribe().catch(() => {}); } } catch (e) { /* ignore */ }
+    toast('Phone notifications off on this device.'); this.render();
+  },
+  toggle() { this.on ? this.disable() : this.enable(); },
+  render() {
+    const btn = $('#pushBtn'), ios = $('#pushIos'); if (!btn) return;
+    const show = this.supported() && !!Auth.user;
+    btn.hidden = !show;
+    if (show) { btn.classList.toggle('on', this.on); btn.setAttribute('aria-pressed', String(this.on)); btn.textContent = this.on ? '🔔 Phone notifications: on' : '🔕 Phone notifications: off'; }
+    if (ios) ios.hidden = !(show && isIOS && !isStandalone());
+  },
+};
+if ($('#pushBtn')) $('#pushBtn').onclick = () => Push.toggle();
+// keep the server's copy of each device's alerts in step with the chart
+(function () { const _ra = renderAlerts; renderAlerts = function () { _ra.apply(this, arguments); try { Push.syncSoon(); } catch (e) { /* ignore */ } }; })();
+(function () { const _ar = Auth.render.bind(Auth); Auth.render = function () { _ar(); try { Push.render(); if (Push.on && Auth.user) Push.syncSoon(); } catch (e) { /* ignore */ } }; })();
+Push.init();
+
 boot();
 })();

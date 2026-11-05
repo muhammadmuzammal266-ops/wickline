@@ -128,6 +128,11 @@ async function ctRoute(request, env, url, reply, json) {
 }
 
 export default {
+  async scheduled(event, env, ctx) {
+    if (!env.PUSH) return;
+    const hub = env.PUSH.get(env.PUSH.idFromName('hub'));
+    ctx.waitUntil(hub.fetch(new Request('https://hub/tick', { method: 'POST' })));
+  },
   async fetch(request, env) {
     // ALLOWED_ORIGIN can list several addresses, separated by commas (for example the site's own domain and www).
     const allowedList = String(env.ALLOWED_ORIGIN || '*').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean);
@@ -145,8 +150,9 @@ export default {
     };
     const reply = (body, status, type) => new Response(body, { status, headers: Object.assign({ 'Content-Type': type || 'text/plain; charset=utf-8' }, cors) });
     const json = (obj, status) => reply(JSON.stringify(obj), status, 'application/json');
-    if (request.method === 'OPTIONS') return new Response(null, { headers: cors });
-    if (request.method !== 'GET') return reply('Only GET is allowed.', 405);
+    const isPush = new URL(request.url).pathname.startsWith('/push/');
+    if (request.method === 'OPTIONS') return new Response(null, { headers: Object.assign({}, cors, { 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Accept-Datetime-Format' }) });
+    if (request.method !== 'GET' && !(request.method === 'POST' && isPush)) return reply('Only GET is allowed.', 405);
 
     // Browsers on other websites are turned away (scripts can't be stopped this way, which is what the limits are for).
     if (from && !anyOrigin && !allowedList.includes(from)) return reply('Not allowed from this website.', 403);
@@ -155,6 +161,7 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/') return reply('RealChart helper is running.', 200);
+    if (isPush) return pushRoute(request, env, url, cors);
     if (url.pathname.startsWith('/ct/')) return ctRoute(request, env, url, reply, json);
 
     // ----- Twelve Data: /td/quote and /td/time_series -----
@@ -594,3 +601,216 @@ export class CTHub {
 }
 
 // Build trigger: cTrader (FP Markets) go-live, 2026-11-01.
+
+
+/* ================= Web Push: phone/desktop notifications when an alert hits =================
+   The site registers a push subscription and sends its active alerts here. A once-a-minute
+   scheduled run fetches prices (Binance for crypto, OANDA for forex/metals/indices/commodities,
+   Twelve Data for US stocks), spots the crossings, and pushes a notification to each device.
+   Keys and subscriptions live in the PUSH Durable Object; nothing is a secret you manage. */
+
+const PUSH_COND_T = { cross: 'crossing', up: 'crossing up', down: 'crossing down', gt: 'above', lt: 'below' };
+
+function b64uToBytes(s) {
+  s = String(s).replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '=';
+  const bin = atob(s), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a;
+}
+function bytesToB64u(a) {
+  a = a instanceof Uint8Array ? a : new Uint8Array(a); let s = ''; for (let i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+const utf8 = s => new TextEncoder().encode(s);
+function concatBytes(...arrs) { let n = 0; for (const a of arrs) n += a.length; const o = new Uint8Array(n); let i = 0; for (const a of arrs) { o.set(a, i); i += a.length; } return o; }
+
+async function hmacSha256(keyBytes, dataBytes) {
+  const k = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', k, dataBytes));
+}
+async function hkdf(salt, ikm, info, len) {   // one-block expand is enough (len <= 32 here)
+  const prk = await hmacSha256(salt, ikm);
+  const t = await hmacSha256(prk, concatBytes(info, new Uint8Array([1])));
+  return t.slice(0, len);
+}
+
+// RFC 8291 / RFC 8188 (aes128gcm). Returns the request body bytes.
+async function encryptPush(uaPublicB64u, authB64u, plaintext) {
+  const uaPublic = b64uToBytes(uaPublicB64u), authSecret = b64uToBytes(authB64u);
+  const eph = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const asPublic = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey));   // 65 bytes
+  const uaKey = await crypto.subtle.importKey('raw', uaPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const ecdh = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: uaKey }, eph.privateKey, 256));
+  // combine the shared secret with the auth secret (RFC 8291)
+  const keyInfo = concatBytes(utf8('WebPush: info\0'), uaPublic, asPublic);
+  const ikm = await hkdf(authSecret, ecdh, keyInfo, 32);
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const cek = await hkdf(salt, ikm, utf8('Content-Encoding: aes128gcm\0'), 16);
+  const nonce = await hkdf(salt, ikm, utf8('Content-Encoding: nonce\0'), 12);
+  const key = await crypto.subtle.importKey('raw', cek, { name: 'AES-GCM' }, false, ['encrypt']);
+  const record = concatBytes(plaintext, new Uint8Array([2]));   // 0x02 = last record delimiter
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, key, record));
+  const rs = new Uint8Array(4); new DataView(rs.buffer).setUint32(0, 4096);
+  const header = concatBytes(salt, rs, new Uint8Array([asPublic.length]), asPublic);
+  return concatBytes(header, ct);
+}
+
+async function vapidToken(endpoint, jwk) {
+  const aud = new URL(endpoint).origin;
+  const head = bytesToB64u(utf8(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+  const body = bytesToB64u(utf8(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: 'mailto:alerts@realchart.trade' })));
+  const signingInput = utf8(head + '.' + body);
+  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, signingInput));   // raw r||s, 64 bytes
+  return head + '.' + body + '.' + bytesToB64u(sig);
+}
+
+async function sendOnePush(sub, payloadObj, vapid) {
+  const body = await encryptPush(sub.keys.p256dh, sub.keys.auth, utf8(JSON.stringify(payloadObj)));
+  const jwt = await vapidToken(sub.endpoint, vapid.jwk);
+  const r = await fetch(sub.endpoint, {
+    method: 'POST',
+    headers: { 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream', TTL: '900', Authorization: `vapid t=${jwt}, k=${vapid.pub}` },
+    body,
+  });
+  return r.status;   // 201 ok; 404/410 = gone (drop it)
+}
+
+// ---- prices for the scheduled check ----
+function pushClassOf(id) { return id.startsWith('US:') ? 'stock' : id.startsWith('FX:') ? 'forex' : id.startsWith('BINANCE:') ? 'crypto' : (id.includes(':') ? 'other' : 'crypto'); }
+async function pushPrices(env, ids) {
+  const out = {};
+  const crypto_ = ids.filter(i => pushClassOf(i) === 'crypto'), fx = ids.filter(i => pushClassOf(i) === 'forex'), st = ids.filter(i => pushClassOf(i) === 'stock');
+  if (crypto_.length) {
+    try {
+      const syms = crypto_.map(i => i.split(':')[1]);
+      const u = `https://data-api.binance.vision/api/v3/ticker/price?symbols=${encodeURIComponent(JSON.stringify(syms))}`;
+      const j = await (await fetch(u)).json();
+      const by = {}; for (const x of j || []) by[x.symbol] = +x.price;
+      for (const i of crypto_) { const p = by[i.split(':')[1]]; if (p > 0) out[i] = p; }
+    } catch (e) { /* skip crypto this tick */ }
+  }
+  if (fx.length && env.OANDA_TOKEN) {
+    try {
+      const where = await locate(env);
+      const insts = fx.map(i => i.slice(3).replace('/', '_'));
+      const u = `${rest(where.env)}/v3/accounts/${where.account}/pricing?instruments=${encodeURIComponent(insts.join(','))}`;
+      const j = await (await fetch(u, { headers: { Authorization: `Bearer ${env.OANDA_TOKEN}` } })).json();
+      const by = {}; for (const p of (j && j.prices) || []) { const bid = +((p.bids && p.bids[0] && p.bids[0].price) || p.closeoutBid), ask = +((p.asks && p.asks[0] && p.asks[0].price) || p.closeoutAsk); if (bid > 0 && ask > 0) by[p.instrument] = (bid + ask) / 2; }
+      for (const i of fx) { const p = by[i.slice(3).replace('/', '_')]; if (p > 0) out[i] = p; }
+    } catch (e) { /* skip forex this tick */ }
+  }
+  if (st.length && env.TD_KEY) {
+    try {
+      const syms = st.map(i => i.split(':')[1]).slice(0, 8);
+      const j = await (await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(syms.join(','))}&apikey=${env.TD_KEY}`)).json();
+      const rows = syms.length === 1 ? { [syms[0]]: j } : j;
+      for (const i of st) { const q = rows && rows[i.split(':')[1]]; const p = q && +q.close; if (p > 0) out[i] = p; }
+    } catch (e) { /* skip stocks this tick */ }
+  }
+  return out;
+}
+
+function pushFires(cond, freq, lvl, last, prev, firedOnce, lastFire) {
+  if (cond === 'gt' || cond === 'lt') {
+    const met = cond === 'gt' ? last > lvl : last < lvl;
+    if (!met) return false;
+    if (freq === 'every') return !lastFire || Date.now() - lastFire >= 60000;
+    const was = prev != null && (cond === 'gt' ? prev > lvl : prev < lvl);
+    return !was && !firedOnce;
+  }
+  if (prev == null) return false;
+  const upC = prev < lvl && last >= lvl, dnC = prev > lvl && last <= lvl;
+  const crossed = cond === 'cross' ? (upC || dnC) : cond === 'up' ? upC : dnC;
+  if (!crossed) return false;
+  return freq === 'every' ? true : !firedOnce;
+}
+
+function fmtPushPrice(p) {
+  const d = p >= 1000 ? 2 : p >= 1 ? 2 : p >= 0.01 ? 4 : 8;
+  return (+p).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+export class PushHub {
+  constructor(ctx, env) { this.ctx = ctx; this.env = env; }
+  async vapid() {
+    let v = await this.ctx.storage.get('vapid');
+    if (!v) {
+      const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+      const jwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
+      const pub = bytesToB64u(new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)));
+      v = { jwk, pub }; await this.ctx.storage.put('vapid', v);
+    }
+    return v;
+  }
+  async fetch(request) {
+    const url = new URL(request.url);
+    const out = (o, s) => new Response(JSON.stringify(o), { status: s || 200, headers: { 'Content-Type': 'application/json' } });
+    if (url.pathname === '/key') { const v = await this.vapid(); return out({ ok: true, key: v.pub }); }
+    if (url.pathname === '/sync') {
+      const b = await request.json().catch(() => null);
+      if (!b || !b.sub || !b.sub.endpoint || !b.sub.keys || !Array.isArray(b.alerts)) return out({ ok: false }, 400);
+      const key = 'sub:' + b.sub.endpoint;
+      const old = await this.ctx.storage.get(key) || { fired: {} };
+      const alerts = b.alerts.filter(a => a && typeof a.price === 'number' && isFinite(a.price) && a.price > 0 && typeof a.sym === 'string').slice(0, 1000)
+        .map(a => ({ id: String(a.id || ''), sym: a.sym, cond: ['cross', 'up', 'down', 'gt', 'lt'].includes(a.cond) ? a.cond : 'cross', price: a.price, freq: a.freq === 'every' ? 'every' : 'once' }));
+      const ids = new Set(alerts.map(a => a.id)), fired = {};
+      for (const k in (old.fired || {})) if (ids.has(k)) fired[k] = old.fired[k];   // keep fired state for alerts still present
+      await this.ctx.storage.put(key, { sub: b.sub, alerts, fired, at: Date.now() });
+      return out({ ok: true, count: alerts.length });
+    }
+    if (url.pathname === '/off') {
+      const b = await request.json().catch(() => null);
+      if (b && b.endpoint) await this.ctx.storage.delete('sub:' + b.endpoint);
+      return out({ ok: true });
+    }
+    if (url.pathname === '/stats') {
+      const subs = await this.ctx.storage.list({ prefix: 'sub:' });
+      let alerts = 0; for (const v of subs.values()) alerts += (v.alerts || []).length;
+      return out({ ok: true, devices: subs.size, alerts });
+    }
+    if (url.pathname === '/tick') { const n = await this.tick(); return out({ ok: true, sent: n }); }
+    return out({ ok: false }, 404);
+  }
+  async tick() {
+    const subsMap = await this.ctx.storage.list({ prefix: 'sub:' });
+    if (!subsMap.size) return 0;
+    const syms = new Set();
+    for (const rec of subsMap.values()) for (const a of rec.alerts || []) if (!(a.freq === 'once' && rec.fired && rec.fired[a.id])) syms.add(a.sym);
+    if (!syms.size) return 0;
+    const prices = await pushPrices(this.env, [...syms]);
+    const prev = (await this.ctx.storage.get('px')) || {};
+    const vapid = await this.vapid();
+    let sent = 0; const writes = [];
+    for (const [key, rec] of subsMap) {
+      let changed = false; const drop = [];
+      for (const a of rec.alerts || []) {
+        const last = prices[a.sym]; if (last == null) continue;
+        const firedOnce = !!(rec.fired && rec.fired[a.id]);
+        if (a.freq === 'once' && firedOnce) continue;
+        if (pushFires(a.cond, a.freq, a.price, last, prev[a.sym], firedOnce, (rec.lastFire || {})[a.id])) {
+          const payload = { title: `${a.sym.split(':').pop()} ${PUSH_COND_T[a.cond]} ${fmtPushPrice(a.price)}`,
+            body: `Last price ${fmtPushPrice(last)}.`, tag: a.id, url: `https://realchart.trade/?s=${encodeURIComponent(a.sym)}` };
+          let st = 0; try { st = await sendOnePush(rec.sub, payload, vapid); } catch (e) { st = 0; }
+          if (st === 404 || st === 410) { drop.push(key); break; }
+          if (st >= 200 && st < 300) {
+            sent++;
+            if (a.freq === 'once') { rec.fired = rec.fired || {}; rec.fired[a.id] = true; } else { rec.lastFire = rec.lastFire || {}; rec.lastFire[a.id] = Date.now(); }
+            changed = true;
+          }
+        }
+      }
+      if (drop.includes(key)) writes.push(this.ctx.storage.delete(key));
+      else if (changed) writes.push(this.ctx.storage.put(key, rec));
+    }
+    const px = {}; for (const s of syms) px[s] = prices[s] != null ? prices[s] : prev[s];
+    writes.push(this.ctx.storage.put('px', px));
+    await Promise.all(writes);
+    return sent;
+  }
+}
+
+async function pushRoute(request, env, url, cors) {
+  if (!env.PUSH) return new Response(JSON.stringify({ ok: false, message: 'Push not set up.' }), { status: 404, headers: Object.assign({ 'Content-Type': 'application/json' }, cors) });
+  const hub = env.PUSH.get(env.PUSH.idFromName('hub'));
+  const r = await hub.fetch(new Request('https://hub' + url.pathname.slice(5), { method: request.method, body: request.method === 'POST' ? await request.text() : undefined }));
+  return new Response(await r.text(), { status: r.status, headers: Object.assign({ 'Content-Type': 'application/json' }, cors) });
+}

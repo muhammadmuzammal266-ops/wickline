@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://s3.tradingview.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self' https://data-api.binance.vision https://api.binance.com wss://data-stream.binance.vision wss://stream.binance.com:9443 https://www.okx.com wss://ws.okx.com wss://ws.okx.com:8443 https://api.bybit.com wss://stream.bybit.com https://api.kraken.com https://api.gold-api.com https://api.twelvedata.com wss://ws.twelvedata.com https://*.workers.dev wss://*.workers.dev https://*.supabase.co; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src https://www.tradingview-widget.com https://s.tradingview.com; worker-src 'none'; upgrade-insecure-requests">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://s3.tradingview.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://*.googleusercontent.com; connect-src 'self' https://data-api.binance.vision https://api.binance.com wss://data-stream.binance.vision wss://stream.binance.com:9443 https://www.okx.com wss://ws.okx.com wss://ws.okx.com:8443 https://api.bybit.com wss://stream.bybit.com https://api.kraken.com https://api.gold-api.com https://api.twelvedata.com wss://ws.twelvedata.com https://*.workers.dev wss://*.workers.dev https://*.supabase.co; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src https://www.tradingview-widget.com https://s.tradingview.com; worker-src 'self'; upgrade-insecure-requests">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="description" content="Free live charts for crypto, US stocks, forex, indices and commodities, with indicators, drawing tools, a watchlist and price alerts.">
@@ -443,6 +443,8 @@ body.book-on .app{grid-template-columns:42px minmax(0,1fr) 250px 304px;grid-temp
 .al-cond-row .selwrap{flex:1;min-width:0}
 .al-cond-row select{width:100%}
 .al-new{width:100%;justify-content:center}
+.al-push{width:100%;justify-content:center}
+.al-push.on{color:var(--accent);background:var(--accent-soft)}
 .al-freq{margin-left:6px;font-size:10px;font-weight:600;color:var(--accent);background:var(--accent-soft);padding:1px 6px;border-radius:999px;vertical-align:middle}
 /* journal */
 .journal{grid-column:1/-1;grid-row:2/-1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:6px}
@@ -1529,6 +1531,8 @@ a.h-btn.primary{color:var(--panel)}
         <p class="fine">Alerts check prices while this page is open.</p>
         <button class="ghost al-new" id="alNew" type="button">+ Create alert</button>
         <button class="ghost ta-new" id="taNew" type="button">+ Alert on indicators</button>
+        <button class="ghost al-push" id="pushBtn" type="button" aria-pressed="false" hidden>🔕 Phone notifications: off</button>
+        <p class="fine" id="pushIos" hidden>On iPhone: Share → Add to Home Screen, then open RealChart from there to allow notifications.</p>
       </form>
       <ul class="ta-list" id="taList" hidden></ul>
     </section>
@@ -2059,7 +2063,7 @@ a.h-btn.primary{color:var(--panel)}
 <script src="vendor/lightweight-charts-5.1.0.js"></script>
 <script src="vendor/supabase-js-2.117.2.js"></script>
 <script src="config.js"></script>
-<script src="app.js?v=d3cd3cb7f7"></script>
+<script src="app.js?v=88f88a5a6b"></script>
 
 </body>
 </html>
