@@ -5622,7 +5622,7 @@ function renderFeed() {
     if (src === 'demo') { state = 'demo'; lbl = 'Not live'; }
     else if (src === 'binance' || src === 'paxg') { state = conn.binance === 'reconnecting' ? 'reconnecting' : 'live'; lbl = state !== 'live' ? 'Reconnecting' : src === 'paxg' ? 'Live · PAXG' : 'Live · ' + Live.name; }
     else if (src === 'oanda') { state = 'live'; lbl = 'Live · OANDA'; }
-    else if (src === 'ctrader') { const fresh = CT.active() && CTLive.live && CT.tickAt && (Date.now() - CT.tickAt < 60000); state = fresh ? 'live' : 'demo'; lbl = fresh ? 'Live · ' + (CT.broker || 'cTrader') : (CT.broker || 'cTrader') + (marketOpen(S.symbol) ? ' · reconnecting' : ' · market closed'); }
+    else if (src === 'ctrader') { const op = marketOpen(S.symbol); const live = op && CT.active() && CTLive.live && CT.tickAt && (Date.now() - CT.tickAt < 60000); state = live ? 'live' : 'demo'; lbl = live ? 'Live · ' + (CT.broker || 'cTrader') : (CT.broker || 'cTrader') + (op ? ' · reconnecting' : ' · market closed'); }
     else if (src === 'metal') { state = 'live'; lbl = 'Live price'; }
     else if (src === 'kraken') { state = 'live'; lbl = S.symbol === GOLD ? 'Live · PAXG' : 'Live · Kraken'; }
     else { state = 'live'; lbl = 'Live · Twelve Data'; }
