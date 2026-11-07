@@ -4905,7 +4905,7 @@ function ctBrokerName(raw) {
   return raw;   // unknown broker: show whatever it reported
 }
 const CT = {
-  state: 'off', broker: '', live: false, map: {}, rev: {}, refs: {}, refsAt: 0, syncAt: 0, busy: false, fails: 0,
+  state: 'off', broker: '', live: false, map: {}, rev: {}, refs: {}, refsAt: 0, syncAt: 0, tickAt: 0, busy: false, fails: 0,
   configured() { return !!API; },
   active() { return this.state === 'ok'; },
   has(id) { return this.state === 'ok' && !!this.map[id]; },
@@ -5010,7 +5010,7 @@ const CTLive = {
       let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
       this.lastAt = Date.now(); got = true; this.dead = 0;
       if (m.err) { this.stop(); handleCtErr(new OErr(503, m.err)); return; }   // the helper is up, but cTrader isn't
-      if (m.q) { this.live = true; this.fails = 0; m.q.forEach(onCtPrice); }
+      if (m.q) { this.live = true; CT.tickAt = Date.now(); this.fails = 0; m.q.forEach(onCtPrice); }   // a real live tick (not the day-reference close): marks the feed as live right now
     };
     ws.onclose = () => {
       if (this.ws !== ws) return;
@@ -5053,7 +5053,7 @@ function handleCtErr(e, id) {
   CT.fails++;
   if (CT.fails >= 2 || e.code === 503 || e.code === 0) {
     CT.state = 'offline'; CT.fails = 0; CTLive.stop();
-    toast("The cTrader prices aren't answering, so forex and indices use the other sources for now. They come back by themselves.");
+    toast("Live prices paused for a moment — showing the last prices. They update again by themselves.");
     switchSources(); retryCt(30000);
     return true;
   }
@@ -5064,7 +5064,7 @@ function retryCt(delay) {
   clearTimeout(ctRetry);
   ctRetry = setTimeout(async () => {
     if (!CT.configured() || CT.active()) return;
-    try { await CT.connect(true); toast(`Live prices from ${CT.broker} are back.`); switchSources(); if ($('#srcDlg').open) renderSources(); }
+    try { await CT.connect(true); CTLive.stop(); CTLive.fails = 0; toast(`Live prices from ${CT.broker} are back.`); switchSources(); CTLive.sync(); if ($('#srcDlg').open) renderSources(); }
     catch (e) { if (e.code === 0 || e.code >= 500) retryCt(30000); }
   }, delay == null ? 0 : delay);
 }
@@ -5072,10 +5072,10 @@ window.addEventListener('online', () => { if (CT.state === 'offline') retryCt(10
 
 /* ---------- which source serves a symbol ---------- */
 function srcOf(id) {
-  if (classOf(id) !== 'crypto' && CT.has(id)) return 'ctrader';   // the broker's own feed, when the site's helper has cTrader
+  if (classOf(id) !== 'crypto' && CT.configured() && CT.map[id]) return 'ctrader';   // the broker's own feed (FP Markets): the only forex/metal/index/commodity source here, live or not
   if (classOf(id) === 'crypto') return S.binance ? 'binance' : 'demo';
-  if (CFD[id]) return OANDA.active() ? 'oanda' : 'demo';
-  if (classOf(id) === 'forex' && OANDA.active()) return 'oanda';
+  if (CFD[id]) return (!Object.keys(CT.map).length && OANDA.active()) ? 'oanda' : 'demo';
+  if (classOf(id) === 'forex' && !Object.keys(CT.map).length && OANDA.active()) return 'oanda';
   if (Kraken.has(id)) return 'kraken';   // live with no limits, so the free Twelve Data allowance is kept for stocks
   if (tdLive()) return 'td';
   if (id === GOLD) return S.binance && Live.paxg ? 'paxg' : S.goldApi ? 'metal' : 'demo';
@@ -5413,6 +5413,8 @@ function clockTick() {
   const d = new Date(), now = d.getTime() / 1000;
   markDirty();   // the timer under the live price ticks every second
   $('#clock').textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${tzLabel()}`;
+  const cc = $('#chartClock');
+  if (cc) cc.textContent = `${d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}  ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${tzLabel()}`;
   const cd = $('#countdown'); cd.replaceChildren();
   if (S.bars.length) {
     const cls = classOf(S.symbol);
@@ -5427,6 +5429,7 @@ function clockTick() {
     }
   }
   renderScale();
+  if (S.ready && srcOf(S.symbol) === 'ctrader') renderFeed();   // so "Live" turns to "market closed" once the broker's ticks stop
   // explain an unavoidable wait for the free Twelve Data plan's per-minute limit
   if (!$('#veil').hidden && $('#veilRetry').hidden && S.ready && srcOf(S.symbol) === 'td' && TD.nextAt > Date.now()) {
     $('#veilText').textContent = `Loading ${label(S.symbol)} in ${Math.ceil((TD.nextAt - Date.now()) / 1000)} s. Twelve Data's free plan allows 8 requests a minute.`;
@@ -5619,7 +5622,7 @@ function renderFeed() {
     if (src === 'demo') { state = 'demo'; lbl = 'Not live'; }
     else if (src === 'binance' || src === 'paxg') { state = conn.binance === 'reconnecting' ? 'reconnecting' : 'live'; lbl = state !== 'live' ? 'Reconnecting' : src === 'paxg' ? 'Live · PAXG' : 'Live · ' + Live.name; }
     else if (src === 'oanda') { state = 'live'; lbl = 'Live · OANDA'; }
-    else if (src === 'ctrader') { state = 'live'; lbl = 'Live · ' + (CT.broker || 'cTrader'); }
+    else if (src === 'ctrader') { const fresh = CT.active() && CTLive.live && CT.tickAt && (Date.now() - CT.tickAt < 60000); state = fresh ? 'live' : 'demo'; lbl = fresh ? 'Live · ' + (CT.broker || 'cTrader') : (CT.broker || 'cTrader') + (marketOpen(S.symbol) ? ' · reconnecting' : ' · market closed'); }
     else if (src === 'metal') { state = 'live'; lbl = 'Live price'; }
     else if (src === 'kraken') { state = 'live'; lbl = S.symbol === GOLD ? 'Live · PAXG' : 'Live · Kraken'; }
     else { state = 'live'; lbl = 'Live · Twelve Data'; }
@@ -5802,12 +5805,27 @@ $('#snapBtn').onclick = () => {
     }, 'image/png');
   } catch (e) { toast("Couldn't save the chart image."); }
 };
-$('#fsBtn').hidden = !document.fullscreenEnabled;
+// Full screen = maximise the chart (hide the watchlist, trade panel and status bar so the chart
+// fills the window) and, where the browser allows it, fill the whole screen too. The maximise works
+// everywhere, so the button is always available.
+function chartMax() { return document.body.classList.contains('chart-max'); }
+function setChartMax(on) {
+  document.body.classList.toggle('chart-max', on);
+  $('#fsBtn').setAttribute('aria-pressed', String(on));
+  $('#fsBtn').title = on ? 'Exit full screen' : 'Full screen';
+  try { window.dispatchEvent(new Event('resize')); } catch (e) { /* ignore */ }
+}
 $('#fsBtn').onclick = () => {
-  const p = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
-  if (p && p.catch) p.catch(() => toast("Full screen isn't available here."));
+  const on = !chartMax();
+  setChartMax(on);
+  try {
+    if (on) { if (document.documentElement.requestFullscreen && !document.fullscreenElement) { const p = document.documentElement.requestFullscreen(); if (p && p.catch) p.catch(() => {}); } }
+    else if (document.fullscreenElement && document.exitFullscreen) { const p = document.exitFullscreen(); if (p && p.catch) p.catch(() => {}); }
+  } catch (e) { /* the chart is still maximised even without the Fullscreen API */ }
 };
-document.addEventListener('fullscreenchange', () => $('#fsBtn').setAttribute('aria-pressed', String(!!document.fullscreenElement)));
+// Leaving the browser's full screen (Esc, or the system) also leaves the maximised chart.
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && chartMax()) setChartMax(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && chartMax() && !document.fullscreenElement) setChartMax(false); });
 const helpDlg = $('#helpDlg');
 function openHelp() { if (!helpDlg.open) helpDlg.showModal(); }
 $('#helpBtn').onclick = openHelp;

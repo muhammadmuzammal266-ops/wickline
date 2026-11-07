@@ -61,6 +61,11 @@ svg{display:block}
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 
 .app{height:100%;display:grid;grid-template-columns:42px minmax(0,1fr) 304px;grid-template-rows:auto minmax(0,1fr);grid-template-areas:"top top top" "tools stage side";gap:6px}
+/* Full-screen chart: hide the watchlist, trade panel and status bar so the chart fills the window */
+body.chart-max .app{grid-template-columns:42px minmax(0,1fr) 0}
+body.chart-max .side,body.chart-max .status,body.chart-max #tp{display:none!important}
+/* The date/time clock sitting on the chart, like TradingView's */
+.chart-clock{position:absolute;right:64px;bottom:3px;z-index:5;pointer-events:none;font-family:var(--font-data);font-size:11px;line-height:1;color:var(--muted);background:color-mix(in srgb,var(--bg) 82%,transparent);border:1px solid color-mix(in srgb,var(--line) 70%,transparent);border-radius:5px;padding:3px 7px;font-variant-numeric:tabular-nums;letter-spacing:.2px;white-space:nowrap}
 
 /* top bar */
 .top{grid-area:top;display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
@@ -1462,6 +1467,7 @@ a.h-btn.primary{color:var(--panel)}
       </div>
       <button class="latest" id="latest" hidden aria-label="Scroll to the latest bar" title="Scroll to the latest bar"><svg viewBox="0 0 24 24"><path d="M6 7l5 5-5 5M13 7l5 5-5 5"/></svg></button>
       <div class="veil" id="veil"><div class="veil-box"><span class="spin" id="veilSpin"></span><span id="veilText">Connecting to market data…</span><button id="veilRetry" hidden>Try again</button></div></div>
+      <div class="chart-clock" id="chartClock" aria-hidden="true"></div>
     </div>
     </div>
     <footer class="status">
@@ -2063,7 +2069,7 @@ a.h-btn.primary{color:var(--panel)}
 <script src="vendor/lightweight-charts-5.1.0.js"></script>
 <script src="vendor/supabase-js-2.117.2.js"></script>
 <script src="config.js"></script>
-<script src="app.js?v=c75babb132"></script>
+<script src="app.js?v=b31d6b4c75"></script>
 
 </body>
 </html>
