@@ -162,6 +162,10 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === '/') return reply('RealChart helper is running.', 200);
+    if (url.pathname === '/geo') {   // the visitor's country and tier, so the page can show the broker name / sign-up only where it should (never geo-blocked itself)
+      const country = ctCountry(request, env);
+      return json({ ok: true, country, blocked: !!ctBlocked(request, env), uk: country === 'GB' }, 200);
+    }
     if (isPush) return pushRoute(request, env, url, cors);
     if (url.pathname.startsWith('/ct/')) return ctRoute(request, env, url, reply, json);
 

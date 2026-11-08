@@ -2975,9 +2975,9 @@ function setTitle() {
   const src = S.ready ? srcOf(S.symbol) : null;
   L.title.innerHTML = '';
   L.title.append(document.createTextNode(label(S.symbol) + ' '));
-  L.title.append(el('span', null, `· ${tfOf(S.tf).label}${src ? ' · ' + SRC_NAME[src] : ''}`));
+  L.title.append(el('span', null, `· ${tfOf(S.tf).label}${src && srcShown() ? ' · ' + SRC_NAME[src] : ''}`));
   $('#symName').textContent = label(S.symbol);
-  $('#symEx').textContent = src ? SRC_NAME[src] : kindOf(S.symbol);
+  $('#symEx').textContent = (src && srcShown()) ? SRC_NAME[src] : kindOf(S.symbol);
 }
 
 /* ---------- watermark ---------- */
@@ -4073,7 +4073,7 @@ function renderDetails() {
   $('#dSym').textContent = label(id);
   const t = S.tickers[id];
   $('#dName').textContent = nameOf(id) + (t && t.exchange ? ' · ' + t.exchange : '');
-  $('#dFeed').textContent = !src ? '' : src === 'demo' ? 'Saved price · not live' : src === 'binance' ? `${Live.name} · Spot` : src === 'paxg' ? `${Live.name} · PAXG/USDT` : src === 'metal' ? 'gold-api.com · live' : src === 'kraken' ? `Kraken · ${id === GOLD ? 'PAXG/USD' : rawOf(id)}`
+  $('#dFeed').textContent = !src ? '' : !srcShown() ? (marketOpen(id) ? 'Live price' : 'Market closed') : src === 'demo' ? 'Saved price · not live' : src === 'binance' ? `${Live.name} · Spot` : src === 'paxg' ? `${Live.name} · PAXG/USDT` : src === 'metal' ? 'gold-api.com · live' : src === 'kraken' ? `Kraken · ${id === GOLD ? 'PAXG/USD' : rawOf(id)}`
     : src === 'ctrader' ? `${CT.broker} · cTrader` : src === 'oanda' ? 'OANDA · live' : `Twelve Data · ${kindOf(id)}`;
   $('#alLabel').textContent = `Alert me when ${label(id)} crosses`;
   const open = openNow(id), allDay = cls === 'crypto' || src === 'paxg' || (src === 'kraken' && id === GOLD), roll24 = cls === 'crypto' || src === 'paxg';
@@ -5642,12 +5642,13 @@ function renderFeed() {
       note.title = note.textContent + ' Earlier candles are illustrative.';
     }
   }
+  if (!srcShown()) { const op = marketOpen(S.symbol); state = op ? 'live' : 'demo'; lbl = op ? 'Live price' : 'Market closed'; note.hidden = true; }
   b.dataset.state = state; $('#feedLbl').textContent = lbl;
 }
 $('#srcNote').onclick = () => openSources();
 $('#feedBtn').onclick = () => openSources();
 function stateChip(text, kind) { return el('span', 'state ' + kind, text); }
-function openSources() { renderSources(); if (!$('#srcDlg').open) $('#srcDlg').showModal(); }
+function openSources() { if (!srcShown()) { toast('Live market prices.'); return; } renderSources(); if (!$('#srcDlg').open) $('#srcDlg').showModal(); }
 function renderSources() {
   const body = $('#srcBody'); body.replaceChildren();
   if (S.sandbox) {
@@ -10285,6 +10286,56 @@ if ($('#pushBtn')) $('#pushBtn').onclick = () => Push.toggle();
 (function () { const _ra = renderAlerts; renderAlerts = function () { _ra.apply(this, arguments); try { Push.syncSoon(); } catch (e) { /* ignore */ } }; })();
 (function () { const _ar = Auth.render.bind(Auth); Auth.render = function () { _ar(); try { Push.render(); if (Push.on && Auth.user) Push.syncSoon(); } catch (e) { /* ignore */ } }; })();
 Push.init();
+
+/* ---------- Geo tiers: the broker's name and the "open an account" sign-up appear only where they belong ----------
+   Tier 1  broker allowed, not the UK : show the broker name + the sign-up poster (your IB link)
+   Tier 2  the UK                      : show the broker name, no sign-up (prices are information only)
+   Tier 3  broker blocked              : show the price with NO source name anywhere, and no sign-up */
+window.GEO = { country: '', blocked: false, uk: false, ready: false };
+const IB_LINK = 'https://portal.fpmarkets.com/register?fpm-affiliate-utm-source=IB&fpm-affiliate-agt=68681';
+
+// Hide every price source's name where the broker's prices are blocked (the broker itself answers "region" there too).
+function srcShown() { const g = window.GEO; return !((g && g.blocked) || (typeof CT !== 'undefined' && CT.state === 'region')); }
+// The sign-up poster: only on a site actually served by the broker's cTrader feed, in an allowed country, never the UK.
+function ibAllowed() {
+  const g = window.GEO;
+  return !!(g && g.ready && !g.blocked && !g.uk && typeof CT !== 'undefined' && CT.broker && Object.keys(CT.map || {}).length);
+}
+function renderIbPoster() { const p = $('#ibPoster'); if (p) p.hidden = !ibAllowed() || store.get('ibClosed', false); }
+function renderGeo() { renderIbPoster(); try { renderFeed(); } catch (e) { /* ignore */ } try { renderDetails(); } catch (e) { /* ignore */ } }
+async function loadGeo() {
+  if (API) {
+    try { const j = await (await fetch(API + '/geo', { cache: 'no-store' })).json(); if (j && j.ok) { GEO.country = j.country || ''; GEO.blocked = !!j.blocked; GEO.uk = !!j.uk; } }
+    catch (e) { /* region unknown: keep the broker name, show no sign-up */ }
+  }
+  GEO.ready = true; renderGeo();
+}
+
+// build the dismissible sign-up poster (hidden until a Tier-1 visitor is confirmed)
+(function () {
+  const css = '.ib-poster{position:fixed;left:16px;bottom:16px;z-index:60;display:flex;align-items:center;gap:12px;max-width:344px;'
+    + 'background:linear-gradient(135deg,#131a24,#0e141d);border:1px solid rgba(245,166,35,.45);border-radius:14px;padding:13px 15px;box-shadow:0 14px 36px rgba(0,0,0,.5)}'
+    + '.ib-poster .ib-logo{font-size:22px;flex:none}'
+    + '.ib-poster .ib-txt{display:flex;flex-direction:column;gap:2px;min-width:0}'
+    + '.ib-poster .ib-txt b{font-size:14px;color:var(--ink)}'
+    + '.ib-poster .ib-txt span{font-size:12px;color:var(--muted)}'
+    + '.ib-poster .ib-cta{white-space:nowrap;background:linear-gradient(180deg,#ffbe3d,#f5a623);color:#1a1203;font-weight:800;font-size:13px;padding:9px 13px;border-radius:9px;text-decoration:none;flex:none}'
+    + '.ib-poster .ib-cta:hover{filter:brightness(1.05)}'
+    + '.ib-poster .ib-x{position:absolute;top:5px;right:7px;background:none;border:none;color:var(--muted);font-size:17px;cursor:pointer;line-height:1;padding:2px}'
+    + '@media (max-width:560px){.ib-poster{left:8px;right:8px;bottom:8px;max-width:none}}';
+  const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
+  const p = document.createElement('div'); p.className = 'ib-poster'; p.id = 'ibPoster'; p.hidden = true;
+  p.innerHTML = '<button class="ib-x" id="ibClose" type="button" aria-label="Dismiss">×</button>'
+    + '<span class="ib-logo">🕯️</span>'
+    + '<span class="ib-txt"><b>Trade with FP Markets</b><span>Open a live account to trade these markets.</span></span>'
+    + '<a class="ib-cta" href="' + IB_LINK + '" target="_blank" rel="noopener nofollow">Open an account ↗</a>';
+  document.body.appendChild(p);
+  p.querySelector('#ibClose').onclick = () => { store.raw('ibClosed', true); renderGeo(); };
+})();
+
+// keep the poster in step with the feed (it needs the broker to be connected first)
+(function () { const _rf = renderFeed; renderFeed = function () { _rf.apply(this, arguments); try { renderIbPoster(); } catch (e) { /* ignore */ } }; })();
+loadGeo();
 
 boot();
 })();
