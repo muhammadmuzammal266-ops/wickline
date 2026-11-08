@@ -83,7 +83,8 @@ const TD_DATE = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/;
 const CT_TF = { '1m': ['M1', 60], '5m': ['M5', 300], '15m': ['M15', 900], '30m': ['M30', 1800], '1h': ['H1', 3600], '4h': ['H4', 14400], '1d': ['D1', 86400], '1w': ['W1', 604800] };
 // Countries that must not see the broker's prices (FP Markets' list: its restricted countries, the European Economic Area,
 // and places on the FATF and EU/UN sanctions lists; T1 is Tor and XX unknown). CT_BLOCK replaces the list (two-letter codes,
-// separated by commas); CT_BLOCK_UK=1 adds the United Kingdom.
+// separated by commas). The United Kingdom is never blocked (GB is force-removed below): the broker's prices
+// are shown there as market information only, and no account opening is offered to UK visitors.
 const CT_BLOCK_DEFAULT = 'AF,CU,CA,IQ,IN,IR,LR,LY,MM,PS,RU,SO,SY,SD,YE,US,KP,BY,SS,' +
   'AT,BE,BG,HR,CY,CZ,DK,EE,FI,FR,DE,GR,HU,IE,IT,LV,LT,LU,MT,NL,PL,PT,RO,SK,SI,ES,SE,IS,LI,NO,T1,XX';
 function ctCountry(request, env) {
@@ -93,7 +94,7 @@ function ctCountry(request, env) {
 function ctBlocked(request, env) {
   const cc = ctCountry(request, env); if (!cc) return '';
   const list = new Set(String(env.CT_BLOCK || CT_BLOCK_DEFAULT).toUpperCase().split(/[\s,]+/).filter(Boolean));
-  if (String(env.CT_BLOCK_UK || '') === '1') list.add('GB');
+  list.delete('GB');   // the UK sees the broker's prices as information only; never blocked, even if a stale CT_BLOCK_UK var is still set
   return list.has(cc) ? cc : '';
 }
 function ctReady(env) { return !!(env.CT_HUB && env.CT_CLIENT_ID && env.CT_CLIENT_SECRET && (env.CT_REFRESH_TOKEN || env.CT_ACCESS_TOKEN)); }
