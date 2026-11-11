@@ -115,6 +115,9 @@ body.chart-max .side,body.chart-max .status,body.chart-max #tp{display:none!impo
 .tf-msg:empty{display:none}
 .vsep{width:1px;height:20px;background:var(--line);margin-inline:2px}
 .selwrap{position:relative;display:inline-flex}
+.tz-wrap{flex:none}
+.tz-sel{height:22px!important;font-family:var(--font-data);font-size:11px;color:var(--muted);padding:0 18px 0 8px!important}
+.tz-sel:hover{color:var(--ink)}
 .selwrap select{appearance:none;-webkit-appearance:none;height:30px;border:0;border-radius:6px;background:transparent;padding:0 26px 0 10px;cursor:pointer}
 .selwrap select:hover{background:var(--panel-2)}
 .selwrap::after{content:"";position:absolute;right:11px;top:50%;width:6px;height:6px;border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);transform:translateY(-70%) rotate(45deg);pointer-events:none}
@@ -1471,6 +1474,7 @@ a.h-btn.primary{color:var(--panel)}
     </div>
     </div>
     <footer class="status">
+      <span class="selwrap tz-wrap"><select id="tzSel" class="tz-sel" aria-label="Chart time zone" title="Chart time zone"><option value="">Auto (device)</option><option value="UTC">UTC</option><option value="Europe/London">London</option><option value="Europe/Berlin">Frankfurt</option><option value="America/New_York">New York</option><option value="America/Chicago">Chicago</option><option value="America/Los_Angeles">Los Angeles</option><option value="America/Sao_Paulo">São Paulo</option><option value="Asia/Dubai">Dubai</option><option value="Asia/Kolkata">Mumbai</option><option value="Asia/Singapore">Singapore</option><option value="Asia/Hong_Kong">Hong Kong</option><option value="Asia/Shanghai">Shanghai</option><option value="Asia/Tokyo">Tokyo</option><option value="Australia/Sydney">Sydney</option></select></span>
       <span class="clock" id="clock">—</span>
       <span class="cd" id="countdown"></span>
       <button class="src-note" id="srcNote" hidden></button>
@@ -2069,7 +2073,7 @@ a.h-btn.primary{color:var(--panel)}
 <script src="vendor/lightweight-charts-5.1.0.js"></script>
 <script src="vendor/supabase-js-2.117.2.js"></script>
 <script src="config.js"></script>
-<script src="app.js?v=7d164e3099"></script>
+<script src="app.js?v=cad5251b59"></script>
 
 </body>
 </html>

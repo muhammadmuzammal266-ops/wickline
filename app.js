@@ -757,10 +757,28 @@ const pad = n => String(n).padStart(2, '0');
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 // Daily and weekly bars are dated in UTC, so a bar never shows the previous day for viewers west of London.
+const BROWSER_TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (e) { return 'UTC'; } })();
+let TZ = '';   // '' = this device's own time zone; otherwise an IANA zone chosen from the status bar
+function curTz() { return TZ || BROWSER_TZ; }
+const ZPF = {};   // one Intl formatter per zone, reused
+const zpCache = new Map();
+function zparts(sec, tz) {   // a timestamp's date parts in a chosen zone (cached per minute)
+  const key = tz + '|' + Math.floor(sec / 60);
+  let p = zpCache.get(key);
+  if (!p) {
+    const f = ZPF[tz] || (ZPF[tz] = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hourCycle: 'h23', weekday: 'short', year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    const o = {}; for (const part of f.formatToParts(new Date(sec * 1000))) o[part.type] = part.value;
+    p = { y: +o.year, mo: +o.month - 1, d: +o.day, w: WD[o.weekday], h: +o.hour % 24, mi: +o.minute, s: +o.second };
+    if (zpCache.size > 4000) zpCache.clear();
+    zpCache.set(key, p);
+  }
+  return p;
+}
 function dparts(sec, tf) {
-  const d = new Date(sec * 1000), u = tfOf(tf || S.tf).sec >= DAY;
-  return u ? { y: d.getUTCFullYear(), mo: d.getUTCMonth(), d: d.getUTCDate(), w: d.getUTCDay(), h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds() }
-           : { y: d.getFullYear(), mo: d.getMonth(), d: d.getDate(), w: d.getDay(), h: d.getHours(), mi: d.getMinutes(), s: d.getSeconds() };
+  const u = tfOf(tf || S.tf).sec >= DAY;   // daily and higher bars stay dated in UTC
+  if (u) { const d = new Date(sec * 1000); return { y: d.getUTCFullYear(), mo: d.getUTCMonth(), d: d.getUTCDate(), w: d.getUTCDay(), h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds() }; }
+  if (TZ) return zparts(sec, TZ);
+  const d = new Date(sec * 1000); return { y: d.getFullYear(), mo: d.getMonth(), d: d.getDate(), w: d.getDay(), h: d.getHours(), mi: d.getMinutes(), s: d.getSeconds() };
 }
 function fmtTime(sec, tf) {
   const p = dparts(sec, tf);
@@ -791,8 +809,20 @@ function fmtCountdown(s) {
   return `${pad(m)}:${pad(x)}`;
 }
 function tzLabel() {
-  const off = -new Date().getTimezoneOffset(); const h = Math.floor(Math.abs(off) / 60), m = Math.abs(off) % 60;
-  return `UTC${off >= 0 ? '+' : '−'}${h}${m ? ':' + pad(m) : ''}`;
+  try {
+    const p = new Intl.DateTimeFormat('en-GB', { timeZone: curTz(), timeZoneName: 'shortOffset' }).formatToParts(new Date()).find(x => x.type === 'timeZoneName');
+    return p ? p.value.replace('GMT', 'UTC').replace(/^UTC$/, 'UTC+0') : 'UTC+0';
+  } catch (e) {
+    const off = -new Date().getTimezoneOffset(), h = Math.floor(Math.abs(off) / 60), m = Math.abs(off) % 60;
+    return `UTC${off >= 0 ? '+' : '−'}${h}${m ? ':' + pad(m) : ''}`;
+  }
+}
+function clockParts() {   // the current wall-clock time in the chart's chosen zone
+  try {
+    const f = new Intl.DateTimeFormat('en-GB', { timeZone: curTz(), hourCycle: 'h23', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const o = {}; for (const p of f.formatToParts(new Date())) o[p.type] = p.value;
+    return { h: o.hour, mi: o.minute, s: o.second, wd: o.weekday, d: o.day, mon: o.month };
+  } catch (e) { const d = new Date(); return { h: pad(d.getHours()), mi: pad(d.getMinutes()), s: pad(d.getSeconds()), wd: DOW[d.getDay()], d: d.getDate(), mon: MON[d.getMonth()] }; }
 }
 
 /* ---------- New York market clock ---------- */
@@ -5412,9 +5442,10 @@ let lastOpenState = '';
 function clockTick() {
   const d = new Date(), now = d.getTime() / 1000;
   markDirty();   // the timer under the live price ticks every second
-  $('#clock').textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${tzLabel()}`;
+  const cp = clockParts();
+  $('#clock').textContent = `${cp.h}:${cp.mi}:${cp.s} ${tzLabel()}`;
   const cc = $('#chartClock');
-  if (cc) cc.textContent = `${d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}  ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${tzLabel()}`;
+  if (cc) cc.textContent = `${cp.wd}, ${cp.d} ${cp.mon}  ${cp.h}:${cp.mi}:${cp.s} ${tzLabel()}`;
   const cd = $('#countdown'); cd.replaceChildren();
   if (S.bars.length) {
     const cls = classOf(S.symbol);
@@ -5439,6 +5470,17 @@ function clockTick() {
   if (S.ready && sig !== lastOpenState) { if (lastOpenState) { renderWatch(); renderDetails(); } lastOpenState = sig; }
 }
 setInterval(clockTick, 1000);
+// the chart's time zone (status bar): relabels the time axis, crosshair and clock, like TradingView
+function applyTzChart() {
+  try { chart.applyOptions({ localization: { timeFormatter: t => fmtTime(t) }, timeScale: { tickMarkFormatter: tickFmt } }); } catch (e) { /* ignore */ }
+  try { clockTick(); } catch (e) { /* ignore */ }
+}
+(function () {
+  const sel = $('#tzSel'); if (!sel) return;
+  TZ = store.get('tz', ''); if ([...sel.options].some(o => o.value === TZ)) sel.value = TZ; else { TZ = ''; sel.value = ''; }
+  sel.onchange = () => { TZ = sel.value; store.raw('tz', TZ); zpCache.clear(); applyTzChart(); };
+  applyTzChart();
+})();
 
 /* ---------- symbol search ---------- */
 const sDlg = $('#searchDlg'), sInput = $('#searchInput'), sList = $('#searchList');
