@@ -2603,11 +2603,11 @@ const FP = {
   },
 };
 const fpNum = v => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e4 ? (v / 1e3).toFixed(0) + 'K' : v >= 1000 ? (v / 1e3).toFixed(1) + 'K' : v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v >= 0.01 ? v.toFixed(3) : v > 0 ? v.toPrecision(2) : '0');
-function fpNote(W, H) {   // footprint chart type chosen, but there are no live trades to build it from
+function fpNote(W, H) {   // footprint chosen on a crypto pair, but no live trades have arrived yet
   octx.save();
   octx.textAlign = 'center'; octx.textBaseline = 'middle'; octx.fillStyle = C.muted;
-  octx.font = `500 14px ${FONT_DATA}`; octx.fillText('Footprint builds from live crypto trades.', W / 2, H / 2 - 11);
-  octx.font = `400 12.5px ${FONT_DATA}`; octx.fillText('Open a crypto pair (e.g. BTCUSDT) and leave the chart running to fill it in.', W / 2, H / 2 + 11);
+  octx.font = `500 12.5px ${FONT_DATA}`; octx.fillText('Building the footprint from live trades…', W / 2, H / 2 - 9);
+  octx.font = `400 11.5px ${FONT_DATA}`; octx.fillText('Each bar fills in as trades arrive.', W / 2, H / 2 + 9);
   octx.restore();
 }
 function drawFootprint(m, W, H) {
@@ -2615,7 +2615,7 @@ function drawFootprint(m, W, H) {
   const rt = S.rts.find(r => r.inst.type === 'fp' && !r.inst.hidden);
   const fpType = S.type === 'footprint';
   if ((!rt && !fpType) || isBrick(S.type)) return;
-  if (TR.sym !== S.symbol || !TR.t.length || !S.bars.length) { if (fpType) fpNote(W, H); return; }
+  if (TR.sym !== S.symbol || !TR.t.length || !S.bars.length) { if (fpType && classOf(S.symbol) === 'crypto') fpNote(W, H); return; }
   const B = S.bars, tfs = tfOf(S.tf).sec, step = FP.rowStep(rt ? rt.inst.params.rows : 12); if (!step) return;
   const i0 = Math.max(0, Math.floor(m.L(0))), i1 = Math.min(B.length - 1, Math.ceil(m.L(W)));
   const tFirst = TR.t[0];
@@ -2633,7 +2633,7 @@ function drawFootprint(m, W, H) {
       const y = Math.min(yt, yb), h = Math.max(1, Math.abs(yb - yt) - (rowH >= 4 ? 1 : 0));
       if (numbers) {   // "sell × buy" at this price, the cell filled green (buy-heavy) or red (sell-heavy) by how one-sided it is
         const tot = sv + bv, imb = tot ? (bv - sv) / tot : 0, strength = Math.abs(imb) * Math.sqrt(tot / max);
-        octx.fillStyle = alpha(C.panel, 0.92); octx.fillRect(x - half, y, half * 2, h);
+        octx.fillStyle = alpha(C.panel, 0.98); octx.fillRect(x - half, y, half * 2, h);
         if (tot > 0 && strength > 0.05) { octx.fillStyle = alpha(imb >= 0 ? C.up : C.down, Math.min(0.9, 0.16 + strength * 1.15)); octx.fillRect(x - half, y, half * 2, h); }
         if (k === poc) { octx.strokeStyle = C.accent; octx.lineWidth = 1.3; octx.strokeRect(x - half + 0.6, y + 0.6, half * 2 - 1.2, h - 1.2); }
         octx.font = `600 ${Math.min(11, Math.max(8, h - 3))}px ${FONT_DATA}`; octx.textBaseline = 'middle'; octx.textAlign = 'center';
@@ -3239,7 +3239,11 @@ function drawOverlay(m) {
   const W = ps.width, H = ps.height;
   octx.save(); octx.beginPath(); octx.rect(0, 0, W, H); octx.clip();
   if (S.idea && S.idea.symbol === S.symbol) drawIdeaLayer(m, W, H);
-  drawPnf(m, W, H); drawSessions(m, W, H); drawVolumeProfiles(m, W, H); drawSessionProfiles(m, W, H); drawLevels(m, W, H); drawLiqBubbles(m, W, H); drawFootprint(m, W, H);
+  drawPnf(m, W, H); drawSessions(m, W, H);
+  if (S.type !== 'footprint') { drawVolumeProfiles(m, W, H); drawSessionProfiles(m, W, H); }   // these volume-at-price overlays clash with the footprint, so hide them in footprint mode
+  drawLevels(m, W, H);
+  if (S.type !== 'footprint') drawLiqBubbles(m, W, H);   // the liquidity heatmap too
+  drawFootprint(m, W, H);
   for (const d of curDrawings()) drawShape(d, m, W, H, d.id === S.selected, false);
   if (S.draft && S.draft.type !== 'measure') drawShape(S.draft, m, W, H, false, true);
   const meas = S.draft && S.draft.type === 'measure' ? S.draft : S.measure;
