@@ -5215,6 +5215,7 @@ async function loadChart() {
     try { chart.clearCrosshairPosition(); } catch (e) { /* older library */ }
     setMainData(); S.rts.forEach(setRtData);
     chart.timeScale().scrollToRealTime();
+    if (S.type === 'footprint') { try { chart.timeScale().applyOptions({ barSpacing: 98 }); } catch (e) { /* ignore */ } }
     S.main.priceScale().applyOptions({ autoScale: true });
     syncTradeMarks(); if (S.focusTime) focusChart();
     veil(null); S.cross = null; updateLegend(); renderDetails(); syncAlertLines(); markDirty(); clockTick();
