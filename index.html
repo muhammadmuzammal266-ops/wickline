@@ -256,6 +256,8 @@ select option{background:var(--panel);color:var(--fg)}
 .view-tab{height:26px;padding:0 12px;border-radius:6px;display:inline-flex;align-items:center;font-weight:600;font-size:12.5px;color:var(--muted);text-decoration:none}
 .view-tab:hover{color:var(--fg)}
 .view-tab[aria-current="page"]{background:var(--panel);color:var(--fg);box-shadow:0 1px 2px rgba(8,12,20,.1)}
+.learn-tab{height:26px;padding:0 12px;border-radius:6px;display:inline-flex;align-items:center;font-weight:600;font-size:12.5px;color:var(--muted);text-decoration:none}
+.learn-tab:hover{color:var(--fg)}
 body:is([data-view="journal"],[data-view="ideas"],[data-view="home"],[data-view="markets"]) .app>:is(.tools,.stage,.side,.book){display:none}
 body:is([data-view="journal"],[data-view="ideas"],[data-view="home"],[data-view="markets"]) .top>:is(#symBtn,.vsep,#tfSeg,.selwrap,#indBtn,#replayBtn,#ideaBtn,#tradeBtn,#feedBtn,#snapBtn,#linkBtn,#fsBtn,#helpBtn,#layoutBtn,#dataBtn,#btBtn,#tplBtn,#calcBtn,#bookBtn){display:none!important}
 
@@ -1400,6 +1402,7 @@ a.h-btn.primary{color:var(--panel)}
       <a class="view-tab" href="?view=markets" data-view="markets" aria-current="false">Markets</a>
       <a class="view-tab" href="?view=ideas" data-view="ideas" aria-current="false">Ideas</a>
       <a class="view-tab" href="?view=journal" data-view="journal" aria-current="false">Journal</a>
+      <a class="learn-tab" href="/learn/">Learn</a>
     </nav>
     <button class="btn sym-btn" id="symBtn" title="Search crypto, stocks and forex (or just start typing)"><span id="symName">BTCUSDT</span><span class="ex" id="symEx">Binance</span></button>
     <span class="vsep"></span>
