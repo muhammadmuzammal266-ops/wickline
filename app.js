@@ -454,7 +454,7 @@ function setChartType(t) {
   const was = isBrick(S.type), now = isBrick(t);
   if (now && (R.on || R.picking)) rpExit();
   S.type = t; store.set('type', t);
-  if (t === 'footprint') { try { chart.timeScale().applyOptions({ barSpacing: 72 }); } catch (e) { /* ignore */ } }
+  if (t === 'footprint') { try { chart.timeScale().applyOptions({ barSpacing: 98 }); } catch (e) { /* ignore */ } }
   try { TR.sync(); } catch (e) { /* ignore */ }
   if ($('#typeSel').value !== t) $('#typeSel').value = t;
   if (was && !now) { S.bars = S.raw || S.bars; S.raw = null; }
@@ -2627,22 +2627,18 @@ function drawFootprint(m, W, H) {
     const x = m.x(t0), sp = m.sp, keys = [...f.rows.keys()];
     let max = 0, poc = keys[0]; for (const k of keys) { const a = f.rows.get(k), s = a[0] + a[1]; if (s > max) { max = s; poc = k; } }
     const yA = m.y(step), yB = m.y(2 * step), rowH = yA != null && yB != null ? Math.abs(yA - yB) : 0;
-    const numbers = sp >= 64 && rowH >= 11, half = Math.max(2, sp * 0.45);
+    const numbers = sp >= 64 && rowH >= 11, half = Math.max(2, sp * 0.47);
     for (const k of keys) {
       const [sv, bv] = f.rows.get(k), yt = m.y((k + 1) * step), yb = m.y(k * step); if (yt == null || yb == null || yb < -20 || yt > H + 20) continue;
       const y = Math.min(yt, yb), h = Math.max(1, Math.abs(yb - yt) - (rowH >= 4 ? 1 : 0));
-      if (numbers) {
-        const tot = sv + bv, imb = tot ? (bv - sv) / tot : 0;
-        octx.fillStyle = alpha(C.panel, 0.94); octx.fillRect(x - half, y, half * 2, h);
-        octx.fillStyle = alpha(imb >= 0 ? C.up : C.down, 0.12 + 0.5 * Math.abs(imb) * (tot / max)); octx.fillRect(x - half, y, half * 2, h);
-        if (k === poc) { octx.strokeStyle = C.accent; octx.lineWidth = 1.2; octx.strokeRect(x - half + 0.5, y + 0.5, half * 2 - 1, h - 1); }
-        octx.font = `500 ${Math.min(11, Math.max(9, h - 2))}px ${FONT_DATA}`; octx.textBaseline = 'middle';
-        octx.textAlign = 'right'; octx.fillStyle = sv > bv * 3 && sv > 0 ? C.down : C.muted; octx.fillText(fpNum(sv), x - 3, y + h / 2);
-        octx.textAlign = 'left'; octx.fillStyle = bv > sv * 3 && bv > 0 ? C.up : C.fg; octx.fillText(fpNum(bv), x + 3, y + h / 2);
-        // diagonal imbalances (TradingView-style): a boxed buy is ask here ≥3× the bid one level down; a boxed sell is bid here ≥3× the ask one level up
-        const below = f.rows.get(k - 1), above = f.rows.get(k + 1), sBelow = below ? below[0] : 0, bAbove = above ? above[1] : 0;
-        if (bv > 0 && bv >= 3 * sBelow && (sBelow > 0 || bv >= max * 0.08)) { octx.strokeStyle = C.up; octx.lineWidth = 1.4; octx.strokeRect(x + 1.5, y + 1, half - 2.5, Math.max(1, h - 2)); }
-        if (sv > 0 && sv >= 3 * bAbove && (bAbove > 0 || sv >= max * 0.08)) { octx.strokeStyle = C.down; octx.lineWidth = 1.4; octx.strokeRect(x - half + 1, y + 1, half - 2.5, Math.max(1, h - 2)); }
+      if (numbers) {   // "sell × buy" at this price, the cell filled green (buy-heavy) or red (sell-heavy) by how one-sided it is
+        const tot = sv + bv, imb = tot ? (bv - sv) / tot : 0, strength = Math.abs(imb) * Math.sqrt(tot / max);
+        octx.fillStyle = alpha(C.panel, 0.92); octx.fillRect(x - half, y, half * 2, h);
+        if (tot > 0 && strength > 0.05) { octx.fillStyle = alpha(imb >= 0 ? C.up : C.down, Math.min(0.9, 0.16 + strength * 1.15)); octx.fillRect(x - half, y, half * 2, h); }
+        if (k === poc) { octx.strokeStyle = C.accent; octx.lineWidth = 1.3; octx.strokeRect(x - half + 0.6, y + 0.6, half * 2 - 1.2, h - 1.2); }
+        octx.font = `600 ${Math.min(11, Math.max(8, h - 3))}px ${FONT_DATA}`; octx.textBaseline = 'middle'; octx.textAlign = 'center';
+        octx.fillStyle = strength > 0.42 ? '#fff' : C.fg;
+        octx.fillText(`${fpNum(sv)} × ${fpNum(bv)}`, x, y + h / 2);
       } else {   // zoomed out: a small profile, selling to the left and buying to the right of the bar
         const ws = (sv / max) * half, wb = (bv / max) * half;
         octx.fillStyle = alpha(C.down, 0.55); octx.fillRect(x - ws, y, ws, h);
