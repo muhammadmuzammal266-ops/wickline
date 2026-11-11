@@ -3093,6 +3093,35 @@ function sizeOverlay() {
   ov.style.width = ovW + 'px'; ov.style.height = ovH + 'px'; dirty = true;
 }
 new ResizeObserver(() => { sizeOverlay(); updateWatermark(); }).observe(wrap);
+
+// Scroll over the price axis to stretch or compress the price scale, the way desktop
+// charting apps do. The library only scales the price on an axis drag, so a wheel over
+// the axis is turned into a short synthetic drag (it listens for the down on the axis
+// canvas and the move/up on the window).
+(function () {
+  const chartEl = $('#chart');
+  const axisCanvas = () => {
+    const cr = chartEl.getBoundingClientRect(); let ax = null;
+    chartEl.querySelectorAll('canvas').forEach(c => { const b = c.getBoundingClientRect(); if (b.width < 160 && b.height > 160 && (b.left - cr.left) > cr.width * 0.55) ax = c; });
+    return ax;
+  };
+  const fire = (target, type, Ctor, x, y, buttons) => target.dispatchEvent(new Ctor(type, { clientX: x, clientY: y, screenX: x, screenY: y, bubbles: true, cancelable: true, composed: true, button: 0, buttons, view: window, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+  chartEl.addEventListener('wheel', e => {
+    const r = chartEl.getBoundingClientRect();
+    let axisW = 72; try { axisW = Math.max(44, (S.main && S.main.priceScale().width()) || 72); } catch (_) { /* default */ }
+    if (e.clientX < r.right - axisW - 1) return;   // over the plot: leave the time zoom alone
+    const ax = axisCanvas(); if (!ax) return;
+    e.preventDefault();
+    try { S.main.priceScale().applyOptions({ autoScale: false }); } catch (_) { /* fine */ }
+    const b = ax.getBoundingClientRect(), cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+    // scroll up (deltaY < 0) stretches the price out; scroll down compresses it
+    const dy = -Math.max(-80, Math.min(80, e.deltaY)) * 0.7;
+    fire(ax, 'pointerdown', PointerEvent, cx, cy, 1); fire(ax, 'mousedown', MouseEvent, cx, cy, 1);
+    for (let i = 1; i <= 4; i++) { const yy = cy + dy * i / 4; fire(window, 'pointermove', PointerEvent, cx, yy, 1); fire(window, 'mousemove', MouseEvent, cx, yy, 1); }
+    fire(window, 'pointerup', PointerEvent, cx, cy + dy, 0); fire(window, 'mouseup', MouseEvent, cx, cy + dy, 0);
+  }, { passive: false });
+})();
+
 const curDrawings = () => (S.drawings[S.symbol] = S.drawings[S.symbol] || []);
 const findDrawing = id => curDrawings().find(d => d.id === id);
 const FIB = [[0, null], [0.236, '#e2494f'], [0.382, '#e8902e'], [0.5, '#3aa76d'], [0.618, '#13a3b8'], [0.786, '#3f7fe6'], [1, null]];
