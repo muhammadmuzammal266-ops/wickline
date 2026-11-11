@@ -1020,7 +1020,7 @@ function mainStyle() {
 function createMain() {
   if (S.main) { chart.removeSeries(S.main); S.main = null; S.alertLines = []; }
   const [def, opts] = mainStyle();
-  S.main = chart.addSeries(def, Object.assign({ lastValueVisible: true, priceLineVisible: true }, opts), 0);
+  S.main = chart.addSeries(def, Object.assign({ lastValueVisible: true, priceLineVisible: true, autoscaleInfoProvider: orig => pzProvider(orig) }, opts), 0);
   S.main.priceScale().applyOptions({ mode: S.scaleMode, autoScale: true, scaleMargins: mainMargins() });
   const p0 = chart.panes()[0];
   if (p0 && p0.setPreserveEmptyPane) p0.setPreserveEmptyPane(true);
@@ -3094,32 +3094,42 @@ function sizeOverlay() {
 }
 new ResizeObserver(() => { sizeOverlay(); updateWatermark(); }).observe(wrap);
 
-// Scroll over the price axis to stretch or compress the price scale, the way desktop
-// charting apps do. The library only scales the price on an axis drag, so a wheel over
-// the axis is turned into a short synthetic drag (it listens for the down on the axis
-// canvas and the move/up on the window).
+// A manual price range the user sets by scrolling over the price axis; null means the
+// chart auto-fits to the data as usual. The main series' autoscaleInfoProvider (set in
+// createMain) feeds this range to the engine, which is the supported way to hold a
+// custom vertical zoom in lightweight-charts.
+let pzRange = null;
+function pzProvider(orig) {
+  const base = orig();
+  if (!pzRange) return base;
+  return { priceRange: { minValue: pzRange.lo, maxValue: pzRange.hi }, margins: base && base.margins };
+}
+function pzRefit() { try { const ps = S.main.priceScale(); ps.applyOptions({ autoScale: false }); ps.applyOptions({ autoScale: true }); } catch (_) { /* fine */ } }
+function pzReset() { pzRange = null; pzRefit(); }
 (function () {
   const chartEl = $('#chart');
-  const axisCanvas = () => {
-    const cr = chartEl.getBoundingClientRect(); let ax = null;
-    chartEl.querySelectorAll('canvas').forEach(c => { const b = c.getBoundingClientRect(); if (b.width < 160 && b.height > 160 && (b.left - cr.left) > cr.width * 0.55) ax = c; });
-    return ax;
-  };
-  const fire = (target, type, Ctor, x, y, buttons) => target.dispatchEvent(new Ctor(type, { clientX: x, clientY: y, screenX: x, screenY: y, bubbles: true, cancelable: true, composed: true, button: 0, buttons, view: window, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
   chartEl.addEventListener('wheel', e => {
     const r = chartEl.getBoundingClientRect();
     let axisW = 72; try { axisW = Math.max(44, (S.main && S.main.priceScale().width()) || 72); } catch (_) { /* default */ }
     if (e.clientX < r.right - axisW - 1) return;   // over the plot: leave the time zoom alone
-    const ax = axisCanvas(); if (!ax) return;
+    if (!S.main || !S.bars.length) return;
     e.preventDefault();
-    try { S.main.priceScale().applyOptions({ autoScale: false }); } catch (_) { /* fine */ }
-    const b = ax.getBoundingClientRect(), cx = b.left + b.width / 2, cy = b.top + b.height / 2;
-    // scroll up (deltaY < 0) stretches the price out; scroll down compresses it
-    const dy = -Math.max(-80, Math.min(80, e.deltaY)) * 0.7;
-    fire(ax, 'pointerdown', PointerEvent, cx, cy, 1); fire(ax, 'mousedown', MouseEvent, cx, cy, 1);
-    for (let i = 1; i <= 4; i++) { const yy = cy + dy * i / 4; fire(window, 'pointermove', PointerEvent, cx, yy, 1); fire(window, 'mousemove', MouseEvent, cx, yy, 1); }
-    fire(window, 'pointerup', PointerEvent, cx, cy + dy, 0); fire(window, 'mouseup', MouseEvent, cx, cy + dy, 0);
+    const topP = S.main.coordinateToPrice(0), botP = S.main.coordinateToPrice(r.height);
+    if (topP == null || botP == null) return;
+    const hi = Math.max(topP, botP), lo = Math.min(topP, botP), mid = (hi + lo) / 2, half = (hi - lo) / 2;
+    if (!(half > 0)) return;
+    // scroll up stretches the price out (smaller range, taller candles); scroll down compresses it
+    const f = Math.exp(Math.sign(e.deltaY) * Math.min(1, Math.abs(e.deltaY) / 300) * 0.5);
+    const nh = Math.max(half * f, Math.abs(mid) * 1e-6 + 1e-9);
+    pzRange = { lo: mid - nh, hi: mid + nh };
+    pzRefit();
   }, { passive: false });
+  // double-click the price axis to return to auto-fit
+  chartEl.addEventListener('dblclick', e => {
+    const r = chartEl.getBoundingClientRect();
+    let axisW = 72; try { axisW = Math.max(44, (S.main && S.main.priceScale().width()) || 72); } catch (_) { /* default */ }
+    if (e.clientX >= r.right - axisW - 1) pzReset();
+  });
 })();
 
 const curDrawings = () => (S.drawings[S.symbol] = S.drawings[S.symbol] || []);
@@ -5245,6 +5255,7 @@ async function loadChart() {
     setMainData(); S.rts.forEach(setRtData);
     chart.timeScale().scrollToRealTime();
     if (S.type === 'footprint') { try { chart.timeScale().applyOptions({ barSpacing: 98 }); } catch (e) { /* ignore */ } }
+    pzRange = null;   // a new symbol or timeframe starts from an auto-fit price scale
     S.main.priceScale().applyOptions({ autoScale: true });
     syncTradeMarks(); if (S.focusTime) focusChart();
     veil(null); S.cross = null; updateLegend(); renderDetails(); syncAlertLines(); markDirty(); clockTick();
@@ -5483,7 +5494,7 @@ function renderScale() {
 }
 $('#scPct').onclick = () => setScaleMode(S.scaleMode === 2 ? 0 : 2);
 $('#scLog').onclick = () => setScaleMode(S.scaleMode === 1 ? 0 : 1);
-$('#scAuto').onclick = () => { S.main.priceScale().applyOptions({ autoScale: true }); renderScale(); markDirty(); };
+$('#scAuto').onclick = () => { pzRange = null; S.main.priceScale().applyOptions({ autoScale: true }); renderScale(); markDirty(); };
 let lastOpenState = '';
 function clockTick() {
   const d = new Date(), now = d.getTime() / 1000;
