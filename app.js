@@ -2594,7 +2594,7 @@ const FP = {
     const c = this.cache.get(key); if (c && c.i0 === i0 && c.i1 === i1) return c;
     const rows = new Map(); let sell = 0, buy = 0;
     for (let i = i0; i < i1; i++) {
-      const r = Math.floor(TR.p[i] / step + 1e-9), q = TR.q[i]; let a = rows.get(r); if (!a) { a = [0, 0]; rows.set(r, a); }
+      const r = Math.floor(TR.p[i] / step + 1e-9), q = TR.q[i] * TR.p[i]; let a = rows.get(r); if (!a) { a = [0, 0]; rows.set(r, a); }   // value traded (price × size), so cells read in dollars
       if (TR.b[i]) { a[1] += q; buy += q; } else { a[0] += q; sell += q; }
     }
     const out = { i0, i1, rows, sell, buy };
