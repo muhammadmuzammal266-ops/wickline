@@ -1990,7 +1990,7 @@ const LQ = {
   },
   draw(target) {
     const rt = this.rt(); this.drawnCells = 0;
-    if (!rt || !this.cols.length || R.on || isBrick(S.type) || this.sym !== S.symbol || !S.bars.length) return;
+    if (!rt || !this.cols.length || R.on || isBrick(S.type) || S.type === 'footprint' || this.sym !== S.symbol || !S.bars.length) return;
     target.useBitmapCoordinateSpace(sc => {
       const ctx = sc.context, hr = sc.horizontalPixelRatio, vr = sc.verticalPixelRatio, W = sc.bitmapSize.width, H = sc.bitmapSize.height;
       const ts = chart.timeScale(), sp = ts.options().barSpacing, vis = ts.getVisibleLogicalRange(); if (!vis) return;
