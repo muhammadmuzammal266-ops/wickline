@@ -303,6 +303,7 @@ TFS.forEach(t => Object.assign(t, tfOf(t.id)));
 const CHART_TYPES = [
   ['Bars', [['bars', 'Bars'], ['candles', 'Candles'], ['hollow', 'Hollow candles'], ['heikin', 'Heikin Ashi'], ['columns', 'Columns']]],
   ['Lines', [['line', 'Line'], ['markers', 'Line with markers'], ['step', 'Step line'], ['area', 'Area'], ['baseline', 'Baseline']]],
+  ['Order flow', [['footprint', 'Footprint']]],
   ['Price only (no time)', [['renko', 'Renko'], ['linebreak', 'Line break'], ['kagi', 'Kagi'], ['pnf', 'Point & figure']]],
 ];
 const TYPE_IDS = CHART_TYPES.flatMap(g => g[1].map(x => x[0]));
@@ -453,6 +454,8 @@ function setChartType(t) {
   const was = isBrick(S.type), now = isBrick(t);
   if (now && (R.on || R.picking)) rpExit();
   S.type = t; store.set('type', t);
+  if (t === 'footprint') { try { chart.timeScale().applyOptions({ barSpacing: 72 }); } catch (e) { /* ignore */ } }
+  try { TR.sync(); } catch (e) { /* ignore */ }
   if ($('#typeSel').value !== t) $('#typeSel').value = t;
   if (was && !now) { S.bars = S.raw || S.bars; S.raw = null; }
   else if (now) { S.raw = was ? S.raw : S.bars; S.brickBox = brickBox(S.raw); S.bars = bricksOf(S.raw); }
@@ -2536,7 +2539,7 @@ setInterval(() => { try { FUT.sync(); } catch (e) { /* try again next second */ 
 const TR_MAX = 300000;   // trades kept for footprints (a few hours of Bitcoin)
 const TR = {
   sym: null, ws: null, t: [], p: [], q: [], b: [], recent: [], since: 0, dirty: false, fpDirty: false, lastId: 0,
-  wants() { return BK.open || S.rts.some(r => r.inst.type === 'fp' && !r.inst.hidden); },
+  wants() { return BK.open || S.type === 'footprint' || S.rts.some(r => r.inst.type === 'fp' && !r.inst.hidden); },
   sync() {
     const want = this.wants() && !R.on && LQ.ok(S.symbol) ? S.symbol : null;
     if (want === this.sym) return;
@@ -2600,11 +2603,20 @@ const FP = {
   },
 };
 const fpNum = v => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e4 ? (v / 1e3).toFixed(0) + 'K' : v >= 1000 ? (v / 1e3).toFixed(1) + 'K' : v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v >= 0.01 ? v.toFixed(3) : v > 0 ? v.toPrecision(2) : '0');
+function fpNote(W, H) {   // footprint chart type chosen, but there are no live trades to build it from
+  octx.save();
+  octx.textAlign = 'center'; octx.textBaseline = 'middle'; octx.fillStyle = C.muted;
+  octx.font = `500 14px ${FONT_DATA}`; octx.fillText('Footprint builds from live crypto trades.', W / 2, H / 2 - 11);
+  octx.font = `400 12.5px ${FONT_DATA}`; octx.fillText('Open a crypto pair (e.g. BTCUSDT) and leave the chart running to fill it in.', W / 2, H / 2 + 11);
+  octx.restore();
+}
 function drawFootprint(m, W, H) {
   FP.last = [];
   const rt = S.rts.find(r => r.inst.type === 'fp' && !r.inst.hidden);
-  if (!rt || TR.sym !== S.symbol || !TR.t.length || !S.bars.length || isBrick(S.type)) return;
-  const B = S.bars, tfs = tfOf(S.tf).sec, step = FP.rowStep(rt.inst.params.rows); if (!step) return;
+  const fpType = S.type === 'footprint';
+  if ((!rt && !fpType) || isBrick(S.type)) return;
+  if (TR.sym !== S.symbol || !TR.t.length || !S.bars.length) { if (fpType) fpNote(W, H); return; }
+  const B = S.bars, tfs = tfOf(S.tf).sec, step = FP.rowStep(rt ? rt.inst.params.rows : 12); if (!step) return;
   const i0 = Math.max(0, Math.floor(m.L(0))), i1 = Math.min(B.length - 1, Math.ceil(m.L(W)));
   const tFirst = TR.t[0];
   octx.save();
@@ -2627,6 +2639,10 @@ function drawFootprint(m, W, H) {
         octx.font = `500 ${Math.min(11, Math.max(9, h - 2))}px ${FONT_DATA}`; octx.textBaseline = 'middle';
         octx.textAlign = 'right'; octx.fillStyle = sv > bv * 3 && sv > 0 ? C.down : C.muted; octx.fillText(fpNum(sv), x - 3, y + h / 2);
         octx.textAlign = 'left'; octx.fillStyle = bv > sv * 3 && bv > 0 ? C.up : C.fg; octx.fillText(fpNum(bv), x + 3, y + h / 2);
+        // diagonal imbalances (TradingView-style): a boxed buy is ask here ≥3× the bid one level down; a boxed sell is bid here ≥3× the ask one level up
+        const below = f.rows.get(k - 1), above = f.rows.get(k + 1), sBelow = below ? below[0] : 0, bAbove = above ? above[1] : 0;
+        if (bv > 0 && bv >= 3 * sBelow && (sBelow > 0 || bv >= max * 0.08)) { octx.strokeStyle = C.up; octx.lineWidth = 1.4; octx.strokeRect(x + 1.5, y + 1, half - 2.5, Math.max(1, h - 2)); }
+        if (sv > 0 && sv >= 3 * bAbove && (bAbove > 0 || sv >= max * 0.08)) { octx.strokeStyle = C.down; octx.lineWidth = 1.4; octx.strokeRect(x - half + 1, y + 1, half - 2.5, Math.max(1, h - 2)); }
       } else {   // zoomed out: a small profile, selling to the left and buying to the right of the bar
         const ws = (sv / max) * half, wb = (bv / max) * half;
         octx.fillStyle = alpha(C.down, 0.55); octx.fillRect(x - ws, y, ws, h);
@@ -2734,7 +2750,7 @@ $('#bkLadder').addEventListener('click', e => {   // a price in the book: an ale
 });
 document.body.classList.toggle('book-on', BK.open); $('#book').hidden = !BK.open; $('#bookBtn').setAttribute('aria-pressed', String(BK.open));
 BK.setTab(BK.tab, true);
-setInterval(() => { try { TR.sync(); BK.render(); if (TR.fpDirty) { TR.fpDirty = false; if (S.rts.some(r => r.inst.type === 'fp' && !r.inst.hidden)) markDirty(); } } catch (e) { /* next time */ } }, 400);
+setInterval(() => { try { TR.sync(); BK.render(); if (TR.fpDirty) { TR.fpDirty = false; if (S.type === 'footprint' || S.rts.some(r => r.inst.type === 'fp' && !r.inst.hidden)) markDirty(); } } catch (e) { /* next time */ } }, 400);
 
 function normInst(inst) {
   const def = IND[inst && inst.type]; if (!def) return null;
