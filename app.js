@@ -3108,7 +3108,6 @@ new ResizeObserver(() => { sizeOverlay(); updateWatermark(); }).observe(wrap);
 // createMain) feeds this range to the engine, which is the supported way to hold a
 // custom vertical zoom in lightweight-charts.
 let pzRange = null;
-try { window.__pzProbe = () => ({ pz: pzRange, hits: window.__pzHits || 0 }); } catch (e) { /* ignore */ }
 function pzProvider(orig) {
   const base = orig();
   if (!pzRange) return base;
@@ -3168,7 +3167,6 @@ function pzReset() { pzRange = null; pzRefit(); }
   }, { passive: false });
   chartEl.addEventListener('touchmove', e => {
     if (!tStart || e.touches.length !== 1) return;
-    try { window.__pzHits = (window.__pzHits || 0) + 1; } catch (_) { /* ignore */ }
     e.preventDefault();
     const dy = e.touches[0].clientY - tStart.y;   // total since touchstart: down compresses, up expands
     const f = Math.exp((dy / tStart.h) * 1.6);
