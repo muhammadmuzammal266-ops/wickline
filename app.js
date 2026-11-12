@@ -449,12 +449,21 @@ function rawMerge(b) {   // a live candle while a brick type is shown
   if (b.time === last.time) a[n - 1] = b; else a.push(b);
   rebrick();
 }
+// Footprint cells need room for their "sell × buy" numbers, so the bars are set
+// much wider than normal. A fixed width looks right on a desktop but leaves only
+// two or three giant bars on a phone, so scale it to the chart width instead.
+function fpBarSpacing() {
+  let w = 0; try { w = chart.timeScale().width() || 0; } catch (e) { /* not ready */ }
+  if (!w) w = ovW || window.innerWidth || 900;
+  return Math.round(clamp(w / 9, 78, 104));
+}
+function applyFpSpacing() { try { chart.timeScale().applyOptions({ barSpacing: fpBarSpacing() }); } catch (e) { /* ignore */ } }
 function setChartType(t) {
   if (!TYPE_IDS.includes(t) || t === S.type) return;
   const was = isBrick(S.type), now = isBrick(t);
   if (now && (R.on || R.picking)) rpExit();
   S.type = t; store.set('type', t);
-  if (t === 'footprint') { try { chart.timeScale().applyOptions({ barSpacing: 98 }); } catch (e) { /* ignore */ } }
+  if (t === 'footprint') applyFpSpacing();
   try { TR.sync(); } catch (e) { /* ignore */ }
   if ($('#typeSel').value !== t) $('#typeSel').value = t;
   if (was && !now) { S.bars = S.raw || S.bars; S.raw = null; }
@@ -3130,6 +3139,39 @@ function pzReset() { pzRange = null; pzRefit(); }
     let axisW = 72; try { axisW = Math.max(44, (S.main && S.main.priceScale().width()) || 72); } catch (_) { /* default */ }
     if (e.clientX >= r.right - axisW - 1) pzReset();
   });
+  // touch: a one-finger vertical drag on the price axis stretches or compresses the
+  // price scale, since phones have no mouse wheel. Drag up to zoom in, down to zoom out.
+  let tStart = null, lastTap = 0;
+  const axisRegion = clientX => {
+    const r = chartEl.getBoundingClientRect();
+    let axisW = 72; try { axisW = Math.max(44, (S.main && S.main.priceScale().width()) || 72); } catch (_) { /* default */ }
+    return clientX >= r.right - axisW - 1;
+  };
+  chartEl.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1 || !S.main || !S.bars.length) { tStart = null; return; }
+    const t = e.touches[0];
+    if (!axisRegion(t.clientX)) { tStart = null; return; }
+    const r = chartEl.getBoundingClientRect();
+    const topP = S.main.coordinateToPrice(0), botP = S.main.coordinateToPrice(r.height);
+    if (topP == null || botP == null) { tStart = null; return; }
+    const hi = Math.max(topP, botP), lo = Math.min(topP, botP);
+    tStart = { y: t.clientY, h: r.height, mid: (hi + lo) / 2, half: (hi - lo) / 2 };
+    const now = Date.now();
+    if (now - lastTap < 300) { pzReset(); tStart = null; }   // double-tap the axis resets to auto-fit
+    lastTap = now;
+    e.preventDefault();   // keep the chart from panning while scaling the axis
+  }, { passive: false });
+  chartEl.addEventListener('touchmove', e => {
+    if (!tStart || e.touches.length !== 1) return;
+    e.preventDefault();
+    const dy = e.touches[0].clientY - tStart.y;   // down is positive → compress; up → expand
+    const f = Math.exp((dy / Math.max(1, tStart.h)) * 1.6);
+    const nh = Math.max(tStart.half * f, Math.abs(tStart.mid) * 1e-6 + 1e-9);
+    pzRange = { lo: tStart.mid - nh, hi: tStart.mid + nh };
+    pzRefit();
+  }, { passive: false });
+  chartEl.addEventListener('touchend', () => { tStart = null; });
+  chartEl.addEventListener('touchcancel', () => { tStart = null; });
 })();
 
 const curDrawings = () => (S.drawings[S.symbol] = S.drawings[S.symbol] || []);
@@ -5254,7 +5296,7 @@ async function loadChart() {
     try { chart.clearCrosshairPosition(); } catch (e) { /* older library */ }
     setMainData(); S.rts.forEach(setRtData);
     chart.timeScale().scrollToRealTime();
-    if (S.type === 'footprint') { try { chart.timeScale().applyOptions({ barSpacing: 98 }); } catch (e) { /* ignore */ } }
+    if (S.type === 'footprint') applyFpSpacing();
     pzRange = null;   // a new symbol or timeframe starts from an auto-fit price scale
     S.main.priceScale().applyOptions({ autoScale: true });
     syncTradeMarks(); if (S.focusTime) focusChart();
