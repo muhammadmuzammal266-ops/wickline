@@ -3151,23 +3151,27 @@ function pzReset() { pzRange = null; pzRefit(); }
     if (e.touches.length !== 1 || !S.main || !S.bars.length) { tStart = null; return; }
     const t = e.touches[0];
     if (!axisRegion(t.clientX)) { tStart = null; return; }
-    const r = chartEl.getBoundingClientRect();
-    const topP = S.main.coordinateToPrice(0), botP = S.main.coordinateToPrice(r.height);
-    if (topP == null || botP == null) { tStart = null; return; }
-    const hi = Math.max(topP, botP), lo = Math.min(topP, botP);
-    tStart = { y: t.clientY, h: r.height, mid: (hi + lo) / 2, half: (hi - lo) / 2 };
+    tStart = { y: t.clientY };
     const now = Date.now();
     if (now - lastTap < 300) { pzReset(); tStart = null; }   // double-tap the axis resets to auto-fit
     lastTap = now;
     e.preventDefault();   // keep the chart from panning while scaling the axis
   }, { passive: false });
   chartEl.addEventListener('touchmove', e => {
-    if (!tStart || e.touches.length !== 1) return;
+    if (!tStart || e.touches.length !== 1 || !S.main) return;
     e.preventDefault();
+    // Read the live range each move and nudge it by the step since the last move, so a
+    // single odd reading can never make the scale run away (same idea as the wheel).
+    const r = chartEl.getBoundingClientRect();
+    const topP = S.main.coordinateToPrice(0), botP = S.main.coordinateToPrice(r.height);
+    if (topP == null || botP == null) return;
+    const hi = Math.max(topP, botP), lo = Math.min(topP, botP), mid = (hi + lo) / 2, half = (hi - lo) / 2;
+    if (!(half > 0)) return;
     const dy = e.touches[0].clientY - tStart.y;   // down is positive → compress; up → expand
-    const f = Math.exp((dy / Math.max(1, tStart.h)) * 1.6);
-    const nh = Math.max(tStart.half * f, Math.abs(tStart.mid) * 1e-6 + 1e-9);
-    pzRange = { lo: tStart.mid - nh, hi: tStart.mid + nh };
+    tStart.y = e.touches[0].clientY;
+    const f = Math.exp((dy / Math.max(1, r.height)) * 1.6);
+    const nh = Math.max(half * f, Math.abs(mid) * 1e-6 + 1e-9);
+    pzRange = { lo: mid - nh, hi: mid + nh };
     pzRefit();
   }, { passive: false });
   chartEl.addEventListener('touchend', () => { tStart = null; });
